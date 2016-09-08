@@ -27,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/net/lex/httplex"
+	"golang_org/x/net/lex/httplex"
 )
 
 // DefaultTransport is the default implementation of Transport and is
@@ -40,6 +40,7 @@ var DefaultTransport RoundTripper = &Transport{
 	DialContext: (&net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
+		DualStack: true,
 	}).DialContext,
 	MaxIdleConns:          100,
 	IdleConnTimeout:       90 * time.Second,
@@ -76,7 +77,7 @@ type Transport struct {
 	idleLRU    connLRU
 
 	reqMu       sync.Mutex
-	reqCanceler map[*Request]func()
+	reqCanceler map[*Request]func(error)
 
 	altMu    sync.RWMutex
 	altProto map[string]RoundTripper // nil or map of URI scheme => RoundTripper
@@ -251,6 +252,9 @@ func ProxyFromEnvironment(req *Request) (*url.URL, error) {
 	}
 	if proxy == "" {
 		proxy = httpProxyEnv.Get()
+		if proxy != "" && os.Getenv("REQUEST_METHOD") != "" {
+			return nil, errors.New("net/http: refusing to use HTTP_PROXY value in CGI environment; see golang.org/s/cgihttpproxy")
+		}
 	}
 	if proxy == "" {
 		return nil, nil
@@ -380,6 +384,11 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 			return resp, nil
 		}
 		if !pconn.shouldRetryRequest(req, err) {
+			// Issue 16465: return underlying net.Conn.Read error from peek,
+			// as we've historically done.
+			if e, ok := err.(transportReadFromServerError); ok {
+				err = e.err
+			}
 			return nil, err
 		}
 		testHookRoundTripRetried()
@@ -390,6 +399,15 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 // HTTP request on a new connection. The non-nil input error is the
 // error from roundTrip.
 func (pc *persistConn) shouldRetryRequest(req *Request, err error) bool {
+	if err == http2ErrNoCachedConn {
+		// Issue 16582: if the user started a bunch of
+		// requests at once, they can all pick the same conn
+		// and violate the server's max concurrent streams.
+		// Instead, match the HTTP/1 behavior for now and dial
+		// again to get a new TCP connection, rather than failing
+		// this request.
+		return true
+	}
 	if err == errMissingHost {
 		// User error.
 		return false
@@ -404,19 +422,23 @@ func (pc *persistConn) shouldRetryRequest(req *Request, err error) bool {
 		// our request (as opposed to sending an error).
 		return false
 	}
-	if !req.isReplayable() {
-		// Don't retry non-idempotent requests.
-
-		// TODO: swap the nothingWrittenError and isReplayable checks,
-		// putting the "if nothingWrittenError => return true" case
-		// first, per golang.org/issue/15723
-		return false
-	}
 	if _, ok := err.(nothingWrittenError); ok {
 		// We never wrote anything, so it's safe to retry.
 		return true
 	}
-	if err == errServerClosedIdle || err == errServerClosedConn {
+	if !req.isReplayable() {
+		// Don't retry non-idempotent requests.
+		return false
+	}
+	if _, ok := err.(transportReadFromServerError); ok {
+		// We got some non-EOF net.Conn.Read failure reading
+		// the 1st response byte from the server.
+		return true
+	}
+	if err == errServerClosedIdle {
+		// The server replied with io.EOF while we were trying to
+		// read the response. Probably an unfortunately keep-alive
+		// timeout, just as the client was writing a request.
 		return true
 	}
 	return false // conservatively
@@ -473,15 +495,21 @@ func (t *Transport) CloseIdleConnections() {
 // CancelRequest cancels an in-flight request by closing its connection.
 // CancelRequest should only be called after RoundTrip has returned.
 //
-// Deprecated: Use Request.Cancel instead. CancelRequest cannot cancel
-// HTTP/2 requests.
+// Deprecated: Use Request.WithContext to create a request with a
+// cancelable context instead. CancelRequest cannot cancel HTTP/2
+// requests.
 func (t *Transport) CancelRequest(req *Request) {
+	t.cancelRequest(req, errRequestCanceled)
+}
+
+// Cancel an in-flight request, recording the error value.
+func (t *Transport) cancelRequest(req *Request, err error) {
 	t.reqMu.Lock()
 	cancel := t.reqCanceler[req]
 	delete(t.reqCanceler, req)
 	t.reqMu.Unlock()
 	if cancel != nil {
-		cancel()
+		cancel(err)
 	}
 }
 
@@ -563,9 +591,25 @@ var (
 	errCloseIdleConns     = errors.New("http: CloseIdleConnections called")
 	errReadLoopExiting    = errors.New("http: persistConn.readLoop exiting")
 	errServerClosedIdle   = errors.New("http: server closed idle connection")
-	errServerClosedConn   = errors.New("http: server closed connection")
 	errIdleConnTimeout    = errors.New("http: idle connection timeout")
+	errNotCachingH2Conn   = errors.New("http: not caching alternate protocol's connections")
 )
+
+// transportReadFromServerError is used by Transport.readLoop when the
+// 1 byte peek read fails and we're actually anticipating a response.
+// Usually this is just due to the inherent keep-alive shut down race,
+// where the server closed the connection at the same time the client
+// wrote. The underlying err field is usually io.EOF or some
+// ECONNRESET sort of thing which varies by platform. But it might be
+// the user's custom net.Conn.Read error too, so we carry it along for
+// them to return from Transport.RoundTrip.
+type transportReadFromServerError struct {
+	err error
+}
+
+func (e transportReadFromServerError) Error() string {
+	return fmt.Sprintf("net/http: Transport failed to read from server: %v", e.err)
+}
 
 func (t *Transport) putOrCloseIdleConn(pconn *persistConn) {
 	if err := t.tryPutIdleConn(pconn); err != nil {
@@ -591,6 +635,9 @@ func (t *Transport) tryPutIdleConn(pconn *persistConn) error {
 	}
 	if pconn.isBroken() {
 		return errConnBroken
+	}
+	if pconn.alt != nil {
+		return errNotCachingH2Conn
 	}
 	pconn.markReused()
 	key := pconn.cacheKey
@@ -742,11 +789,11 @@ func (t *Transport) removeIdleConnLocked(pconn *persistConn) {
 	}
 }
 
-func (t *Transport) setReqCanceler(r *Request, fn func()) {
+func (t *Transport) setReqCanceler(r *Request, fn func(error)) {
 	t.reqMu.Lock()
 	defer t.reqMu.Unlock()
 	if t.reqCanceler == nil {
-		t.reqCanceler = make(map[*Request]func())
+		t.reqCanceler = make(map[*Request]func(error))
 	}
 	if fn != nil {
 		t.reqCanceler[r] = fn
@@ -759,7 +806,7 @@ func (t *Transport) setReqCanceler(r *Request, fn func()) {
 // for the request, we don't set the function and return false.
 // Since CancelRequest will clear the canceler, we can use the return value to detect if
 // the request was canceled since the last setReqCancel call.
-func (t *Transport) replaceReqCanceler(r *Request, fn func()) bool {
+func (t *Transport) replaceReqCanceler(r *Request, fn func(error)) bool {
 	t.reqMu.Lock()
 	defer t.reqMu.Unlock()
 	_, ok := t.reqCanceler[r]
@@ -808,7 +855,7 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (*persistC
 		// set request canceler to some non-nil function so we
 		// can detect whether it was cleared between now and when
 		// we enter roundTrip
-		t.setReqCanceler(req, func() {})
+		t.setReqCanceler(req, func(error) {})
 		return pc, nil
 	}
 
@@ -833,8 +880,8 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (*persistC
 		}()
 	}
 
-	cancelc := make(chan struct{})
-	t.setReqCanceler(req, func() { close(cancelc) })
+	cancelc := make(chan error, 1)
+	t.setReqCanceler(req, func(err error) { cancelc <- err })
 
 	go func() {
 		pc, err := t.dialConn(ctx, cm)
@@ -845,10 +892,31 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (*persistC
 	select {
 	case v := <-dialc:
 		// Our dial finished.
-		if trace != nil && trace.GotConn != nil && v.pc != nil && v.pc.alt == nil {
-			trace.GotConn(httptrace.GotConnInfo{Conn: v.pc.conn})
+		if v.pc != nil {
+			if trace != nil && trace.GotConn != nil && v.pc.alt == nil {
+				trace.GotConn(httptrace.GotConnInfo{Conn: v.pc.conn})
+			}
+			return v.pc, nil
 		}
-		return v.pc, v.err
+		// Our dial failed. See why to return a nicer error
+		// value.
+		select {
+		case <-req.Cancel:
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		case err := <-cancelc:
+			if err == errRequestCanceled {
+				err = errRequestCanceledConn
+			}
+			return nil, err
+		default:
+			// It wasn't an error due to cancelation, so
+			// return the original error message:
+			return nil, v.err
+		}
+		// It was an error due to cancelation, so prioritize that
+		// error value. (Issue 16049)
+		return nil, errRequestCanceledConn
 	case pc := <-idleConnCh:
 		// Another request finished first and its net.Conn
 		// became available before our dial. Or somebody
@@ -865,10 +933,13 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (*persistC
 		return nil, errRequestCanceledConn
 	case <-req.Context().Done():
 		handlePendingDial()
-		return nil, errRequestCanceledConn
-	case <-cancelc:
+		return nil, req.Context().Err()
+	case err := <-cancelc:
 		handlePendingDial()
-		return nil, errRequestCanceledConn
+		if err == errRequestCanceled {
+			err = errRequestCanceledConn
+		}
+		return nil, err
 	}
 }
 
@@ -1174,8 +1245,8 @@ type persistConn struct {
 	mu                   sync.Mutex // guards following fields
 	numExpectedResponses int
 	closed               error // set non-nil when conn is closed, before closech is closed
+	canceledErr          error // set non-nil if conn is canceled
 	broken               bool  // an error has happened on this connection; marked broken so it's not reused.
-	canceled             bool  // whether this conn was broken due a CancelRequest
 	reused               bool  // whether conn has had successful request/response and is being reused.
 	// mutateHeaderFunc is an optional func to modify extra
 	// headers on each outbound request before it's written. (the
@@ -1213,11 +1284,12 @@ func (pc *persistConn) isBroken() bool {
 	return b
 }
 
-// isCanceled reports whether this connection was closed due to CancelRequest.
-func (pc *persistConn) isCanceled() bool {
+// canceled returns non-nil if the connection was closed due to
+// CancelRequest or due to context cancelation.
+func (pc *persistConn) canceled() error {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
-	return pc.canceled
+	return pc.canceledErr
 }
 
 // isReused reports whether this connection is in a known broken state.
@@ -1240,10 +1312,10 @@ func (pc *persistConn) gotIdleConnTrace(idleAt time.Time) (t httptrace.GotConnIn
 	return
 }
 
-func (pc *persistConn) cancelRequest() {
+func (pc *persistConn) cancelRequest(err error) {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
-	pc.canceled = true
+	pc.canceledErr = err
 	pc.closeLocked(errRequestCanceled)
 }
 
@@ -1271,10 +1343,13 @@ func (pc *persistConn) mapRoundTripErrorFromReadLoop(startBytesWritten int64, er
 	if err == nil {
 		return nil
 	}
-	if pc.isCanceled() {
-		return errRequestCanceled
+	if err := pc.canceled(); err != nil {
+		return err
 	}
-	if err == errServerClosedIdle || err == errServerClosedConn {
+	if err == errServerClosedIdle {
+		return err
+	}
+	if _, ok := err.(transportReadFromServerError); ok {
 		return err
 	}
 	if pc.isBroken() {
@@ -1291,11 +1366,15 @@ func (pc *persistConn) mapRoundTripErrorFromReadLoop(startBytesWritten int64, er
 // its pc.closech channel close, indicating the persistConn is dead.
 // (after closech is closed, pc.closed is valid).
 func (pc *persistConn) mapRoundTripErrorAfterClosed(startBytesWritten int64) error {
-	if pc.isCanceled() {
-		return errRequestCanceled
+	if err := pc.canceled(); err != nil {
+		return err
 	}
 	err := pc.closed
-	if err == errServerClosedIdle || err == errServerClosedConn {
+	if err == errServerClosedIdle {
+		// Don't decorate
+		return err
+	}
+	if _, ok := err.(transportReadFromServerError); ok {
 		// Don't decorate
 		return err
 	}
@@ -1364,7 +1443,7 @@ func (pc *persistConn) readLoop() {
 		if err == nil {
 			resp, err = pc.readResponse(rc, trace)
 		} else {
-			err = errServerClosedConn
+			err = transportReadFromServerError{err}
 			closeErr = err
 		}
 
@@ -1445,8 +1524,10 @@ func (pc *persistConn) readLoop() {
 				waitForBodyRead <- isEOF
 				if isEOF {
 					<-eofc // see comment above eofc declaration
-				} else if err != nil && pc.isCanceled() {
-					return errRequestCanceled
+				} else if err != nil {
+					if cerr := pc.canceled(); cerr != nil {
+						return cerr
+					}
 				}
 				return err
 			},
@@ -1486,7 +1567,7 @@ func (pc *persistConn) readLoop() {
 			pc.t.CancelRequest(rc.req)
 		case <-rc.req.Context().Done():
 			alive = false
-			pc.t.CancelRequest(rc.req)
+			pc.t.cancelRequest(rc.req, rc.req.Context().Err())
 		case <-pc.closech:
 			alive = false
 		}
@@ -1765,14 +1846,15 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 	var re responseAndError
 	var respHeaderTimer <-chan time.Time
 	cancelChan := req.Request.Cancel
+	ctxDoneChan := req.Context().Done()
 WaitResponse:
 	for {
 		testHookWaitResLoop()
 		select {
 		case err := <-writeErrCh:
 			if err != nil {
-				if pc.isCanceled() {
-					err = errRequestCanceled
+				if cerr := pc.canceled(); cerr != nil {
+					err = cerr
 				}
 				re = responseAndError{err: err}
 				pc.close(fmt.Errorf("write error: %v", err))
@@ -1796,9 +1878,10 @@ WaitResponse:
 		case <-cancelChan:
 			pc.t.CancelRequest(req.Request)
 			cancelChan = nil
-		case <-req.Context().Done():
-			pc.t.CancelRequest(req.Request)
+		case <-ctxDoneChan:
+			pc.t.cancelRequest(req.Request, req.Context().Err())
 			cancelChan = nil
+			ctxDoneChan = nil
 		}
 	}
 
@@ -2004,29 +2087,7 @@ func cloneTLSConfig(cfg *tls.Config) *tls.Config {
 	if cfg == nil {
 		return &tls.Config{}
 	}
-	return &tls.Config{
-		Rand:                        cfg.Rand,
-		Time:                        cfg.Time,
-		Certificates:                cfg.Certificates,
-		NameToCertificate:           cfg.NameToCertificate,
-		GetCertificate:              cfg.GetCertificate,
-		RootCAs:                     cfg.RootCAs,
-		NextProtos:                  cfg.NextProtos,
-		ServerName:                  cfg.ServerName,
-		ClientAuth:                  cfg.ClientAuth,
-		ClientCAs:                   cfg.ClientCAs,
-		InsecureSkipVerify:          cfg.InsecureSkipVerify,
-		CipherSuites:                cfg.CipherSuites,
-		PreferServerCipherSuites:    cfg.PreferServerCipherSuites,
-		SessionTicketsDisabled:      cfg.SessionTicketsDisabled,
-		SessionTicketKey:            cfg.SessionTicketKey,
-		ClientSessionCache:          cfg.ClientSessionCache,
-		MinVersion:                  cfg.MinVersion,
-		MaxVersion:                  cfg.MaxVersion,
-		CurvePreferences:            cfg.CurvePreferences,
-		DynamicRecordSizingDisabled: cfg.DynamicRecordSizingDisabled,
-		Renegotiation:               cfg.Renegotiation,
-	}
+	return cfg.Clone()
 }
 
 // cloneTLSClientConfig is like cloneTLSConfig but omits
@@ -2057,6 +2118,7 @@ func cloneTLSClientConfig(cfg *tls.Config) *tls.Config {
 		CurvePreferences:            cfg.CurvePreferences,
 		DynamicRecordSizingDisabled: cfg.DynamicRecordSizingDisabled,
 		Renegotiation:               cfg.Renegotiation,
+		KeyLogWriter:                cfg.KeyLogWriter,
 	}
 }
 

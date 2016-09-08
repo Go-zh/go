@@ -1,5 +1,5 @@
 // Inferno utils/5l/span.c
-// http://code.google.com/p/inferno-os/source/browse/utils/5l/span.c
+// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/5l/span.c
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -648,7 +648,7 @@ func span5(ctxt *obj.Link, cursym *obj.LSym) {
 	var out [6 + 3]uint32
 	for {
 		if ctxt.Debugvlog != 0 {
-			fmt.Fprintf(ctxt.Bso, "%5.2f span1\n", obj.Cputime())
+			ctxt.Logf("%5.2f span1\n", obj.Cputime())
 		}
 		bflag = 0
 		c = 0
@@ -1191,7 +1191,7 @@ func oplook(ctxt *obj.Link, p *obj.Prog) *Optab {
 	}
 
 	if false { /*debug['O']*/
-		fmt.Printf("oplook %v %v %v %v\n", obj.Aconv(p.As), DRconv(a1), DRconv(a2), DRconv(a3))
+		fmt.Printf("oplook %v %v %v %v\n", p.As, DRconv(a1), DRconv(a2), DRconv(a3))
 		fmt.Printf("\t\t%d %d\n", p.From.Type, p.To.Type)
 	}
 
@@ -1343,7 +1343,7 @@ func buildop(ctxt *obj.Link) {
 
 		switch r {
 		default:
-			ctxt.Diag("unknown op in build: %v", obj.Aconv(r))
+			ctxt.Diag("unknown op in build: %v", r)
 			log.Fatalf("bad code")
 
 		case AADD:
@@ -1434,6 +1434,8 @@ func buildop(ctxt *obj.Link) {
 			opset(AMOVDF, r0)
 			opset(AABSF, r0)
 			opset(AABSD, r0)
+			opset(ANEGF, r0)
+			opset(ANEGD, r0)
 
 		case ACMPF:
 			opset(ACMPD, r0)
@@ -1930,7 +1932,7 @@ func asmout(ctxt *obj.Link, p *obj.Prog, o *Optab, out []uint32) {
 		r := int(p.Reg)
 		if r == 0 {
 			r = rt
-			if p.As == AMOVF || p.As == AMOVD || p.As == AMOVFD || p.As == AMOVDF || p.As == ASQRTF || p.As == ASQRTD || p.As == AABSF || p.As == AABSD {
+			if p.As == AMOVF || p.As == AMOVD || p.As == AMOVFD || p.As == AMOVDF || p.As == ASQRTF || p.As == ASQRTD || p.As == AABSF || p.As == AABSD || p.As == ANEGF || p.As == ANEGD {
 				r = 0
 			}
 		}
@@ -2508,6 +2510,10 @@ func oprrr(ctxt *obj.Link, a obj.As, sc int) uint32 {
 		return o | 0xe<<24 | 0xb<<20 | 0<<16 | 0xb<<8 | 0xc<<4
 	case AABSF:
 		return o | 0xe<<24 | 0xb<<20 | 0<<16 | 0xa<<8 | 0xc<<4
+	case ANEGD:
+		return o | 0xe<<24 | 0xb<<20 | 1<<16 | 0xb<<8 | 0x4<<4
+	case ANEGF:
+		return o | 0xe<<24 | 0xb<<20 | 1<<16 | 0xa<<8 | 0x4<<4
 	case ACMPD:
 		return o | 0xe<<24 | 0xb<<20 | 4<<16 | 0xb<<8 | 0xc<<4
 	case ACMPF:
@@ -2630,7 +2636,7 @@ func opbra(ctxt *obj.Link, p *obj.Prog, a obj.As, sc int) uint32 {
 		return 0xe<<28 | 0x5<<25
 	}
 
-	ctxt.Diag("bad bra %v", obj.Aconv(a))
+	ctxt.Diag("bad bra %v", a)
 	prasm(ctxt.Curp)
 	return 0
 }
@@ -2750,7 +2756,7 @@ func ofsr(ctxt *obj.Link, a obj.As, r int, v int32, b int, sc int, p *obj.Prog) 
 
 	switch a {
 	default:
-		ctxt.Diag("bad fst %v", obj.Aconv(a))
+		ctxt.Diag("bad fst %v", a)
 		fallthrough
 
 	case AMOVD:

@@ -5,6 +5,8 @@
 package runtime_test
 
 import (
+	"bytes"
+	"flag"
 	"fmt"
 	"internal/testenv"
 	"io/ioutil"
@@ -13,9 +15,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 var toRemove []string
@@ -65,8 +69,45 @@ func runTestProg(t *testing.T, binary, name string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _ := testEnv(exec.Command(exe, name)).CombinedOutput()
-	return string(got)
+
+	cmd := testEnv(exec.Command(exe, name))
+	var b bytes.Buffer
+	cmd.Stdout = &b
+	cmd.Stderr = &b
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting %s %s: %v", binary, name, err)
+	}
+
+	// If the process doesn't complete within 1 minute,
+	// assume it is hanging and kill it to get a stack trace.
+	p := cmd.Process
+	done := make(chan bool)
+	go func() {
+		scale := 1
+		// This GOARCH/GOOS test is copied from cmd/dist/test.go.
+		// TODO(iant): Have cmd/dist update the environment variable.
+		if runtime.GOARCH == "arm" || runtime.GOOS == "windows" {
+			scale = 2
+		}
+		if s := os.Getenv("GO_TEST_TIMEOUT_SCALE"); s != "" {
+			if sc, err := strconv.Atoi(s); err == nil {
+				scale = sc
+			}
+		}
+
+		select {
+		case <-done:
+		case <-time.After(time.Duration(scale) * time.Minute):
+			p.Signal(sigquit)
+		}
+	}()
+
+	if err := cmd.Wait(); err != nil {
+		t.Logf("%s %s exit status: %v", binary, name, err)
+	}
+	close(done)
+
+	return b.String()
 }
 
 func buildTestProg(t *testing.T, binary string, flags ...string) (string, error) {
@@ -96,7 +137,7 @@ func buildTestProg(t *testing.T, binary string, flags ...string) (string, error)
 	}
 
 	exe := filepath.Join(testprog.dir, name+".exe")
-	cmd := exec.Command("go", append([]string{"build", "-o", exe}, flags...)...)
+	cmd := exec.Command(testenv.GoToolPath(t), append([]string{"build", "-o", exe}, flags...)...)
 	cmd.Dir = "testdata/" + binary
 	out, err := testEnv(cmd).CombinedOutput()
 	if err != nil {
@@ -118,7 +159,7 @@ var (
 func checkStaleRuntime(t *testing.T) {
 	staleRuntimeOnce.Do(func() {
 		// 'go run' uses the installed copy of runtime.a, which may be out of date.
-		out, err := testEnv(exec.Command("go", "list", "-f", "{{.Stale}}", "runtime")).CombinedOutput()
+		out, err := testEnv(exec.Command(testenv.GoToolPath(t), "list", "-f", "{{.Stale}}", "runtime")).CombinedOutput()
 		if err != nil {
 			staleRuntimeErr = fmt.Errorf("failed to execute 'go list': %v\n%v", err, string(out))
 			return
@@ -401,4 +442,80 @@ func TestPanicDeadlockGosched(t *testing.T) {
 
 func TestPanicDeadlockSyscall(t *testing.T) {
 	testPanicDeadlock(t, "SyscallInPanic", "1\n2\npanic: 3\n\n")
+}
+
+func TestMemPprof(t *testing.T) {
+	testenv.MustHaveGoRun(t)
+
+	exe, err := buildTestProg(t, "testprog")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := testEnv(exec.Command(exe, "MemProf")).CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := strings.TrimSpace(string(got))
+	defer os.Remove(fn)
+
+	cmd := testEnv(exec.Command(testenv.GoToolPath(t), "tool", "pprof", "-alloc_space", "-top", exe, fn))
+
+	found := false
+	for i, e := range cmd.Env {
+		if strings.HasPrefix(e, "PPROF_TMPDIR=") {
+			cmd.Env[i] = "PPROF_TMPDIR=" + os.TempDir()
+			found = true
+			break
+		}
+	}
+	if !found {
+		cmd.Env = append(cmd.Env, "PPROF_TMPDIR="+os.TempDir())
+	}
+
+	top, err := cmd.CombinedOutput()
+	t.Logf("%s", top)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Contains(top, []byte("MemProf")) {
+		t.Error("missing MemProf in pprof output")
+	}
+}
+
+var concurrentMapTest = flag.Bool("run_concurrent_map_tests", false, "also run flaky concurrent map tests")
+
+func TestConcurrentMapWrites(t *testing.T) {
+	if !*concurrentMapTest {
+		t.Skip("skipping without -run_concurrent_map_tests")
+	}
+	testenv.MustHaveGoRun(t)
+	output := runTestProg(t, "testprog", "concurrentMapWrites")
+	want := "fatal error: concurrent map writes"
+	if !strings.HasPrefix(output, want) {
+		t.Fatalf("output does not start with %q:\n%s", want, output)
+	}
+}
+func TestConcurrentMapReadWrite(t *testing.T) {
+	if !*concurrentMapTest {
+		t.Skip("skipping without -run_concurrent_map_tests")
+	}
+	testenv.MustHaveGoRun(t)
+	output := runTestProg(t, "testprog", "concurrentMapReadWrite")
+	want := "fatal error: concurrent map read and map write"
+	if !strings.HasPrefix(output, want) {
+		t.Fatalf("output does not start with %q:\n%s", want, output)
+	}
+}
+func TestConcurrentMapIterateWrite(t *testing.T) {
+	if !*concurrentMapTest {
+		t.Skip("skipping without -run_concurrent_map_tests")
+	}
+	testenv.MustHaveGoRun(t)
+	output := runTestProg(t, "testprog", "concurrentMapIterateWrite")
+	want := "fatal error: concurrent map iteration and map write"
+	if !strings.HasPrefix(output, want) {
+		t.Fatalf("output does not start with %q:\n%s", want, output)
+	}
 }

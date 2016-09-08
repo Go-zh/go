@@ -29,6 +29,9 @@ import (
 // Use the Kind method to find out the kind of type before
 // calling kind-specific methods. Calling a method
 // inappropriate to the kind of type causes a run-time panic.
+//
+// Type values are comparable, such as with the == operator.
+// Two Type values are equal if they represent identical types.
 type Type interface {
 	// Methods applicable to all types.
 
@@ -80,7 +83,7 @@ type Type interface {
 	// String returns a string representation of the type.
 	// The string representation may use shortened package names
 	// (e.g., base64 instead of "encoding/base64") and is not
-	// guaranteed to be unique among types. To test for equality,
+	// guaranteed to be unique among types. To test for type identity,
 	// compare the Types directly.
 	String() string
 
@@ -268,6 +271,9 @@ const (
 	// a program, the type *T also exists and reusing the str data
 	// saves binary size.
 	tflagExtraStar tflag = 1 << 1
+
+	// tflagNamed means the type has a name.
+	tflagNamed tflag = 1 << 2
 )
 
 // rtype is the common implementation of most values.
@@ -285,7 +291,7 @@ type rtype struct {
 	alg        *typeAlg // algorithm table
 	gcdata     *byte    // garbage collection data
 	str        nameOff  // string form
-	_          int32    // unused; keeps rtype always a multiple of ptrSize
+	ptrToThis  typeOff  // type for pointer to this type, may be zero
 }
 
 // a copy of runtime.typeAlg
@@ -313,7 +319,9 @@ type method struct {
 type uncommonType struct {
 	pkgPath nameOff // import path; empty for built-in types like int, string
 	mcount  uint16  // number of methods
-	moff    uint16  // offset from this uncommontype to [mcount]method
+	_       uint16  // unused
+	moff    uint32  // offset from this uncommontype to [mcount]method
+	_       uint32  // unused
 }
 
 // ChanDir represents a channel type's direction.
@@ -461,15 +469,13 @@ func (n name) tagLen() int {
 
 func (n name) name() (s string) {
 	if n.bytes == nil {
-		return ""
+		return
 	}
-	nl := n.nameLen()
-	if nl == 0 {
-		return ""
-	}
+	b := (*[4]byte)(unsafe.Pointer(n.bytes))
+
 	hdr := (*stringHeader)(unsafe.Pointer(&s))
-	hdr.Data = unsafe.Pointer(n.data(3))
-	hdr.Len = nl
+	hdr.Data = unsafe.Pointer(&b[3])
+	hdr.Len = int(b[1])<<8 | int(b[2])
 	return s
 }
 
@@ -657,16 +663,10 @@ type typeOff int32 // offset to an *rtype
 type textOff int32 // offset from top of text section
 
 func (t *rtype) nameOff(off nameOff) name {
-	if off == 0 {
-		return name{}
-	}
 	return name{(*byte)(resolveNameOff(unsafe.Pointer(t), int32(off)))}
 }
 
 func (t *rtype) typeOff(off typeOff) *rtype {
-	if off == 0 {
-		return nil
-	}
 	return (*rtype)(resolveTypeOff(unsafe.Pointer(t), int32(off)))
 }
 
@@ -818,6 +818,9 @@ func (t *rtype) NumMethod() int {
 		tt := (*interfaceType)(unsafe.Pointer(t))
 		return tt.NumMethod()
 	}
+	if t.tflag&tflagUncommon == 0 {
+		return 0 // avoid methodCache lock in zero case
+	}
 	return len(t.exportedMethods())
 }
 
@@ -876,6 +879,9 @@ func (t *rtype) MethodByName(name string) (m Method, ok bool) {
 }
 
 func (t *rtype) PkgPath() string {
+	if t.tflag&tflagNamed == 0 {
+		return ""
+	}
 	ut := t.uncommon()
 	if ut == nil {
 		return ""
@@ -888,29 +894,10 @@ func hasPrefix(s, prefix string) bool {
 }
 
 func (t *rtype) Name() string {
+	if t.tflag&tflagNamed == 0 {
+		return ""
+	}
 	s := t.String()
-	if hasPrefix(s, "map[") {
-		return ""
-	}
-	if hasPrefix(s, "struct {") {
-		return ""
-	}
-	if hasPrefix(s, "chan ") {
-		return ""
-	}
-	if hasPrefix(s, "chan<-") {
-		return ""
-	}
-	if hasPrefix(s, "func(") {
-		return ""
-	}
-	if hasPrefix(s, "interface {") {
-		return ""
-	}
-	switch s[0] {
-	case '[', '*', '<':
-		return ""
-	}
 	i := len(s) - 1
 	for i >= 0 {
 		if s[i] == '.' {
@@ -1428,6 +1415,10 @@ func PtrTo(t Type) Type {
 }
 
 func (t *rtype) ptrTo() *rtype {
+	if t.ptrToThis != 0 {
+		return t.typeOff(t.ptrToThis)
+	}
+
 	// Check the cache.
 	ptrMap.RLock()
 	if m := ptrMap.m; m != nil {
@@ -1462,25 +1453,24 @@ func (t *rtype) ptrTo() *rtype {
 
 	// Create a new ptrType starting with the description
 	// of an *unsafe.Pointer.
-	p = new(ptrType)
 	var iptr interface{} = (*unsafe.Pointer)(nil)
 	prototype := *(**ptrType)(unsafe.Pointer(&iptr))
-	*p = *prototype
+	pp := *prototype
 
-	p.str = resolveReflectName(newName(s, "", "", false))
+	pp.str = resolveReflectName(newName(s, "", "", false))
 
 	// For the type structures linked into the binary, the
 	// compiler provides a good hash of the string.
 	// Create a good hash for the new string by using
 	// the FNV-1 hash's mixing function to combine the
 	// old hash and the new "*".
-	p.hash = fnv1(t.hash, '*')
+	pp.hash = fnv1(t.hash, '*')
 
-	p.elem = t
+	pp.elem = t
 
-	ptrMap.m[t] = p
+	ptrMap.m[t] = &pp
 	ptrMap.Unlock()
-	return &p.rtype
+	return &pp.rtype
 }
 
 // fnv1 incorporates the list of bytes into the hash x using the FNV-1 hash function.
@@ -1858,8 +1848,8 @@ func ChanOf(dir ChanDir, t Type) Type {
 	// Make a channel type.
 	var ichan interface{} = (chan unsafe.Pointer)(nil)
 	prototype := *(**chanType)(unsafe.Pointer(&ichan))
-	ch := new(chanType)
-	*ch = *prototype
+	ch := *prototype
+	ch.tflag = 0
 	ch.dir = uintptr(dir)
 	ch.str = resolveReflectName(newName(s, "", "", false))
 	ch.hash = fnv1(typ.hash, 'c', byte(dir))
@@ -1901,9 +1891,9 @@ func MapOf(key, elem Type) Type {
 
 	// Make a map type.
 	var imap interface{} = (map[unsafe.Pointer]unsafe.Pointer)(nil)
-	mt := new(mapType)
-	*mt = **(**mapType)(unsafe.Pointer(&imap))
+	mt := **(**mapType)(unsafe.Pointer(&imap))
 	mt.str = resolveReflectName(newName(s, "", "", false))
+	mt.tflag = 0
 	mt.hash = fnv1(etyp.hash, 'm', byte(ktyp.hash>>24), byte(ktyp.hash>>16), byte(ktyp.hash>>8), byte(ktyp.hash))
 	mt.key = ktyp
 	mt.elem = etyp
@@ -1925,6 +1915,7 @@ func MapOf(key, elem Type) Type {
 	mt.bucketsize = uint16(mt.bucket.size)
 	mt.reflexivekey = isReflexive(ktyp)
 	mt.needkeyupdate = needKeyUpdate(ktyp)
+	mt.ptrToThis = 0
 
 	return cachePut(ckey, &mt.rtype)
 }
@@ -2063,6 +2054,7 @@ func FuncOf(in, out []Type, variadic bool) Type {
 
 	// Populate the remaining fields of ft and store in cache.
 	ft.str = resolveReflectName(newName(str, "", "", false))
+	ft.ptrToThis = 0
 	funcLookupCache.m[hash] = append(funcLookupCache.m[hash], &ft.rtype)
 
 	return &ft.rtype
@@ -2250,15 +2242,16 @@ func bucketOf(ktyp, etyp *rtype) *rtype {
 		}
 	}
 
-	b := new(rtype)
-	b.align = ptrSize
+	b := &rtype{
+		align:   ptrSize,
+		size:    size,
+		kind:    kind,
+		ptrdata: ptrdata,
+		gcdata:  gcdata,
+	}
 	if overflowPad > 0 {
 		b.align = 8
 	}
-	b.size = size
-	b.ptrdata = ptrdata
-	b.kind = kind
-	b.gcdata = gcdata
 	s := "bucket(" + ktyp.String() + "," + etyp.String() + ")"
 	b.str = resolveReflectName(newName(s, "", "", false))
 	return b
@@ -2287,12 +2280,12 @@ func SliceOf(t Type) Type {
 	// Make a slice type.
 	var islice interface{} = ([]unsafe.Pointer)(nil)
 	prototype := *(**sliceType)(unsafe.Pointer(&islice))
-	slice := new(sliceType)
-	*slice = *prototype
+	slice := *prototype
 	slice.tflag = 0
 	slice.str = resolveReflectName(newName(s, "", "", false))
 	slice.hash = fnv1(typ.hash, '[')
 	slice.elem = typ
+	slice.ptrToThis = 0
 
 	return cachePut(ckey, &slice.rtype)
 }
@@ -2584,7 +2577,7 @@ func StructOf(fields []StructField) Type {
 		panic("reflect.StructOf: too many methods")
 	}
 	ut.mcount = uint16(len(methods))
-	ut.moff = uint16(unsafe.Sizeof(uncommonType{}))
+	ut.moff = uint32(unsafe.Sizeof(uncommonType{}))
 
 	if len(fs) > 0 {
 		repr = append(repr, ' ')
@@ -2831,8 +2824,7 @@ func ArrayOf(count int, elem Type) Type {
 	// Make an array type.
 	var iarray interface{} = [1]unsafe.Pointer{}
 	prototype := *(**arrayType)(unsafe.Pointer(&iarray))
-	array := new(arrayType)
-	*array = *prototype
+	array := *prototype
 	array.str = resolveReflectName(newName(s, "", "", false))
 	array.hash = fnv1(typ.hash, '[')
 	for n := uint32(count); n > 0; n >>= 8 {
@@ -2840,6 +2832,7 @@ func ArrayOf(count int, elem Type) Type {
 	}
 	array.hash = fnv1(array.hash, ']')
 	array.elem = typ
+	array.ptrToThis = 0
 	max := ^uintptr(0) / typ.size
 	if uintptr(count) > max {
 		panic("reflect.ArrayOf: array size would exceed virtual address space")
@@ -3071,13 +3064,14 @@ func funcLayout(t *rtype, rcvr *rtype) (frametype *rtype, argSize, retOffset uin
 	offset += -offset & (ptrSize - 1)
 
 	// build dummy rtype holding gc program
-	x := new(rtype)
-	x.align = ptrSize
+	x := &rtype{
+		align:   ptrSize,
+		size:    offset,
+		ptrdata: uintptr(ptrmap.n) * ptrSize,
+	}
 	if runtime.GOARCH == "amd64p32" {
 		x.align = 8
 	}
-	x.size = offset
-	x.ptrdata = uintptr(ptrmap.n) * ptrSize
 	if ptrmap.n > 0 {
 		x.gcdata = &ptrmap.data[0]
 	} else {

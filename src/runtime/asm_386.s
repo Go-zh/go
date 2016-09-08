@@ -193,9 +193,7 @@ TEXT runtime·asminit(SB),NOSPLIT,$0-0
 	// Other operating systems use double precision.
 	// Change to double precision to match them,
 	// and to match other hardware that only has double.
-	PUSHL $0x27F
-	FLDCW	0(SP)
-	POPL AX
+	FLDCW	runtime·controlWord64(SB)
 	RET
 
 /*
@@ -845,9 +843,6 @@ TEXT runtime·ldt0setup(SB),NOSPLIT,$16-0
 TEXT runtime·emptyfunc(SB),0,$0-0
 	RET
 
-TEXT runtime·abort(SB),NOSPLIT,$0-0
-	INT $0x3
-
 // memhash_varlen(p unsafe.Pointer, h seed) uintptr
 // redirects to memhash(p, h, size) using the size
 // stored in the closure.
@@ -1292,15 +1287,15 @@ eq:
 // See runtime_test.go:eqstring_generic for
 // equivalent Go code.
 TEXT runtime·eqstring(SB),NOSPLIT,$0-17
-	MOVL	s1str+0(FP), SI
-	MOVL	s2str+8(FP), DI
+	MOVL	s1_base+0(FP), SI
+	MOVL	s2_base+8(FP), DI
 	CMPL	SI, DI
 	JEQ	same
-	MOVL	s1len+4(FP), BX
-	LEAL	v+16(FP), AX
+	MOVL	s1_len+4(FP), BX
+	LEAL	ret+16(FP), AX
 	JMP	runtime·memeqbody(SB)
 same:
-	MOVB	$1, v+16(FP)
+	MOVB	$1, ret+16(FP)
 	RET
 
 TEXT bytes·Equal(SB),NOSPLIT,$0-25
@@ -1578,7 +1573,7 @@ allsame:
 	MOVL	BX, (AX)
 	RET
 
-TEXT runtime·fastrand1(SB), NOSPLIT, $0-4
+TEXT runtime·fastrand(SB), NOSPLIT, $0-4
 	get_tls(CX)
 	MOVL	g(CX), AX
 	MOVL	g_m(AX), AX
@@ -1637,3 +1632,21 @@ TEXT runtime·addmoduledata(SB),NOSPLIT,$0-0
        MOVL    AX, moduledata_next(DX)
        MOVL    AX, runtime·lastmoduledatap(SB)
        RET
+
+TEXT runtime·uint32tofloat64(SB),NOSPLIT,$8-12
+	MOVL	a+0(FP), AX
+	MOVL	AX, 0(SP)
+	MOVL	$0, 4(SP)
+	FMOVV	0(SP), F0
+	FMOVDP	F0, ret+4(FP)
+	RET
+
+TEXT runtime·float64touint32(SB),NOSPLIT,$12-12
+	FMOVD	a+0(FP), F0
+	FSTCW	0(SP)
+	FLDCW	runtime·controlWord64trunc(SB)
+	FMOVVP	F0, 4(SP)
+	FLDCW	0(SP)
+	MOVL	4(SP), AX
+	MOVL	AX, ret+8(FP)
+	RET

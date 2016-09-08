@@ -7,6 +7,7 @@ package gc
 import (
 	"bufio"
 	"bytes"
+	"cmd/compile/internal/syntax"
 	"cmd/internal/obj"
 	"fmt"
 	"io"
@@ -60,7 +61,7 @@ func plan9quote(s string) string {
 	return s
 }
 
-type Pragma uint16
+type Pragma syntax.Pragma
 
 const (
 	Nointerface       Pragma = 1 << iota
@@ -72,7 +73,56 @@ const (
 	Nowritebarrier           // emit compiler error instead of write barrier
 	Nowritebarrierrec        // error on write barrier in this or recursive callees
 	CgoUnsafeArgs            // treat a pointer to one arg as a pointer to them all
+	UintptrEscapes           // pointers converted to uintptr escape
 )
+
+func PragmaValue(verb string) Pragma {
+	switch verb {
+	case "go:nointerface":
+		if obj.Fieldtrack_enabled != 0 {
+			return Nointerface
+		}
+	case "go:noescape":
+		return Noescape
+	case "go:norace":
+		return Norace
+	case "go:nosplit":
+		return Nosplit
+	case "go:noinline":
+		return Noinline
+	case "go:systemstack":
+		if !compiling_runtime {
+			Yyerror("//go:systemstack only allowed in runtime")
+		}
+		return Systemstack
+	case "go:nowritebarrier":
+		if !compiling_runtime {
+			Yyerror("//go:nowritebarrier only allowed in runtime")
+		}
+		return Nowritebarrier
+	case "go:nowritebarrierrec":
+		if !compiling_runtime {
+			Yyerror("//go:nowritebarrierrec only allowed in runtime")
+		}
+		return Nowritebarrierrec | Nowritebarrier // implies Nowritebarrier
+	case "go:cgo_unsafe_args":
+		return CgoUnsafeArgs
+	case "go:uintptrescapes":
+		// For the next function declared in the file
+		// any uintptr arguments may be pointer values
+		// converted to uintptr. This directive
+		// ensures that the referenced allocated
+		// object, if any, is retained and not moved
+		// until the call completes, even though from
+		// the types alone it would appear that the
+		// object is no longer needed during the
+		// call. The conversion to uintptr must appear
+		// in the argument list.
+		// Used in syscall/dll_windows.go.
+		return UintptrEscapes
+	}
+	return 0
+}
 
 type lexer struct {
 	// source
@@ -468,12 +518,6 @@ l0:
 		l.nlsemi = true
 		goto lx
 
-	case '#', '$', '?', '@', '\\':
-		if importpkg != nil {
-			goto lx
-		}
-		fallthrough
-
 	default:
 		// anything else is illegal
 		Yyerror("syntax error: illegal character %#U", c)
@@ -535,7 +579,7 @@ func (l *lexer) ident(c rune) {
 	// general case
 	for {
 		if c >= utf8.RuneSelf {
-			if unicode.IsLetter(c) || c == '_' || unicode.IsDigit(c) || importpkg != nil && c == 0xb7 {
+			if unicode.IsLetter(c) || c == '_' || unicode.IsDigit(c) {
 				if cp.Len() == 0 && unicode.IsDigit(c) {
 					Yyerror("identifier cannot begin with digit %#U", c)
 				}
@@ -671,18 +715,10 @@ func (l *lexer) number(c rune) {
 				cp.WriteByte(byte(c))
 				c = l.getr()
 			}
-			// Falling through to exponent parsing here permits invalid
-			// floating-point numbers with fractional mantissa and base-2
-			// (p or P) exponent. We don't care because base-2 exponents
-			// can only show up in machine-generated textual export data
-			// which will use correct formatting.
 		}
 
 		// exponent
-		// base-2 exponent (p or P) is only allowed in export data (see #9036)
-		// TODO(gri) Once we switch to binary import data, importpkg will
-		// always be nil in this function. Simplify the code accordingly.
-		if c == 'e' || c == 'E' || importpkg != nil && (c == 'p' || c == 'P') {
+		if c == 'e' || c == 'E' {
 			isInt = false
 			cp.WriteByte(byte(c))
 			c = l.getr()
@@ -901,35 +937,8 @@ func (l *lexer) getlinepragma() rune {
 				break
 			}
 			Lookup(f[1]).Linkname = f[2]
-		case "go:nointerface":
-			if obj.Fieldtrack_enabled != 0 {
-				l.pragma |= Nointerface
-			}
-		case "go:noescape":
-			l.pragma |= Noescape
-		case "go:norace":
-			l.pragma |= Norace
-		case "go:nosplit":
-			l.pragma |= Nosplit
-		case "go:noinline":
-			l.pragma |= Noinline
-		case "go:systemstack":
-			if !compiling_runtime {
-				Yyerror("//go:systemstack only allowed in runtime")
-			}
-			l.pragma |= Systemstack
-		case "go:nowritebarrier":
-			if !compiling_runtime {
-				Yyerror("//go:nowritebarrier only allowed in runtime")
-			}
-			l.pragma |= Nowritebarrier
-		case "go:nowritebarrierrec":
-			if !compiling_runtime {
-				Yyerror("//go:nowritebarrierrec only allowed in runtime")
-			}
-			l.pragma |= Nowritebarrierrec | Nowritebarrier // implies Nowritebarrier
-		case "go:cgo_unsafe_args":
-			l.pragma |= CgoUnsafeArgs
+		default:
+			l.pragma |= PragmaValue(verb)
 		}
 		return c
 	}
@@ -1110,9 +1119,7 @@ redo:
 	case 0:
 		yyerrorl(lexlineno, "illegal NUL byte")
 	case '\n':
-		if importpkg == nil {
-			lexlineno++
-		}
+		lexlineno++
 	case utf8.RuneError:
 		if w == 1 {
 			yyerrorl(lexlineno, "illegal UTF-8 sequence")

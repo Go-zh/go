@@ -144,7 +144,7 @@ func closeDB(t testing.TB, db *DB) {
 	count := db.numOpen
 	db.mu.Unlock()
 	if count != 0 {
-		t.Fatalf("%d connections still open after closing DB", db.numOpen)
+		t.Fatalf("%d connections still open after closing DB", count)
 	}
 }
 
@@ -1239,7 +1239,7 @@ func TestPendingConnsAfterErr(t *testing.T) {
 	time.Sleep(10 * time.Millisecond) // make extra sure all workers are blocked
 	close(unblock)                    // let all workers proceed
 
-	const timeout = 100 * time.Millisecond
+	const timeout = 5 * time.Second
 	to := time.NewTimer(timeout)
 	defer to.Stop()
 
@@ -1615,6 +1615,8 @@ func TestManyErrBadConn(t *testing.T) {
 			}
 		}()
 
+		db.mu.Lock()
+		defer db.mu.Unlock()
 		if db.numOpen != nconn {
 			t.Fatalf("unexpected numOpen %d (was expecting %d)", db.numOpen, nconn)
 		} else if len(db.freeConn) != nconn {
@@ -2295,6 +2297,53 @@ func TestConnectionLeak(t *testing.T) {
 	// connection.
 	drv.waitCh <- struct{}{}
 	wg.Wait()
+}
+
+// badConn implements a bad driver.Conn, for TestBadDriver.
+// The Exec method panics.
+type badConn struct{}
+
+func (bc badConn) Prepare(query string) (driver.Stmt, error) {
+	return nil, errors.New("badConn Prepare")
+}
+
+func (bc badConn) Close() error {
+	return nil
+}
+
+func (bc badConn) Begin() (driver.Tx, error) {
+	return nil, errors.New("badConn Begin")
+}
+
+func (bc badConn) Exec(query string, args []driver.Value) (driver.Result, error) {
+	panic("badConn.Exec")
+}
+
+// badDriver is a driver.Driver that uses badConn.
+type badDriver struct{}
+
+func (bd badDriver) Open(name string) (driver.Conn, error) {
+	return badConn{}, nil
+}
+
+// Issue 15901.
+func TestBadDriver(t *testing.T) {
+	Register("bad", badDriver{})
+	db, err := Open("bad", "ignored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic")
+		} else {
+			if want := "badConn.Exec"; r.(string) != want {
+				t.Errorf("panic was %v, expected %v", r, want)
+			}
+		}
+	}()
+	defer db.Close()
+	db.Exec("ignored")
 }
 
 func BenchmarkConcurrentDBExec(b *testing.B) {

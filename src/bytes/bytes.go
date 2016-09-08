@@ -93,37 +93,6 @@ func ContainsRune(b []byte, r rune) bool {
 	return IndexRune(b, r) >= 0
 }
 
-// Index returns the index of the first instance of sep in s, or -1 if sep is not present in s.
-func Index(s, sep []byte) int {
-	n := len(sep)
-	if n == 0 {
-		return 0
-	}
-	if n > len(s) {
-		return -1
-	}
-	c := sep[0]
-	if n == 1 {
-		return IndexByte(s, c)
-	}
-	i := 0
-	t := s[:len(s)-n+1]
-	for i < len(t) {
-		if t[i] != c {
-			o := IndexByte(t[i:], c)
-			if o < 0 {
-				break
-			}
-			i += o
-		}
-		if Equal(s[i:i+n], sep) {
-			return i
-		}
-		i++
-	}
-	return -1
-}
-
 func indexBytePortable(s []byte, c byte) int {
 	for i, b := range s {
 		if b == c {
@@ -162,14 +131,12 @@ func LastIndexByte(s []byte, c byte) int {
 // It returns the byte index of the first occurrence in s of the given rune.
 // It returns -1 if rune is not present in s.
 func IndexRune(s []byte, r rune) int {
-	for i := 0; i < len(s); {
-		r1, size := utf8.DecodeRune(s[i:])
-		if r == r1 {
-			return i
-		}
-		i += size
+	if r < utf8.RuneSelf {
+		return IndexByte(s, byte(r))
 	}
-	return -1
+	var b [utf8.UTFMax]byte
+	n := utf8.EncodeRune(b[:], r)
+	return Index(s, b[:n])
 }
 
 // IndexAny interprets s as a sequence of UTF-8-encoded Unicode code points.

@@ -863,15 +863,17 @@ func esc(e *EscState, n *Node, up *Node) {
 		escassignNilWhy(e, n, n.Left, "interface-converted")
 
 	case OARRAYLIT:
-		why := "array literal element"
-		if n.Type.IsSlice() {
-			// Slice itself is not leaked until proven otherwise
-			e.track(n)
-			why = "slice literal element"
-		}
-		// Link values to array/slice
+		// Link values to array
 		for _, n5 := range n.List.Slice() {
-			escassign(e, n, n5.Right, e.stepAssign(nil, n, n5.Right, why))
+			escassign(e, n, n5.Right, e.stepAssign(nil, n, n5.Right, "array literal element"))
+		}
+
+	case OSLICELIT:
+		// Slice is not leaked until proven otherwise
+		e.track(n)
+		// Link values to slice
+		for _, n5 := range n.List.Slice() {
+			escassign(e, n, n5.Right, e.stepAssign(nil, n, n5.Right, "slice literal element"))
 		}
 
 		// Link values to struct.
@@ -1015,6 +1017,7 @@ func escassign(e *EscState, dst, src *Node, step *EscStep) {
 		Fatalf("escassign: unexpected dst")
 
 	case OARRAYLIT,
+		OSLICELIT,
 		OCLOSURE,
 		OCONV,
 		OCONVIFACE,
@@ -1071,6 +1074,7 @@ func escassign(e *EscState, dst, src *Node, step *EscStep) {
 		ODDDARG,
 		OPTRLIT,
 		OARRAYLIT,
+		OSLICELIT,
 		OMAPLIT,
 		OSTRUCTLIT,
 		OMAKECHAN,
@@ -1551,10 +1555,12 @@ func esccall(e *EscState, n *Node, up *Node) {
 	}
 
 	var src *Node
+	note := ""
 	i := 0
 	lls := ll.Slice()
 	for t, it := IterFields(fntype.Params()); i < len(lls); i++ {
 		src = lls[i]
+		note = t.Note
 		if t.Isddd && !n.Isddd {
 			// Introduce ODDDARG node to represent ... allocation.
 			src = Nod(ODDDARG, nil, nil)
@@ -1566,7 +1572,7 @@ func esccall(e *EscState, n *Node, up *Node) {
 		}
 
 		if haspointers(t.Type) {
-			if escassignfromtag(e, t.Note, nE.Escretval, src) == EscNone && up.Op != ODEFER && up.Op != OPROC {
+			if escassignfromtag(e, note, nE.Escretval, src)&EscMask == EscNone && up.Op != ODEFER && up.Op != OPROC {
 				a := src
 				for a.Op == OCONVNOP {
 					a = a.Left
@@ -1585,6 +1591,7 @@ func esccall(e *EscState, n *Node, up *Node) {
 					OCLOSURE,
 					ODDDARG,
 					OARRAYLIT,
+					OSLICELIT,
 					OPTRLIT,
 					OSTRUCTLIT:
 					a.Noescape = true
@@ -1596,14 +1603,24 @@ func esccall(e *EscState, n *Node, up *Node) {
 			// This occurs when function parameter type Isddd and n not Isddd
 			break
 		}
+
+		if note == uintptrEscapesTag {
+			escassignSinkNilWhy(e, src, src, "escaping uintptr")
+		}
+
 		t = it.Next()
 	}
 
+	// Store arguments into slice for ... arg.
 	for ; i < len(lls); i++ {
 		if Debug['m'] > 3 {
 			fmt.Printf("%v::esccall:: ... <- %v\n", linestr(lineno), Nconv(lls[i], FmtShort))
 		}
-		escassignNilWhy(e, src, lls[i], "arg to ...") // args to slice
+		if note == uintptrEscapesTag {
+			escassignSinkNilWhy(e, src, lls[i], "arg to uintptrescapes ...")
+		} else {
+			escassignNilWhy(e, src, lls[i], "arg to ...")
+		}
 	}
 }
 
@@ -1869,10 +1886,7 @@ func escwalkBody(e *EscState, level Level, dst *Node, src *Node, step *EscStep, 
 		// similar to a slice arraylit and its args.
 		level = level.dec()
 
-	case OARRAYLIT:
-		if src.Type.IsArray() {
-			break
-		}
+	case OSLICELIT:
 		for _, n1 := range src.List.Slice() {
 			escwalk(e, level.dec(), dst, n1.Right, e.stepWalk(dst, n1.Right, "slice-literal-element", step))
 		}
@@ -1963,8 +1977,19 @@ recurse:
 // lets us take the address below to get a *string.
 var unsafeUintptrTag = "unsafe-uintptr"
 
+// This special tag is applied to uintptr parameters of functions
+// marked go:uintptrescapes.
+const uintptrEscapesTag = "uintptr-escapes"
+
 func esctag(e *EscState, func_ *Node) {
 	func_.Esc = EscFuncTagged
+
+	name := func(s *Sym, narg int) string {
+		if s != nil {
+			return s.Name
+		}
+		return fmt.Sprintf("arg#%d", narg)
+	}
 
 	// External functions are assumed unsafe,
 	// unless //go:noescape is given before the declaration.
@@ -1988,19 +2013,34 @@ func esctag(e *EscState, func_ *Node) {
 			narg++
 			if t.Type.Etype == TUINTPTR {
 				if Debug['m'] != 0 {
-					var name string
-					if t.Sym != nil {
-						name = t.Sym.Name
-					} else {
-						name = fmt.Sprintf("arg#%d", narg)
-					}
-					Warnl(func_.Lineno, "%v assuming %v is unsafe uintptr", funcSym(func_), name)
+					Warnl(func_.Lineno, "%v assuming %v is unsafe uintptr", funcSym(func_), name(t.Sym, narg))
 				}
 				t.Note = unsafeUintptrTag
 			}
 		}
 
 		return
+	}
+
+	if func_.Func.Pragma&UintptrEscapes != 0 {
+		narg := 0
+		for _, t := range func_.Type.Params().Fields().Slice() {
+			narg++
+			if t.Type.Etype == TUINTPTR {
+				if Debug['m'] != 0 {
+					Warnl(func_.Lineno, "%v marking %v as escaping uintptr", funcSym(func_), name(t.Sym, narg))
+				}
+				t.Note = uintptrEscapesTag
+			}
+
+			if t.Isddd && t.Type.Elem().Etype == TUINTPTR {
+				// final argument is ...uintptr.
+				if Debug['m'] != 0 {
+					Warnl(func_.Lineno, "%v marking %v as escaping ...uintptr", funcSym(func_), name(t.Sym, narg))
+				}
+				t.Note = uintptrEscapesTag
+			}
+		}
 	}
 
 	savefn := Curfn
@@ -2015,7 +2055,9 @@ func esctag(e *EscState, func_ *Node) {
 		case EscNone, // not touched by escflood
 			EscReturn:
 			if haspointers(ln.Type) { // don't bother tagging for scalars
-				ln.Name.Param.Field.Note = mktag(int(ln.Esc))
+				if ln.Name.Param.Field.Note != uintptrEscapesTag {
+					ln.Name.Param.Field.Note = mktag(int(ln.Esc))
+				}
 			}
 
 		case EscHeap, // touched by escflood, moved to heap

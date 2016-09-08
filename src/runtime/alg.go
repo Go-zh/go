@@ -109,7 +109,7 @@ func f32hash(p unsafe.Pointer, h uintptr) uintptr {
 	case f == 0:
 		return c1 * (c0 ^ h) // +0, -0
 	case f != f:
-		return c1 * (c0 ^ h ^ uintptr(fastrand1())) // any kind of NaN
+		return c1 * (c0 ^ h ^ uintptr(fastrand())) // any kind of NaN
 	default:
 		return memhash(p, h, 4)
 	}
@@ -121,7 +121,7 @@ func f64hash(p unsafe.Pointer, h uintptr) uintptr {
 	case f == 0:
 		return c1 * (c0 ^ h) // +0, -0
 	case f != f:
-		return c1 * (c0 ^ h ^ uintptr(fastrand1())) // any kind of NaN
+		return c1 * (c0 ^ h ^ uintptr(fastrand())) // any kind of NaN
 	default:
 		return memhash(p, h, 8)
 	}
@@ -289,7 +289,7 @@ var aeskeysched [hashRandomBytes]byte
 // used in hash{32,64}.go to seed the hash function
 var hashkey [4]uintptr
 
-func init() {
+func alginit() {
 	// Install aes hash algorithm if we have the instructions we need
 	if (GOARCH == "386" || GOARCH == "amd64") &&
 		GOOS != "nacl" &&

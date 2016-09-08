@@ -103,23 +103,6 @@ func (n *Node) isParamHeapCopy() bool {
 	return n.Op == ONAME && n.Class == PAUTOHEAP && n.Name.Param.Stackcopy != nil
 }
 
-// paramClass reports the parameter class (PPARAM or PPARAMOUT)
-// of the node, which may be an unmoved on-stack parameter
-// or the on-heap or on-stack copy of a parameter that moved to the heap.
-// If the node is not a parameter, paramClass returns Pxxx.
-func (n *Node) paramClass() Class {
-	if n.Op != ONAME {
-		return Pxxx
-	}
-	if n.Class == PPARAM || n.Class == PPARAMOUT {
-		return n.Class
-	}
-	if n.isParamHeapCopy() {
-		return n.Name.Param.Stackcopy.Class
-	}
-	return Pxxx
-}
-
 // moveToHeap records the parameter or local variable n as moved to the heap.
 func moveToHeap(n *Node) {
 	if Debug['r'] != 0 {
@@ -159,6 +142,14 @@ func moveToHeap(n *Node) {
 		stackcopy.Name.Heapaddr = heapaddr
 		if n.Class == PPARAM {
 			stackcopy.SetNotLiveAtEnd(true)
+		}
+		if n.Class == PPARAMOUT {
+			// Make sure the pointer to the heap copy is kept live throughout the function.
+			// The function could panic at any point, and then a defer could recover.
+			// Thus, we need the pointer to the heap copy always available so the
+			// post-deferreturn code can copy the return value back to the stack.
+			// See issue 16095.
+			heapaddr.setIsOutputParamHeapAddr(true)
 		}
 		n.Name.Param.Stackcopy = stackcopy
 
@@ -209,6 +200,9 @@ func newlab(n *Node) *Label {
 		lab = new(Label)
 		lab.Sym = s
 		s.Label = lab
+		if n.Used {
+			lab.Used = true
+		}
 		labellist = append(labellist, lab)
 	}
 

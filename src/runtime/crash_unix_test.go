@@ -19,6 +19,10 @@ import (
 	"testing"
 )
 
+// sigquit is the signal to send to kill a hanging testdata program.
+// Send SIGQUIT to get a stack trace.
+var sigquit = syscall.SIGQUIT
+
 func TestCrashDumpsAllThreads(t *testing.T) {
 	switch runtime.GOOS {
 	case "darwin", "dragonfly", "freebsd", "linux", "netbsd", "openbsd", "solaris":
@@ -43,7 +47,7 @@ func TestCrashDumpsAllThreads(t *testing.T) {
 		t.Fatalf("failed to create Go file: %v", err)
 	}
 
-	cmd := exec.Command("go", "build", "-o", "a.exe")
+	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", "a.exe")
 	cmd.Dir = dir
 	out, err := testEnv(cmd).CombinedOutput()
 	if err != nil {

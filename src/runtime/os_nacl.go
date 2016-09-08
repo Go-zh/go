@@ -116,6 +116,7 @@ func osinit() {
 	ncpu = 1
 	getg().m.procid = 2
 	//nacl_exception_handler(funcPC(sigtramp), nil);
+	physPageSize = 65536
 }
 
 func signame(sig uint32) string {
@@ -246,7 +247,7 @@ func memlimit() uintptr {
 //go:norace
 //go:nowritebarrierrec
 func badsignal(sig uintptr) {
-	cgocallback(unsafe.Pointer(funcPC(badsignalgo)), noescape(unsafe.Pointer(&sig)), unsafe.Sizeof(sig))
+	cgocallback(unsafe.Pointer(funcPC(badsignalgo)), noescape(unsafe.Pointer(&sig)), unsafe.Sizeof(sig), 0)
 }
 
 func badsignalgo(sig uintptr) {

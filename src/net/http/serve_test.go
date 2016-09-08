@@ -9,6 +9,7 @@ package http_test
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -1106,11 +1107,44 @@ func TestTLSServer(t *testing.T) {
 	})
 }
 
-func TestAutomaticHTTP2_Serve(t *testing.T) {
+// Issue 15908
+func TestAutomaticHTTP2_Serve_NoTLSConfig(t *testing.T) {
+	testAutomaticHTTP2_Serve(t, nil, true)
+}
+
+func TestAutomaticHTTP2_Serve_NonH2TLSConfig(t *testing.T) {
+	testAutomaticHTTP2_Serve(t, &tls.Config{}, false)
+}
+
+func TestAutomaticHTTP2_Serve_H2TLSConfig(t *testing.T) {
+	testAutomaticHTTP2_Serve(t, &tls.Config{NextProtos: []string{"h2"}}, true)
+}
+
+func testAutomaticHTTP2_Serve(t *testing.T, tlsConf *tls.Config, wantH2 bool) {
 	defer afterTest(t)
 	ln := newLocalListener(t)
 	ln.Close() // immediately (not a defer!)
 	var s Server
+	s.TLSConfig = tlsConf
+	if err := s.Serve(ln); err == nil {
+		t.Fatal("expected an error")
+	}
+	gotH2 := s.TLSNextProto["h2"] != nil
+	if gotH2 != wantH2 {
+		t.Errorf("http2 configured = %v; want %v", gotH2, wantH2)
+	}
+}
+
+func TestAutomaticHTTP2_Serve_WithTLSConfig(t *testing.T) {
+	defer afterTest(t)
+	ln := newLocalListener(t)
+	ln.Close() // immediately (not a defer!)
+	var s Server
+	// Set the TLSConfig. In reality, this would be the
+	// *tls.Config given to tls.NewListener.
+	s.TLSConfig = &tls.Config{
+		NextProtos: []string{"h2"},
+	}
 	if err := s.Serve(ln); err == nil {
 		t.Fatal("expected an error")
 	}
@@ -1703,7 +1737,7 @@ restart:
 		if !c.rd.IsZero() {
 			// If the deadline falls in the middle of our sleep window, deduct
 			// part of the sleep, then return a timeout.
-			if remaining := c.rd.Sub(time.Now()); remaining < cue {
+			if remaining := time.Until(c.rd); remaining < cue {
 				c.script[0] = cue - remaining
 				time.Sleep(remaining)
 				return 0, syscall.ETIMEDOUT
@@ -3957,6 +3991,8 @@ func TestServerValidatesHostHeader(t *testing.T) {
 		host  string
 		want  int
 	}{
+		{"HTTP/0.9", "", 400},
+
 		{"HTTP/1.1", "", 400},
 		{"HTTP/1.1", "Host: \r\n", 200},
 		{"HTTP/1.1", "Host: 1.2.3.4\r\n", 200},
@@ -3982,6 +4018,11 @@ func TestServerValidatesHostHeader(t *testing.T) {
 
 		// Make an exception for HTTP upgrade requests:
 		{"PRI * HTTP/2.0", "", 200},
+
+		// But not other HTTP/2 stuff:
+		{"PRI / HTTP/2.0", "", 400},
+		{"GET / HTTP/2.0", "", 400},
+		{"GET / HTTP/3.0", "", 400},
 	}
 	for _, tt := range tests {
 		conn := &testConn{closec: make(chan bool, 1)}
@@ -4200,6 +4241,24 @@ func TestHandlerSetTransferEncodingChunked(t *testing.T) {
 	}
 }
 
+// https://golang.org/issue/16063
+func TestHandlerSetTransferEncodingGzip(t *testing.T) {
+	defer afterTest(t)
+	ht := newHandlerTest(HandlerFunc(func(w ResponseWriter, r *Request) {
+		w.Header().Set("Transfer-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		gz.Write([]byte("hello"))
+		gz.Close()
+	}))
+	resp := ht.rawResponse("GET / HTTP/1.1\nHost: foo")
+	for _, v := range []string{"gzip", "chunked"} {
+		hdr := "Transfer-Encoding: " + v
+		if n := strings.Count(resp, hdr); n != 1 {
+			t.Errorf("want 1 occurrence of %q in response, got %v\nresponse: %v", hdr, n, resp)
+		}
+	}
+}
+
 func BenchmarkClientServer(b *testing.B) {
 	b.ReportAllocs()
 	b.StopTimer()
@@ -4357,13 +4416,19 @@ func BenchmarkClient(b *testing.B) {
 	b.StopTimer()
 	defer afterTest(b)
 
-	port := os.Getenv("TEST_BENCH_SERVER_PORT") // can be set by user
-	if port == "" {
-		port = "39207"
-	}
 	var data = []byte("Hello world.\n")
 	if server := os.Getenv("TEST_BENCH_SERVER"); server != "" {
 		// Server process mode.
+		port := os.Getenv("TEST_BENCH_SERVER_PORT") // can be set by user
+		if port == "" {
+			port = "0"
+		}
+		ln, err := net.Listen("tcp", "localhost:"+port)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		fmt.Println(ln.Addr().String())
 		HandleFunc("/", func(w ResponseWriter, r *Request) {
 			r.ParseForm()
 			if r.Form.Get("stop") != "" {
@@ -4372,32 +4437,43 @@ func BenchmarkClient(b *testing.B) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Write(data)
 		})
-		log.Fatal(ListenAndServe("localhost:"+port, nil))
+		var srv Server
+		log.Fatal(srv.Serve(ln))
 	}
 
 	// Start server process.
 	cmd := exec.Command(os.Args[0], "-test.run=XXXX", "-test.bench=BenchmarkClient$")
 	cmd.Env = append(os.Environ(), "TEST_BENCH_SERVER=yes")
+	cmd.Stderr = os.Stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		b.Fatal(err)
+	}
 	if err := cmd.Start(); err != nil {
 		b.Fatalf("subprocess failed to start: %v", err)
 	}
 	defer cmd.Process.Kill()
+
+	// Wait for the server in the child process to respond and tell us
+	// its listening address, once it's started listening:
+	timer := time.AfterFunc(10*time.Second, func() {
+		cmd.Process.Kill()
+	})
+	defer timer.Stop()
+	bs := bufio.NewScanner(stdout)
+	if !bs.Scan() {
+		b.Fatalf("failed to read listening URL from child: %v", bs.Err())
+	}
+	url := "http://" + strings.TrimSpace(bs.Text()) + "/"
+	timer.Stop()
+	if _, err := getNoBody(url); err != nil {
+		b.Fatalf("initial probe of child process failed: %v", err)
+	}
+
 	done := make(chan error)
 	go func() {
 		done <- cmd.Wait()
 	}()
-
-	// Wait for the server process to respond.
-	url := "http://localhost:" + port + "/"
-	for i := 0; i < 100; i++ {
-		time.Sleep(100 * time.Millisecond)
-		if _, err := getNoBody(url); err == nil {
-			break
-		}
-		if i == 99 {
-			b.Fatalf("subprocess does not respond")
-		}
-	}
 
 	// Do b.N requests to the server.
 	b.StartTimer()
@@ -4656,4 +4732,15 @@ func BenchmarkCloseNotifier(b *testing.B) {
 		}
 	}
 	b.StopTimer()
+}
+
+// Verify this doesn't race (Issue 16505)
+func TestConcurrentServerServe(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		ln1 := &oneConnListener{conn: nil}
+		ln2 := &oneConnListener{conn: nil}
+		srv := Server{}
+		go func() { srv.Serve(ln1) }()
+		go func() { srv.Serve(ln2) }()
+	}
 }

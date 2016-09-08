@@ -19,7 +19,7 @@
 //		B	runtime∕internal∕atomic·armcas(SB)
 //
 TEXT runtime∕internal∕atomic·armcas(SB),NOSPLIT,$0-13
-	MOVW	valptr+0(FP), R1
+	MOVW	ptr+0(FP), R1
 	MOVW	old+4(FP), R2
 	MOVW	new+8(FP), R3
 casl:
@@ -61,11 +61,11 @@ TEXT runtime∕internal∕atomic·Loaduint(SB),NOSPLIT,$0-8
 TEXT runtime∕internal∕atomic·Storeuintptr(SB),NOSPLIT,$0-8
 	B	runtime∕internal∕atomic·Store(SB)
 
-TEXT runtime∕internal∕atomic·Xadduintptr(SB),NOSPLIT,$0-8
+TEXT runtime∕internal∕atomic·Xadduintptr(SB),NOSPLIT,$0-12
 	B	runtime∕internal∕atomic·Xadd(SB)
 
-TEXT runtime∕internal∕atomic·Loadint64(SB),NOSPLIT,$0-16
+TEXT runtime∕internal∕atomic·Loadint64(SB),NOSPLIT,$0-12
 	B	runtime∕internal∕atomic·Load64(SB)
 
-TEXT runtime∕internal∕atomic·Xaddint64(SB),NOSPLIT,$0-16
+TEXT runtime∕internal∕atomic·Xaddint64(SB),NOSPLIT,$0-20
 	B	runtime∕internal∕atomic·Xadd64(SB)

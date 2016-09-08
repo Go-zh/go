@@ -54,12 +54,18 @@ func tighten(f *Func) {
 		for _, b := range f.Blocks {
 			for i := 0; i < len(b.Values); i++ {
 				v := b.Values[i]
-				if v.Op == OpPhi || v.Op == OpGetClosurePtr || v.Op == OpConvert || v.Op == OpArg {
+				switch v.Op {
+				case OpPhi, OpGetClosurePtr, OpConvert, OpArg:
 					// GetClosurePtr & Arg must stay in entry block.
 					// OpConvert must not float over call sites.
 					// TODO do we instead need a dependence edge of some sort for OpConvert?
 					// Would memory do the trick, or do we need something else that relates
 					// to safe point operations?
+					continue
+				default:
+				}
+				if v.Op == OpSelect0 || v.Op == OpSelect1 {
+					// tuple selector must stay with tuple generator
 					continue
 				}
 				if len(v.Args) > 0 && v.Args[len(v.Args)-1].Type.IsMemory() {
@@ -67,12 +73,15 @@ func tighten(f *Func) {
 					// make two memory values live across a block boundary.
 					continue
 				}
-				if uses[v.ID] == 1 && !phi[v.ID] && home[v.ID] != b && len(v.Args) < 2 {
+				if uses[v.ID] == 1 && !phi[v.ID] && home[v.ID] != b && (len(v.Args) < 2 || v.Type.IsBoolean()) {
 					// v is used in exactly one block, and it is not b.
 					// Furthermore, it takes at most one input,
 					// so moving it will not increase the
 					// number of live values anywhere.
 					// Move v to that block.
+					// Also move bool generators even if they have more than 1 input.
+					// They will likely be converted to flags, and we want flag
+					// generators moved next to uses (because we only have 1 flag register).
 					c := home[v.ID]
 					c.Values = append(c.Values, v)
 					v.Block = c
@@ -82,6 +91,29 @@ func tighten(f *Func) {
 					b.Values = b.Values[:last]
 					changed = true
 				}
+			}
+		}
+	}
+}
+
+// phiTighten moves constants closer to phi users.
+// This pass avoids having lots of constants live for lots of the program.
+// See issue 16407.
+func phiTighten(f *Func) {
+	for _, b := range f.Blocks {
+		for _, v := range b.Values {
+			if v.Op != OpPhi {
+				continue
+			}
+			for i, a := range v.Args {
+				if !a.rematerializeable() {
+					continue // not a constant we can move around
+				}
+				if a.Block == b.Preds[i].b {
+					continue // already in the right place
+				}
+				// Make a copy of a, put in predecessor block.
+				v.SetArg(i, a.copyInto(b.Preds[i].b))
 			}
 		}
 	}

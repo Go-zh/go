@@ -1,5 +1,5 @@
 // Inferno utils/5c/peep.c
-// http://code.google.com/p/inferno-os/source/browse/utils/5c/peep.c
+// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/5c/peep.c
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -538,7 +538,7 @@ gotit:
 	}
 
 	if gc.Debug['P'] != 0 {
-		fmt.Printf(" => %v\n", obj.Aconv(p.As))
+		fmt.Printf(" => %v\n", p.As)
 	}
 	return true
 }
@@ -1036,7 +1036,7 @@ func xtramodes(g *gc.Graph, r *gc.Flow, a *obj.Addr) bool {
 func copyu(p *obj.Prog, v *obj.Addr, s *obj.Addr) int {
 	switch p.As {
 	default:
-		fmt.Printf("copyu: can't find %v\n", obj.Aconv(p.As))
+		fmt.Printf("copyu: can't find %v\n", p.As)
 		return 2
 
 	case arm.AMOVM:

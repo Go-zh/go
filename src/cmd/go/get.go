@@ -43,6 +43,8 @@ The -u flag instructs get to use the network to update the named packages
 and their dependencies.  By default, get uses the network to check out
 missing packages but does not use it to look for updates to existing packages.
 
+The -v flag enables verbose progress and debug output.
+
 Get also accepts build flags to control the installation. See 'go help build'.
 
 When checking out a new package, get creates the target directory
@@ -55,8 +57,7 @@ rule is that if the local installation is running version "go1", get
 searches for a branch or tag named "go1". If no such version exists it
 retrieves the most recent version of the package.
 
-Unless vendoring support is disabled (see 'go help gopath'),
-when go get checks out or updates a Git repository,
+When go get checks out or updates a Git repository,
 it also updates any git submodules referenced by the repository.
 
 Get never checks out or updates code stored in vendor directories.
@@ -138,7 +139,7 @@ func runGet(cmd *Command, args []string) {
 		return
 	}
 
-	runInstall(cmd, args)
+	installPackages(args, true)
 }
 
 // downloadPaths prepares the list of paths to pass to download.

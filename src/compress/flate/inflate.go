@@ -344,6 +344,9 @@ func (f *decompressor) Read(b []byte) (int, error) {
 			return 0, f.err
 		}
 		f.step(f)
+		if f.err != nil && len(f.toRead) == 0 {
+			f.toRead = f.dict.readFlush() // Flush what's left in case of error
+		}
 	}
 }
 
@@ -766,7 +769,7 @@ func (f *decompressor) Reset(r io.Reader, dict []byte) error {
 		dict:     f.dict,
 		step:     (*decompressor).nextBlock,
 	}
-	f.dict.init(maxMatchOffset, nil)
+	f.dict.init(maxMatchOffset, dict)
 	return nil
 }
 

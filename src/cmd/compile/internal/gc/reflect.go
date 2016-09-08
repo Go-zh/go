@@ -18,9 +18,15 @@ type itabEntry struct {
 	sym      *Sym
 }
 
+type ptabEntry struct {
+	s *Sym
+	t *Type
+}
+
 // runtime interface and reflection data structures
 var signatlist []*Node
 var itabs []itabEntry
+var ptabs []ptabEntry
 
 type Sig struct {
 	name   string
@@ -75,7 +81,7 @@ func uncommonSize(t *Type) int { // Sizeof(runtime.uncommontype{})
 	if t.Sym == nil && len(methods(t)) == 0 {
 		return 0
 	}
-	return 4 + 2 + 2
+	return 4 + 2 + 2 + 4 + 4
 }
 
 func makefield(name string, t *Type) *Field {
@@ -282,7 +288,7 @@ func methodfunc(f *Type, receiver *Type) *Type {
 // Generates stub functions as needed.
 func methods(t *Type) []*Sig {
 	// method type
-	mt := methtype(t, 0)
+	mt := methtype(t)
 
 	if mt == nil {
 		return nil
@@ -604,17 +610,19 @@ func dextratype(s *Sym, ot int, t *Type, dataAdd int) int {
 
 	ot = dgopkgpathOffLSym(Linksym(s), ot, typePkg(t))
 
-	dataAdd += 4 + 2 + 2
+	dataAdd += uncommonSize(t)
 	mcount := len(m)
 	if mcount != int(uint16(mcount)) {
 		Fatalf("too many methods on %s: %d", t, mcount)
 	}
-	if dataAdd != int(uint16(dataAdd)) {
+	if dataAdd != int(uint32(dataAdd)) {
 		Fatalf("methods are too far away on %s: %d", t, dataAdd)
 	}
 
 	ot = duint16(s, ot, uint16(mcount))
-	ot = duint16(s, ot, uint16(dataAdd))
+	ot = duint16(s, ot, 0)
+	ot = duint32(s, ot, uint32(dataAdd))
+	ot = duint32(s, ot, 0)
 	return ot
 }
 
@@ -797,6 +805,7 @@ func typeptrdata(t *Type) int64 {
 const (
 	tflagUncommon  = 1 << 0
 	tflagExtraStar = 1 << 1
+	tflagNamed     = 1 << 2
 )
 
 var dcommontype_algarray *Sym
@@ -818,14 +827,10 @@ func dcommontype(s *Sym, ot int, t *Type) int {
 		algsym = dalgsym(t)
 	}
 
+	var sptr *Sym
 	tptr := Ptrto(t)
 	if !t.IsPtr() && (t.Sym != nil || methods(tptr) != nil) {
-		sptr := dtypesym(tptr)
-		r := obj.Addrel(Linksym(s))
-		r.Off = 0
-		r.Siz = 0
-		r.Sym = sptr.Lsym
-		r.Type = obj.R_USETYPE
+		sptr = dtypesym(tptr)
 	}
 
 	gcsym, useGCProg, ptrdata := dgcsym(t)
@@ -843,7 +848,7 @@ func dcommontype(s *Sym, ot int, t *Type) int {
 	//		alg           *typeAlg
 	//		gcdata        *byte
 	//		str           nameOff
-	//		_             int32
+	//		ptrToThis     typeOff
 	//	}
 	ot = duintptr(s, ot, uint64(t.Width))
 	ot = duintptr(s, ot, uint64(ptrdata))
@@ -853,6 +858,9 @@ func dcommontype(s *Sym, ot int, t *Type) int {
 	var tflag uint8
 	if uncommonSize(t) != 0 {
 		tflag |= tflagUncommon
+	}
+	if t.Sym != nil && t.Sym.Name != "" {
+		tflag |= tflagNamed
 	}
 
 	exported := false
@@ -907,8 +915,12 @@ func dcommontype(s *Sym, ot int, t *Type) int {
 	ot = dsymptr(s, ot, gcsym, 0) // gcdata
 
 	nsym := dname(p, "", nil, exported)
-	ot = dsymptrOffLSym(Linksym(s), ot, nsym, 0)
-	ot = duint32(s, ot, 0)
+	ot = dsymptrOffLSym(Linksym(s), ot, nsym, 0) // str
+	if sptr == nil {
+		ot = duint32(s, ot, 0)
+	} else {
+		ot = dsymptrOffLSym(Linksym(s), ot, Linksym(sptr), 0) // ptrToThis
+	}
 
 	return ot
 }
@@ -1295,6 +1307,15 @@ ok:
 		pkg := localpkg
 		if t.Sym != nil {
 			pkg = t.Sym.Pkg
+		} else {
+			// Unnamed type. Grab the package from the first field, if any.
+			for _, f := range t.Fields().Slice() {
+				if f.Embedded != 0 {
+					continue
+				}
+				pkg = f.Sym.Pkg
+				break
+			}
 		}
 		ot = dgopkgpath(s, ot, pkg)
 		ot = dsymptr(s, ot, s, ot+Widthptr+2*Widthint+uncommonSize(t))
@@ -1388,6 +1409,31 @@ func dumptypestructs() {
 		ilink := Pkglookup(Tconv(i.t, FmtLeft)+","+Tconv(i.itype, FmtLeft), itablinkpkg)
 		dsymptr(ilink, 0, i.sym, 0)
 		ggloblsym(ilink, int32(Widthptr), int16(obj.DUPOK|obj.RODATA))
+	}
+
+	// process ptabs
+	if localpkg.Name == "main" && len(ptabs) > 0 {
+		ot := 0
+		s := obj.Linklookup(Ctxt, "go.plugin.tabs", 0)
+		for _, p := range ptabs {
+			// Dump ptab symbol into go.pluginsym package.
+			//
+			// type ptab struct {
+			//	name nameOff
+			//	typ  typeOff // pointer to symbol
+			// }
+			nsym := dname(p.s.Name, "", nil, true)
+			ot = dsymptrOffLSym(s, ot, nsym, 0)
+			ot = dsymptrOffLSym(s, ot, Linksym(typesym(p.t)), 0)
+		}
+		ggloblLSym(s, int32(ot), int16(obj.RODATA))
+
+		ot = 0
+		s = obj.Linklookup(Ctxt, "go.plugin.exports", 0)
+		for _, p := range ptabs {
+			ot = dsymptrLSym(s, ot, Linksym(p.s), 0)
+		}
+		ggloblLSym(s, int32(ot), int16(obj.RODATA))
 	}
 
 	// generate import strings for imported packages

@@ -54,8 +54,7 @@ func slicerunetostring(*[32]byte, []rune) string
 func stringtoslicebyte(*[32]byte, string) []byte
 func stringtoslicebytetmp(string) []byte
 func stringtoslicerune(*[32]rune, string) []rune
-func stringiter(string, int) int
-func stringiter2(string, int) (retk int, retv rune)
+func charntorune(string, int) (retv rune, retk int)
 func slicecopy(to any, fr any, wid uintptr) int
 func slicestringcopy(to any, fr any) int
 
@@ -131,7 +130,8 @@ func selectdefault(sel *byte) (selected bool)
 func selectgo(sel *byte)
 func block()
 
-func makeslice(typ *byte, nel int64, cap int64) (ary []any)
+func makeslice(typ *byte, len int, cap int) (ary []any)
+func makeslice64(typ *byte, len int64, cap int64) (ary []any)
 func growslice(typ *byte, old []any, cap int) (ary []any)
 func memmove(to *any, frm *any, length uintptr)
 func memclr(ptr *byte, length uintptr)
@@ -150,8 +150,10 @@ func int64mod(int64, int64) int64
 func uint64mod(uint64, uint64) uint64
 func float64toint64(float64) int64
 func float64touint64(float64) uint64
+func float64touint32(float64) uint32
 func int64tofloat64(int64) float64
 func uint64tofloat64(uint64) float64
+func uint32tofloat64(uint32) float64
 
 func complex128div(num complex128, den complex128) (quo complex128)
 

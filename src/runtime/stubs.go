@@ -81,7 +81,7 @@ func reflect_memmove(to, from unsafe.Pointer, n uintptr) {
 var hashLoad = loadFactor
 
 // in asm_*.s
-func fastrand1() uint32
+func fastrand() uint32
 
 // in asm_*.s
 //go:noescape
@@ -90,7 +90,7 @@ func memequal(a, b unsafe.Pointer, size uintptr) bool
 // noescape hides a pointer from escape analysis.  noescape is
 // the identity function but escape analysis doesn't think the
 // output depends on the input.  noescape is inlined and currently
-// compiles down to a single xor instruction.
+// compiles down to zero instructions.
 // USE CAREFULLY!
 //go:nosplit
 func noescape(p unsafe.Pointer) unsafe.Pointer {
@@ -98,7 +98,7 @@ func noescape(p unsafe.Pointer) unsafe.Pointer {
 	return unsafe.Pointer(x ^ 0)
 }
 
-func cgocallback(fn, frame unsafe.Pointer, framesize uintptr)
+func cgocallback(fn, frame unsafe.Pointer, framesize, ctxt uintptr)
 func gogo(buf *gobuf)
 func gosave(buf *gobuf)
 func mincore(addr unsafe.Pointer, n uintptr, dst *byte) int32
@@ -143,7 +143,7 @@ func goexit(neverCallThisFunction)
 // cgocallback_gofunc is not called from go, only from cgocallback,
 // so the arguments will be found via cgocallback's pointer-declared arguments.
 // See the assembly implementations for more details.
-func cgocallback_gofunc(fv uintptr, frame uintptr, framesize uintptr)
+func cgocallback_gofunc(fv uintptr, frame uintptr, framesize, ctxt uintptr)
 
 // publicationBarrier performs a store/store barrier (a "publication"
 // or "export" barrier). Some form of synchronization is required
@@ -206,6 +206,7 @@ func asmcgocall(fn, arg unsafe.Pointer) int32
 const _NoArgs = ^uintptr(0)
 
 func morestack()
+func morestack_noctxt()
 func rt0_go()
 
 // stackBarrier records that the stack has been unwound past a certain
@@ -273,3 +274,6 @@ func round(n, a uintptr) uintptr {
 
 // checkASM returns whether assembly runtime checks have passed.
 func checkASM() bool
+
+func memequal_varlen(a, b unsafe.Pointer) bool
+func eqstring(s1, s2 string) bool

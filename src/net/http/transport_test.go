@@ -1718,8 +1718,17 @@ func testCancelRequestWithChannelBeforeDo(t *testing.T, withCtx bool) {
 	}
 
 	_, err := c.Do(req)
-	if err == nil || !strings.Contains(err.Error(), "canceled") {
-		t.Errorf("Do error = %v; want cancelation", err)
+	if ue, ok := err.(*url.Error); ok {
+		err = ue.Err
+	}
+	if withCtx {
+		if err != context.Canceled {
+			t.Errorf("Do error = %v; want %v", err, context.Canceled)
+		}
+	} else {
+		if err == nil || !strings.Contains(err.Error(), "canceled") {
+			t.Errorf("Do error = %v; want cancelation", err)
+		}
 	}
 }
 
@@ -2060,7 +2069,8 @@ type proxyFromEnvTest struct {
 
 	env      string // HTTP_PROXY
 	httpsenv string // HTTPS_PROXY
-	noenv    string // NO_RPXY
+	noenv    string // NO_PROXY
+	reqmeth  string // REQUEST_METHOD
 
 	want    string
 	wanterr error
@@ -2083,6 +2093,10 @@ func (t proxyFromEnvTest) String() string {
 	if t.noenv != "" {
 		space()
 		fmt.Fprintf(&buf, "no_proxy=%q", t.noenv)
+	}
+	if t.reqmeth != "" {
+		space()
+		fmt.Fprintf(&buf, "request_method=%q", t.reqmeth)
 	}
 	req := "http://example.com"
 	if t.req != "" {
@@ -2107,6 +2121,12 @@ var proxyFromEnvTests = []proxyFromEnvTest{
 	{req: "https://secure.tld/", env: "http.proxy.tld", httpsenv: "secure.proxy.tld", want: "http://secure.proxy.tld"},
 	{req: "https://secure.tld/", env: "http.proxy.tld", httpsenv: "https://secure.proxy.tld", want: "https://secure.proxy.tld"},
 
+	// Issue 16405: don't use HTTP_PROXY in a CGI environment,
+	// where HTTP_PROXY can be attacker-controlled.
+	{env: "http://10.1.2.3:8080", reqmeth: "POST",
+		want:    "<nil>",
+		wanterr: errors.New("net/http: refusing to use HTTP_PROXY value in CGI environment; see golang.org/s/cgihttpproxy")},
+
 	{want: "<nil>"},
 
 	{noenv: "example.com", req: "http://example.com/", env: "proxy", want: "<nil>"},
@@ -2122,6 +2142,7 @@ func TestProxyFromEnvironment(t *testing.T) {
 		os.Setenv("HTTP_PROXY", tt.env)
 		os.Setenv("HTTPS_PROXY", tt.httpsenv)
 		os.Setenv("NO_PROXY", tt.noenv)
+		os.Setenv("REQUEST_METHOD", tt.reqmeth)
 		ResetCachedEnvironment()
 		reqURL := tt.req
 		if reqURL == "" {
@@ -3236,7 +3257,7 @@ func testTransportEventTrace(t *testing.T, h2 bool, noHooks bool) {
 
 	cst.tr.ExpectContinueTimeout = 1 * time.Second
 
-	var mu sync.Mutex
+	var mu sync.Mutex // guards buf
 	var buf bytes.Buffer
 	logf := func(format string, args ...interface{}) {
 		mu.Lock()
@@ -3278,8 +3299,8 @@ func testTransportEventTrace(t *testing.T, h2 bool, noHooks bool) {
 		Wait100Continue: func() { logf("Wait100Continue") },
 		Got100Continue:  func() { logf("Got100Continue") },
 		WroteRequest: func(e httptrace.WroteRequestInfo) {
-			close(gotWroteReqEvent)
 			logf("WroteRequest: %+v", e)
+			close(gotWroteReqEvent)
 		},
 	}
 	if noHooks {
@@ -3311,7 +3332,10 @@ func testTransportEventTrace(t *testing.T, h2 bool, noHooks bool) {
 		return
 	}
 
+	mu.Lock()
 	got := buf.String()
+	mu.Unlock()
+
 	wantOnce := func(sub string) {
 		if strings.Count(got, sub) != 1 {
 			t.Errorf("expected substring %q exactly once in output.", sub)
@@ -3350,7 +3374,7 @@ func TestTransportEventTraceRealDNS(t *testing.T) {
 	defer tr.CloseIdleConnections()
 	c := &Client{Transport: tr}
 
-	var mu sync.Mutex
+	var mu sync.Mutex // guards buf
 	var buf bytes.Buffer
 	logf := func(format string, args ...interface{}) {
 		mu.Lock()
@@ -3374,7 +3398,10 @@ func TestTransportEventTraceRealDNS(t *testing.T) {
 		t.Fatal("expected error during DNS lookup")
 	}
 
+	mu.Lock()
 	got := buf.String()
+	mu.Unlock()
+
 	wantSub := func(sub string) {
 		if !strings.Contains(got, sub) {
 			t.Errorf("expected substring %q in output.", sub)
@@ -3496,6 +3523,100 @@ func TestTransportIdleConnTimeout(t *testing.T) {
 	time.Sleep(timeout * 3 / 2)
 	if got := tr.IdleConnStrsForTesting(); len(got) != 0 {
 		t.Errorf("idle conns = %q; want none", got)
+	}
+}
+
+// Issue 16208: Go 1.7 crashed after Transport.IdleConnTimeout if an
+// HTTP/2 connection was established but but its caller no longer
+// wanted it. (Assuming the connection cache was enabled, which it is
+// by default)
+//
+// This test reproduced the crash by setting the IdleConnTimeout low
+// (to make the test reasonable) and then making a request which is
+// canceled by the DialTLS hook, which then also waits to return the
+// real connection until after the RoundTrip saw the error.  Then we
+// know the successful tls.Dial from DialTLS will need to go into the
+// idle pool. Then we give it a of time to explode.
+func TestIdleConnH2Crash(t *testing.T) {
+	cst := newClientServerTest(t, h2Mode, HandlerFunc(func(w ResponseWriter, r *Request) {
+		// nothing
+	}))
+	defer cst.close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	gotErr := make(chan bool, 1)
+
+	cst.tr.IdleConnTimeout = 5 * time.Millisecond
+	cst.tr.DialTLS = func(network, addr string) (net.Conn, error) {
+		cancel()
+		<-gotErr
+		c, err := tls.Dial(network, addr, &tls.Config{
+			InsecureSkipVerify: true,
+			NextProtos:         []string{"h2"},
+		})
+		if err != nil {
+			t.Error(err)
+			return nil, err
+		}
+		if cs := c.ConnectionState(); cs.NegotiatedProtocol != "h2" {
+			t.Errorf("protocol = %q; want %q", cs.NegotiatedProtocol, "h2")
+			c.Close()
+			return nil, errors.New("bogus")
+		}
+		return c, nil
+	}
+
+	req, _ := NewRequest("GET", cst.ts.URL, nil)
+	req = req.WithContext(ctx)
+	res, err := cst.c.Do(req)
+	if err == nil {
+		res.Body.Close()
+		t.Fatal("unexpected success")
+	}
+	gotErr <- true
+
+	// Wait for the explosion.
+	time.Sleep(cst.tr.IdleConnTimeout * 10)
+}
+
+type funcConn struct {
+	net.Conn
+	read  func([]byte) (int, error)
+	write func([]byte) (int, error)
+}
+
+func (c funcConn) Read(p []byte) (int, error)  { return c.read(p) }
+func (c funcConn) Write(p []byte) (int, error) { return c.write(p) }
+func (c funcConn) Close() error                { return nil }
+
+// Issue 16465: Transport.RoundTrip should return the raw net.Conn.Read error from Peek
+// back to the caller.
+func TestTransportReturnsPeekError(t *testing.T) {
+	errValue := errors.New("specific error value")
+
+	wrote := make(chan struct{})
+	var wroteOnce sync.Once
+
+	tr := &Transport{
+		Dial: func(network, addr string) (net.Conn, error) {
+			c := funcConn{
+				read: func([]byte) (int, error) {
+					<-wrote
+					return 0, errValue
+				},
+				write: func(p []byte) (int, error) {
+					wroteOnce.Do(func() { close(wrote) })
+					return len(p), nil
+				},
+			}
+			return c, nil
+		},
+	}
+	_, err := tr.RoundTrip(httptest.NewRequest("GET", "http://fake.tld/", nil))
+	if err != errValue {
+		t.Errorf("error = %#v; want %v", err, errValue)
 	}
 }
 

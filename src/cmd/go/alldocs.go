@@ -17,6 +17,7 @@
 // 	clean       remove object files
 // 	doc         show documentation for package or symbol
 // 	env         print Go environment information
+// 	bug         print information for bug reports
 // 	fix         run go tool fix on packages
 // 	fmt         run gofmt on package sources
 // 	generate    generate Go files by processing source
@@ -323,6 +324,17 @@
 // each named variable on its own line.
 //
 //
+// Print information for bug reports
+//
+// Usage:
+//
+// 	go bug
+//
+// Bug prints information that helps file effective bug reports.
+//
+// Bugs may be reported at https://golang.org/issue/new.
+//
+//
 // Run go tool fix on packages
 //
 // Usage:
@@ -367,7 +379,7 @@
 //
 // Generate runs commands described by directives within existing
 // files. Those commands can run any process but the intent is to
-// create or update Go source files, for instance by running yacc.
+// create or update Go source files.
 //
 // Go generate is never run automatically by go build, go get, go test,
 // and so on. It must be run explicitly.
@@ -430,10 +442,10 @@
 // can be used to create aliases or to handle multiword generators.
 // For example,
 //
-// 	//go:generate -command yacc go tool yacc
+// 	//go:generate -command foo go tool foo
 //
-// specifies that the command "yacc" represents the generator
-// "go tool yacc".
+// specifies that the command "foo" represents the generator
+// "go tool foo".
 //
 // Generate processes packages in the order given on the command line,
 // one at a time. If the command line lists .go files, they are treated
@@ -496,6 +508,8 @@
 // and their dependencies.  By default, get uses the network to check out
 // missing packages but does not use it to look for updates to existing packages.
 //
+// The -v flag enables verbose progress and debug output.
+//
 // Get also accepts build flags to control the installation. See 'go help build'.
 //
 // When checking out a new package, get creates the target directory
@@ -508,8 +522,7 @@
 // searches for a branch or tag named "go1". If no such version exists it
 // retrieves the most recent version of the package.
 //
-// Unless vendoring support is disabled (see 'go help gopath'),
-// when go get checks out or updates a Git repository,
+// When go get checks out or updates a Git repository,
 // it also updates any git submodules referenced by the repository.
 //
 // Get never checks out or updates code stored in vendor directories.
@@ -1271,10 +1284,9 @@
 // let package authors make sure the custom import path is used and not a
 // direct path to the underlying code hosting site.
 //
-// If vendoring is enabled (see 'go help gopath'), then import path checking is
-// disabled for code found within vendor trees. This makes it possible to copy
-// code into alternate locations in vendor trees without needing to update import
-// comments.
+// Import path checking is disabled for code found within vendor trees.
+// This makes it possible to copy code into alternate locations in vendor trees
+// without needing to update import comments.
 //
 // See https://golang.org/s/go14customimport for details.
 //

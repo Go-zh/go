@@ -14,8 +14,6 @@ import (
 	"unsafe"
 )
 
-//go:generate go run mksyscall_windows.go -systemdll -output zsyscall_windows.go syscall_windows.go security_windows.go
-
 type Handle uintptr
 
 const InvalidHandle = ^Handle(0)
@@ -75,8 +73,6 @@ func UTF16PtrFromString(s string) (*uint16, error) {
 	}
 	return &a[0], nil
 }
-
-func Getpagesize() int { return 4096 }
 
 // Errno is the Windows error number.
 type Errno uintptr

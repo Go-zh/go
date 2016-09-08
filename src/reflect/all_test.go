@@ -2261,6 +2261,8 @@ func TestImportPath(t *testing.T) {
 		{TypeOf((*int64)(nil)), ""},
 		{TypeOf(map[string]int{}), ""},
 		{TypeOf((*error)(nil)).Elem(), ""},
+		{TypeOf((*Point)(nil)), ""},
+		{TypeOf((*Point)(nil)).Elem(), "reflect_test"},
 	}
 	for _, test := range tests {
 		if path := test.t.PkgPath(); path != test.path {
@@ -5718,6 +5720,8 @@ func TestTypeStrings(t *testing.T) {
 		{TypeOf(new(XM)), "*reflect_test.XM"},
 		{TypeOf(new(XM).String), "func() string"},
 		{TypeOf(new(XM)).Method(0).Type, "func(*reflect_test.XM) string"},
+		{ChanOf(3, TypeOf(XM{})), "chan reflect_test.XM"},
+		{MapOf(TypeOf(int(0)), TypeOf(XM{})), "map[int]reflect_test.XM"},
 	}
 
 	for i, test := range stringTests {
@@ -5740,4 +5744,11 @@ func TestOffsetLock(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func BenchmarkNew(b *testing.B) {
+	v := TypeOf(XM{})
+	for i := 0; i < b.N; i++ {
+		New(v)
+	}
 }

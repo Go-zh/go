@@ -127,11 +127,20 @@ func getncpu() int32 {
 	return n
 }
 
-func osinit() {
-	ncpu = getncpu()
+func getPageSize() uintptr {
+	n := int32(sysconf(__SC_PAGESIZE))
+	if n <= 0 {
+		return 0
+	}
+	return uintptr(n)
 }
 
-func tstart_sysvicall()
+func osinit() {
+	ncpu = getncpu()
+	physPageSize = getPageSize()
+}
+
+func tstart_sysvicall(newm *m) uint32
 
 // May run with m.p==nil, so write barriers are not allowed.
 //go:nowritebarrier
@@ -165,6 +174,9 @@ func newosproc(mp *m, _ unsafe.Pointer) {
 	sigprocmask(_SIG_SETMASK, &oset, nil)
 	if ret != 0 {
 		print("runtime: failed to create new OS thread (have ", mcount(), " already; errno=", ret, ")\n")
+		if ret == -_EAGAIN {
+			println("runtime: may need to increase max user processes (ulimit -u)")
+		}
 		throw("newosproc")
 	}
 }
@@ -562,7 +574,7 @@ func sysconf(name int32) int64 {
 	return int64(sysvicall1(&libc_sysconf, uintptr(name)))
 }
 
-func usleep1(uint32)
+func usleep1(usec uint32)
 
 //go:nosplit
 func usleep(µs uint32) {

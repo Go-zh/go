@@ -1,5 +1,5 @@
 // Derived from Inferno utils/6c/peep.c
-// http://code.google.com/p/inferno-os/source/browse/utils/6c/peep.c
+// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/6c/peep.c
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -419,7 +419,7 @@ func copyu(p *obj.Prog, v *obj.Addr, s *obj.Addr) usage {
 
 	switch p.As {
 	default:
-		fmt.Printf("copyu: can't find %v\n", obj.Aconv(p.As))
+		fmt.Printf("copyu: can't find %v\n", p.As)
 		return _ReadWriteSame
 
 	case // read p.From, write p.To

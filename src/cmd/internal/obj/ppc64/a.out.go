@@ -132,29 +132,24 @@ const (
 	REG_LR  = REG_SPR0 + 8
 	REG_CTR = REG_SPR0 + 9
 
-	REGZERO  = REG_R0 /* set to zero */
-	REGSP    = REG_R1
-	REGSB    = REG_R2
-	REGRET   = REG_R3
-	REGARG   = -1      /* -1 disables passing the first argument in register */
-	REGRT1   = REG_R3  /* reserved for runtime, duffzero and duffcopy */
-	REGRT2   = REG_R4  /* reserved for runtime, duffcopy */
-	REGMIN   = REG_R7  /* register variables allocated from here to REGMAX */
-	REGCTXT  = REG_R11 /* context for closures */
-	REGTLS   = REG_R13 /* C ABI TLS base pointer */
-	REGMAX   = REG_R27
-	REGEXT   = REG_R30 /* external registers allocated from here down */
-	REGG     = REG_R30 /* G */
-	REGTMP   = REG_R31 /* used by the linker */
-	FREGRET  = REG_F0
-	FREGMIN  = REG_F17 /* first register variable */
-	FREGMAX  = REG_F26 /* last register variable for 9g only */
-	FREGEXT  = REG_F26 /* first external register */
-	FREGCVI  = REG_F27 /* floating conversion constant */
-	FREGZERO = REG_F28 /* both float and double */
-	FREGHALF = REG_F29 /* double */
-	FREGONE  = REG_F30 /* double */
-	FREGTWO  = REG_F31 /* double */
+	REGZERO = REG_R0 /* set to zero */
+	REGSP   = REG_R1
+	REGSB   = REG_R2
+	REGRET  = REG_R3
+	REGARG  = -1      /* -1 disables passing the first argument in register */
+	REGRT1  = REG_R3  /* reserved for runtime, duffzero and duffcopy */
+	REGRT2  = REG_R4  /* reserved for runtime, duffcopy */
+	REGMIN  = REG_R7  /* register variables allocated from here to REGMAX */
+	REGCTXT = REG_R11 /* context for closures */
+	REGTLS  = REG_R13 /* C ABI TLS base pointer */
+	REGMAX  = REG_R27
+	REGEXT  = REG_R30 /* external registers allocated from here down */
+	REGG    = REG_R30 /* G */
+	REGTMP  = REG_R31 /* used by the linker */
+	FREGRET = REG_F0
+	FREGMIN = REG_F17 /* first register variable */
+	FREGMAX = REG_F26 /* last register variable for 9g only */
+	FREGEXT = REG_F26 /* first external register */
 )
 
 /*
@@ -185,6 +180,15 @@ const (
 	NOSCHED = 1 << 9
 )
 
+// Bit settings from the CR
+
+const (
+	C_COND_LT = iota // 0 result is negative
+	C_COND_GT        // 1 result is positive
+	C_COND_EQ        // 2 result is zero
+	C_COND_SO        // 3 summary overflow
+)
+
 const (
 	C_NONE = iota
 	C_REG
@@ -210,8 +214,8 @@ const (
 	C_LAUTO
 	C_SEXT
 	C_LEXT
-	C_ZOREG
-	C_SOREG
+	C_ZOREG // conjecture: either (1) register + zeroed offset, or (2) "R0" implies zero or C_REG
+	C_SOREG // register + signed offset
 	C_LOREG
 	C_FPSCR
 	C_MSR
@@ -257,13 +261,13 @@ const (
 	ABC
 	ABCL
 	ABEQ
-	ABGE
+	ABGE // not LT = G/E/U
 	ABGT
-	ABLE
+	ABLE // not GT = L/E/U
 	ABLT
-	ABNE
-	ABVC
-	ABVS
+	ABNE // not EQ = L/G/U
+	ABVC // apparently Unordered-clear
+	ABVS // apparently Unordered-set
 	ACMP
 	ACMPU
 	ACNTLZW
@@ -315,6 +319,8 @@ const (
 	AFMOVDU
 	AFMOVS
 	AFMOVSU
+	AFMOVSX
+	AFMOVSZ
 	AFMSUB
 	AFMSUBCC
 	AFMSUBS
@@ -472,6 +478,10 @@ const (
 	ACMPWU
 	ADIVD
 	ADIVDCC
+	ADIVDE
+	ADIVDECC
+	ADIVDEU
+	ADIVDEUCC
 	ADIVDVCC
 	ADIVDV
 	ADIVDU

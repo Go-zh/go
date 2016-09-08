@@ -256,7 +256,7 @@ func makemap(t *maptype, hint int64, h *hmap, bucket unsafe.Pointer) *hmap {
 	h.count = 0
 	h.B = B
 	h.flags = 0
-	h.hash0 = fastrand1()
+	h.hash0 = fastrand()
 	h.buckets = buckets
 	h.oldbuckets = nil
 	h.nevacuate = 0
@@ -381,9 +381,6 @@ func mapaccess2(t *maptype, h *hmap, key unsafe.Pointer) (unsafe.Pointer, bool) 
 func mapaccessK(t *maptype, h *hmap, key unsafe.Pointer) (unsafe.Pointer, unsafe.Pointer) {
 	if h == nil || h.count == 0 {
 		return nil, nil
-	}
-	if h.flags&hashWriting != 0 {
-		throw("concurrent map read and map write")
 	}
 	alg := t.key.alg
 	hash := alg.hash(key, uintptr(h.hash0))
@@ -658,9 +655,9 @@ func mapiterinit(t *maptype, h *hmap, it *hiter) {
 	}
 
 	// decide where to start
-	r := uintptr(fastrand1())
+	r := uintptr(fastrand())
 	if h.B > 31-bucketCntBits {
-		r += uintptr(fastrand1()) << 31
+		r += uintptr(fastrand()) << 31
 	}
 	it.startBucket = r & (uintptr(1)<<h.B - 1)
 	it.offset = uint8(r >> h.B & (bucketCnt - 1))
@@ -684,6 +681,9 @@ func mapiternext(it *hiter) {
 	if raceenabled {
 		callerpc := getcallerpc(unsafe.Pointer(&it))
 		racereadpc(unsafe.Pointer(h), callerpc, funcPC(mapiternext))
+	}
+	if h.flags&hashWriting != 0 {
+		throw("concurrent map iteration and map write")
 	}
 	t := it.t
 	bucket := it.bucket

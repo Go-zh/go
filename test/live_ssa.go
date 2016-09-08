@@ -1,4 +1,4 @@
-// +build amd64
+// +build amd64 arm amd64p32 386 arm64 mips64 mips64le
 // errorcheck -0 -l -live -wb=0
 
 // Copyright 2014 The Go Authors. All rights reserved.
@@ -645,4 +645,13 @@ func good40() {
 	t := &ret
 	printnl() // ERROR "live at call to printnl: autotmp_[0-9]+ ret$"
 	_ = t
+}
+
+func ddd1(x, y *int) { // ERROR "live at entry to ddd1: x y$"
+	ddd2(x, y) // ERROR "live at call to ddd2: x y autotmp_[0-9]+$"
+	printnl()  // ERROR "live at call to printnl: x y$"
+	// Note: no autotmp live at printnl.  See issue 16996.
+}
+func ddd2(a ...*int) { // ERROR "live at entry to ddd2: a$"
+	sink = a[0]
 }

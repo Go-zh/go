@@ -1,5 +1,5 @@
 // Derived from Inferno utils/6c/peep.c
-// http://code.google.com/p/inferno-os/source/browse/utils/6c/peep.c
+// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/6c/peep.c
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -162,7 +162,7 @@ loop1:
 			continue
 		}
 		if gc.Debug['P'] != 0 {
-			fmt.Printf("encoding $%d directly into %v in:\n%v\n%v\n", p.From.Offset, obj.Aconv(p1.As), p, p1)
+			fmt.Printf("encoding $%d directly into %v in:\n%v\n%v\n", p.From.Offset, p1.As, p, p1)
 		}
 		p1.From.Type = obj.TYPE_CONST
 		p1.From = p.From
@@ -423,7 +423,7 @@ func copyu(p *obj.Prog, v *obj.Addr, s *obj.Addr) int {
 
 	switch p.As {
 	default:
-		fmt.Printf("copyu: can't find %v\n", obj.Aconv(p.As))
+		fmt.Printf("copyu: can't find %v\n", p.As)
 		return 2
 
 	case obj.ANOP, /* read p->from, write p->to */

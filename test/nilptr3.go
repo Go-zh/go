@@ -2,7 +2,7 @@
 // Fails on ppc64x because of incomplete optimization.
 // See issues 9058.
 // Same reason for mips64x and s390x.
-// +build !ppc64,!ppc64le,!mips64,!mips64le,!amd64,!s390x
+// +build !ppc64,!ppc64le,!mips64,!mips64le,!amd64,!s390x,!arm,!amd64p32,!386,!arm64
 
 // Copyright 2013 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -213,4 +213,12 @@ func m4(m map[int][800]byte) (byte, bool) {
 func p1() byte {
 	p := new([100]byte)
 	return p[5] // ERROR "removed nil check"
+}
+
+// make sure not to do nil check for access of PAUTOHEAP
+//go:noinline
+func (p *Struct) m() {}
+func c1() {
+	var x Struct
+	func() { x.m() }() // ERROR "removed nil check"
 }

@@ -130,6 +130,7 @@ func dumpobj1(outfile string, mode int) {
 	externs := len(externdcl)
 
 	dumpglobls()
+	dumpptabs()
 	dumptypestructs()
 
 	// Dump extra globals.
@@ -161,6 +162,35 @@ func dumpobj1(outfile string, mode int) {
 	}
 
 	bout.Close()
+}
+
+func dumpptabs() {
+	if !Ctxt.Flag_dynlink || localpkg.Name != "main" {
+		return
+	}
+	for _, exportn := range exportlist {
+		s := exportn.Sym
+		n := s.Def
+		if n == nil {
+			continue
+		}
+		if n.Op != ONAME {
+			continue
+		}
+		if !exportname(s.Name) {
+			continue
+		}
+		if s.Pkg.Name != "main" {
+			continue
+		}
+		if n.Type.Etype == TFUNC && n.Class == PFUNC {
+			// function
+			ptabs = append(ptabs, ptabEntry{s: s, t: s.Def.Type})
+		} else {
+			// variable
+			ptabs = append(ptabs, ptabEntry{s: s, t: typPtr(s.Def.Type)})
+		}
+	}
 }
 
 func dumpglobls() {
@@ -335,24 +365,6 @@ func datagostring(sval string, a *obj.Addr) {
 	a.Sym = symhdr
 	a.Offset = 0
 	a.Etype = uint8(TSTRING)
-}
-
-func dgostringptr(s *Sym, off int, str string) int {
-	if str == "" {
-		return duintptr(s, off, 0)
-	}
-	return dgostrlitptr(s, off, &str)
-}
-
-func dgostrlitptr(s *Sym, off int, lit *string) int {
-	if lit == nil {
-		return duintptr(s, off, 0)
-	}
-	off = int(Rnd(int64(off), int64(Widthptr)))
-	symhdr, _ := stringsym(*lit)
-	Linksym(s).WriteAddr(Ctxt, int64(off), Widthptr, symhdr, 0)
-	off += Widthptr
-	return off
 }
 
 func dsname(s *Sym, off int, t string) int {

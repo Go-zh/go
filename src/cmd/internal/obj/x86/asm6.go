@@ -1,5 +1,5 @@
 // Inferno utils/6l/span.c
-// http://code.google.com/p/inferno-os/source/browse/utils/6l/span.c
+// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/6l/span.c
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -855,6 +855,8 @@ var yvex_ri3 = []ytab{
 }
 
 var yvex_xyi3 = []ytab{
+	{Yu8, Yxm, Yxr, Zvex_i_rm_r, 2},
+	{Yu8, Yym, Yyr, Zvex_i_rm_r, 2},
 	{Yi8, Yxm, Yxr, Zvex_i_rm_r, 2},
 	{Yi8, Yym, Yyr, Zvex_i_rm_r, 2},
 }
@@ -1712,7 +1714,7 @@ var optab =
 	{AVPBROADCASTB, yvex_vpbroadcast, Pvex, [23]uint8{VEX_128_66_0F38_W0, 0x78, VEX_256_66_0F38_W0, 0x78}},
 	{AVPTEST, yvex_xy2, Pvex, [23]uint8{VEX_128_66_0F38_WIG, 0x17, VEX_256_66_0F38_WIG, 0x17}},
 	{AVPSHUFB, yvex_xy3, Pvex, [23]uint8{VEX_128_66_0F38_WIG, 0x00, VEX_256_66_0F38_WIG, 0x00}},
-	{AVPSHUFD, yvex_xyi3, Pvex, [23]uint8{VEX_128_66_0F_WIG, 0x70, VEX_256_66_0F_WIG, 0x70}},
+	{AVPSHUFD, yvex_xyi3, Pvex, [23]uint8{VEX_128_66_0F_WIG, 0x70, VEX_256_66_0F_WIG, 0x70, VEX_128_66_0F_WIG, 0x70, VEX_256_66_0F_WIG, 0x70}},
 	{AVPOR, yvex_xy3, Pvex, [23]uint8{VEX_128_66_0F_WIG, 0xeb, VEX_256_66_0F_WIG, 0xeb}},
 	{AVPADDQ, yvex_xy3, Pvex, [23]uint8{VEX_128_66_0F_WIG, 0xd4, VEX_256_66_0F_WIG, 0xd4}},
 	{AVPADDD, yvex_xy3, Pvex, [23]uint8{VEX_128_66_0F_WIG, 0xfe, VEX_256_66_0F_WIG, 0xfe}},
@@ -2013,7 +2015,7 @@ func instinit() {
 	for i := 1; optab[i].as != 0; i++ {
 		c := optab[i].as
 		if opindex[c&obj.AMask] != nil {
-			log.Fatalf("phase error in optab: %d (%v)", i, obj.Aconv(c))
+			log.Fatalf("phase error in optab: %d (%v)", i, c)
 		}
 		opindex[c&obj.AMask] = &optab[i]
 	}
@@ -2835,7 +2837,9 @@ func asmandsz(ctxt *obj.Link, p *obj.Prog, a *obj.Addr, r int, rex int, m64 int)
 				goto bad
 			}
 			if p.Mode == 32 && ctxt.Flag_shared {
-				base = REG_CX
+				// The base register has already been set. It holds the PC
+				// of this instruction returned by a PC-reading thunk.
+				// See obj6.go:rewriteToPcrel.
 			} else {
 				base = REG_NONE
 			}
@@ -2880,7 +2884,9 @@ func asmandsz(ctxt *obj.Link, p *obj.Prog, a *obj.Addr, r int, rex int, m64 int)
 			ctxt.Diag("bad addr: %v", p)
 		}
 		if p.Mode == 32 && ctxt.Flag_shared {
-			base = REG_CX
+			// The base register has already been set. It holds the PC
+			// of this instruction returned by a PC-reading thunk.
+			// See obj6.go:rewriteToPcrel.
 		} else {
 			base = REG_NONE
 		}
@@ -4016,25 +4022,26 @@ func doasm(ctxt *obj.Link, p *obj.Prog) {
 							obj.Hnacl:
 							if ctxt.Flag_shared {
 								// Note that this is not generating the same insns as the other cases.
-								//     MOV TLS, R_to
+								//     MOV TLS, dst
 								// becomes
-								//     call __x86.get_pc_thunk.cx
-								//     movl (gotpc + g@gotntpoff)(%ecx),$R_To
+								//     call __x86.get_pc_thunk.dst
+								//     movl (gotpc + g@gotntpoff)(dst), dst
 								// which is encoded as
-								//     call __x86.get_pc_thunk.cx
-								//     movq 0(%ecx), R_to
+								//     call __x86.get_pc_thunk.dst
+								//     movq 0(dst), dst
 								// and R_CALL & R_TLS_IE relocs. This all assumes the only tls variable we access
 								// is g, which we can't check here, but will when we assemble the second
 								// instruction.
+								dst := p.To.Reg
 								ctxt.AsmBuf.Put1(0xe8)
 								r = obj.Addrel(ctxt.Cursym)
 								r.Off = int32(p.Pc + int64(ctxt.AsmBuf.Len()))
 								r.Type = obj.R_CALL
 								r.Siz = 4
-								r.Sym = obj.Linklookup(ctxt, "__x86.get_pc_thunk.cx", 0)
+								r.Sym = obj.Linklookup(ctxt, "__x86.get_pc_thunk."+strings.ToLower(Rconv(int(dst))), 0)
 								ctxt.AsmBuf.PutInt32(0)
 
-								ctxt.AsmBuf.Put2(0x8B, byte(2<<6|reg[REG_CX]|(reg[p.To.Reg]<<3)))
+								ctxt.AsmBuf.Put2(0x8B, byte(2<<6|reg[dst]|(reg[dst]<<3)))
 								r = obj.Addrel(ctxt.Cursym)
 								r.Off = int32(p.Pc + int64(ctxt.AsmBuf.Len()))
 								r.Type = obj.R_TLS_IE

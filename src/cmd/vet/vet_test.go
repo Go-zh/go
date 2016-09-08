@@ -53,7 +53,7 @@ func Build(t *testing.T) {
 	if failed {
 		t.Skip("cannot run on this environment")
 	}
-	cmd := exec.Command("go", "build", "-o", binary)
+	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", binary)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		failed = true
@@ -102,7 +102,7 @@ func TestVet(t *testing.T) {
 func TestDivergentPackagesExamples(t *testing.T) {
 	Build(t)
 	// errchk ./testvet
-	Vet(t, []string{"testdata/divergent/buf.go", "testdata/divergent/buf_test.go"})
+	Vet(t, []string{"testdata/divergent"})
 }
 
 func TestIncompleteExamples(t *testing.T) {

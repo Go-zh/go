@@ -255,6 +255,12 @@ func TestDeadline(t *testing.T) {
 	o = otherContext{c}
 	c, _ = WithDeadline(o, time.Now().Add(4*time.Second))
 	testDeadline(c, "WithDeadline+otherContext+WithDeadline", 2*time.Second, t)
+
+	c, _ = WithDeadline(Background(), time.Now().Add(-time.Millisecond))
+	testDeadline(c, "WithDeadline+inthepast", time.Second, t)
+
+	c, _ = WithDeadline(Background(), time.Now())
+	testDeadline(c, "WithDeadline+now", time.Second, t)
 }
 
 func TestTimeout(t *testing.T) {
@@ -576,6 +582,21 @@ func TestCancelRemoves(t *testing.T) {
 	checkChildren("with WithTimeout child ", ctx, 1)
 	cancel()
 	checkChildren("after cancelling WithTimeout child", ctx, 0)
+}
+
+func TestWithCancelCanceledParent(t *testing.T) {
+	parent, pcancel := WithCancel(Background())
+	pcancel()
+
+	c, _ := WithCancel(parent)
+	select {
+	case <-c.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for Done")
+	}
+	if got, want := c.Err(), Canceled; got != want {
+		t.Errorf("child not cancelled; got = %v, want = %v", got, want)
+	}
 }
 
 func TestWithValueChecksKey(t *testing.T) {

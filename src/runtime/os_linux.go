@@ -133,7 +133,7 @@ const (
 )
 
 //go:noescape
-func clone(flags int32, stk, mm, gg, fn unsafe.Pointer) int32
+func clone(flags int32, stk, mp, gp, fn unsafe.Pointer) int32
 
 // May run with m.p==nil, so write barriers are not allowed.
 //go:nowritebarrier
@@ -154,6 +154,9 @@ func newosproc(mp *m, stk unsafe.Pointer) {
 
 	if ret < 0 {
 		print("runtime: failed to create new OS thread (have ", mcount(), " already; errno=", -ret, ")\n")
+		if ret == -_EAGAIN {
+			println("runtime: may need to increase max user processes (ulimit -u)")
+		}
 		throw("newosproc")
 	}
 }
@@ -204,17 +207,7 @@ func sysargs(argc int32, argv **byte) {
 			startupRandomData = (*[16]byte)(unsafe.Pointer(val))[:]
 
 		case _AT_PAGESZ:
-			// Check that the true physical page size is
-			// compatible with the runtime's assumed
-			// physical page size.
-			if sys.PhysPageSize < val {
-				print("runtime: kernel page size (", val, ") is larger than runtime page size (", sys.PhysPageSize, ")\n")
-				exit(1)
-			}
-			if sys.PhysPageSize%val != 0 {
-				print("runtime: runtime page size (", sys.PhysPageSize, ") is not a multiple of kernel page size (", val, ")\n")
-				exit(1)
-			}
+			physPageSize = val
 		}
 
 		archauxv(tag, val)
@@ -357,7 +350,7 @@ func memlimit() uintptr {
 //#endif
 
 func sigreturn()
-func sigtramp()
+func sigtramp(sig uint32, info *siginfo, ctx unsafe.Pointer)
 func cgoSigtramp()
 
 //go:noescape
@@ -385,7 +378,6 @@ func osyield()
 //go:nowritebarrierrec
 func setsig(i int32, fn uintptr, restart bool) {
 	var sa sigactiont
-	memclr(unsafe.Pointer(&sa), unsafe.Sizeof(sa))
 	sa.sa_flags = _SA_SIGINFO | _SA_ONSTACK | _SA_RESTORER
 	if restart {
 		sa.sa_flags |= _SA_RESTART
@@ -428,8 +420,6 @@ func setsigstack(i int32) {
 //go:nowritebarrierrec
 func getsig(i int32) uintptr {
 	var sa sigactiont
-
-	memclr(unsafe.Pointer(&sa), unsafe.Sizeof(sa))
 	if rt_sigaction(uintptr(i), nil, &sa, unsafe.Sizeof(sa.sa_mask)) != 0 {
 		throw("rt_sigaction read failure")
 	}

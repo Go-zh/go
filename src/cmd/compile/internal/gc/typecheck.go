@@ -1912,6 +1912,12 @@ OpSwitch:
 		n.Type = Ptrto(Types[TUINTPTR])
 		break OpSwitch
 
+	case OIDATA:
+		// Whoever creates the OIDATA node must know a priori the concrete type at that moment,
+		// usually by just having checked the OITAB.
+		Fatalf("cannot typecheck interface data %v", n)
+		break OpSwitch
+
 	case OSPTR:
 		ok |= Erv
 		n.Left = typecheck(n.Left, Erv)
@@ -2353,7 +2359,7 @@ func looktypedot(n *Node, t *Type, dostrcmp int) bool {
 
 	// Find the base type: methtype will fail if t
 	// is not of the form T or *T.
-	mt := methtype(t, 0)
+	mt := methtype(t)
 	if mt == nil {
 		return false
 	}
@@ -2404,7 +2410,7 @@ func lookdot(n *Node, t *Type, dostrcmp int) *Field {
 
 	var f2 *Field
 	if n.Left.Type == t || n.Left.Type.Sym == nil {
-		mt := methtype(t, 0)
+		mt := methtype(t)
 		if mt != nil {
 			// Use f2->method, not f2->xmethod: adddot has
 			// already inserted all the necessary embedded dots.
@@ -2935,8 +2941,10 @@ func typecheckcomplit(n *Node) *Node {
 		}
 		if t.IsSlice() {
 			n.Right = Nodintconst(length)
+			n.Op = OSLICELIT
+		} else {
+			n.Op = OARRAYLIT
 		}
-		n.Op = OARRAYLIT
 
 	case TMAP:
 		hash := make(map[uint32][]*Node)
@@ -3180,11 +3188,19 @@ func samesafeexpr(l *Node, r *Node) bool {
 	case ODOT, ODOTPTR:
 		return l.Sym != nil && r.Sym != nil && l.Sym == r.Sym && samesafeexpr(l.Left, r.Left)
 
-	case OIND:
+	case OIND, OCONVNOP:
 		return samesafeexpr(l.Left, r.Left)
+
+	case OCONV:
+		// Some conversions can't be reused, such as []byte(str).
+		// Allow only numeric-ish types. This is a bit conservative.
+		return issimple[l.Type.Etype] && samesafeexpr(l.Left, r.Left)
 
 	case OINDEX:
 		return samesafeexpr(l.Left, r.Left) && samesafeexpr(l.Right, r.Right)
+
+	case OLITERAL:
+		return eqval(l.Val(), r.Val())
 	}
 
 	return false
@@ -3374,7 +3390,7 @@ func typecheckfunc(n *Node) {
 	t.SetNname(n.Func.Nname)
 	rcvr := t.Recv()
 	if rcvr != nil && n.Func.Shortname != nil {
-		addmethod(n.Func.Shortname.Sym, t, nil, true, n.Func.Pragma&Nointerface != 0)
+		addmethod(n.Func.Shortname.Sym, t, true, n.Func.Pragma&Nointerface != 0)
 	}
 
 	for _, ln := range n.Func.Dcl {
@@ -3478,7 +3494,6 @@ func copytype(n *Node, t *Type) {
 	t.methods = Fields{}
 	t.allMethods = Fields{}
 	t.Nod = nil
-	t.Printed = false
 	t.Deferwidth = false
 
 	// Update nodes waiting on this type.
@@ -3741,6 +3756,11 @@ ret:
 }
 
 func checkmake(t *Type, arg string, n *Node) bool {
+	if !n.Type.IsInteger() && n.Type.Etype != TIDEAL {
+		Yyerror("non-integer %s argument in make(%v) - %v", arg, t, n.Type)
+		return false
+	}
+
 	if n.Op == OLITERAL {
 		switch n.Val().Ctype() {
 		case CTINT, CTRUNE, CTFLT, CTCPLX:
@@ -3764,11 +3784,6 @@ func checkmake(t *Type, arg string, n *Node) bool {
 		default:
 			break
 		}
-	}
-
-	if !n.Type.IsInteger() && n.Type.Etype != TIDEAL {
-		Yyerror("non-integer %s argument in make(%v) - %v", arg, t, n.Type)
-		return false
 	}
 
 	// Defaultlit still necessary for non-constant: n might be 1<<k.

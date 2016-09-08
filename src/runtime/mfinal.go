@@ -352,7 +352,7 @@ func SetFinalizer(obj interface{}, finalizer interface{}) {
 	if ft.dotdotdot() {
 		throw("runtime.SetFinalizer: cannot pass " + etyp.string() + " to finalizer " + ftyp.string() + " because dotdotdot")
 	}
-	if ft.dotdotdot() || ft.inCount != 1 {
+	if ft.inCount != 1 {
 		throw("runtime.SetFinalizer: cannot pass " + etyp.string() + " to finalizer " + ftyp.string())
 	}
 	fint := ft.in()[0]
@@ -450,7 +450,7 @@ func findObject(v unsafe.Pointer) (s *mspan, x unsafe.Pointer, n uintptr) {
 // 	type File struct { d int }
 // 	d, err := syscall.Open("/file/path", syscall.O_RDONLY, 0)
 // 	// ... do something if err != nil ...
-// 	p := &FILE{d}
+// 	p := &File{d}
 // 	runtime.SetFinalizer(p, func(p *File) { syscall.Close(p.d) })
 // 	var buf [10]byte
 // 	n, err := syscall.Read(p.d, buf[:])

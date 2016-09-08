@@ -439,7 +439,8 @@ func schedinit() {
 	stackinit()
 	mallocinit()
 	mcommoninit(_g_.m)
-	typelinksinit()
+	alginit()       // maps must not be used before this call
+	typelinksinit() // uses maps
 	itabsinit()
 
 	msigsave(_g_.m)
@@ -542,7 +543,7 @@ func ready(gp *g, traceskip int, next bool) {
 	// status is Gwaiting or Gscanwaiting, make Grunnable and put on runq
 	casgstatus(gp, _Gwaiting, _Grunnable)
 	runqput(_g_.m.p.ptr(), gp, next)
-	if atomic.Load(&sched.npidle) != 0 && atomic.Load(&sched.nmspinning) == 0 { // TODO: fast atomic
+	if atomic.Load(&sched.npidle) != 0 && atomic.Load(&sched.nmspinning) == 0 {
 		wakep()
 	}
 	_g_.m.locks--
@@ -1389,10 +1390,27 @@ func needm(x byte) {
 
 var earlycgocallback = []byte("fatal error: cgo callback before cgo call\n")
 
-// newextram allocates an m and puts it on the extra list.
+// newextram allocates m's and puts them on the extra list.
 // It is called with a working local m, so that it can do things
 // like call schedlock and allocate.
 func newextram() {
+	c := atomic.Xchg(&extraMWaiters, 0)
+	if c > 0 {
+		for i := uint32(0); i < c; i++ {
+			oneNewExtraM()
+		}
+	} else {
+		// Make sure there is at least one extra M.
+		mp := lockextra(true)
+		unlockextra(mp)
+		if mp == nil {
+			oneNewExtraM()
+		}
+	}
+}
+
+// oneNewExtraM allocates an m and puts it on the extra list.
+func oneNewExtraM() {
 	// Create extra goroutine locked to extra m.
 	// The goroutine is the context in which the cgo callback will run.
 	// The sched.pc will never be returned to, but setting it to
@@ -1485,6 +1503,7 @@ func getm() uintptr {
 }
 
 var extram uintptr
+var extraMWaiters uint32
 
 // lockextra locks the extra list and returns the list head.
 // The caller must unlock the list by storing a new list head
@@ -1495,6 +1514,7 @@ var extram uintptr
 func lockextra(nilokay bool) *m {
 	const locked = 1
 
+	incr := false
 	for {
 		old := atomic.Loaduintptr(&extram)
 		if old == locked {
@@ -1503,6 +1523,13 @@ func lockextra(nilokay bool) *m {
 			continue
 		}
 		if old == 0 && !nilokay {
+			if !incr {
+				// Add 1 to the number of threads
+				// waiting for an M.
+				// This is cleared by newextram.
+				atomic.Xadd(&extraMWaiters, 1)
+				incr = true
+			}
 			usleep(1)
 			continue
 		}
@@ -1874,7 +1901,7 @@ top:
 	// If number of spinning M's >= number of busy P's, block.
 	// This is necessary to prevent excessive CPU consumption
 	// when GOMAXPROCS>>1 but the program parallelism is low.
-	if !_g_.m.spinning && 2*atomic.Load(&sched.nmspinning) >= procs-atomic.Load(&sched.npidle) { // TODO: fast atomic
+	if !_g_.m.spinning && 2*atomic.Load(&sched.nmspinning) >= procs-atomic.Load(&sched.npidle) {
 		goto stop
 	}
 	if !_g_.m.spinning {
@@ -1882,7 +1909,7 @@ top:
 		atomic.Xadd(&sched.nmspinning, 1)
 	}
 	for i := 0; i < 4; i++ {
-		for enum := stealOrder.start(fastrand1()); !enum.done(); enum.next() {
+		for enum := stealOrder.start(fastrand()); !enum.done(); enum.next() {
 			if sched.gcwaiting != 0 {
 				goto top
 			}
@@ -2314,7 +2341,7 @@ func reentersyscall(pc, sp uintptr) {
 		save(pc, sp)
 	}
 
-	if atomic.Load(&sched.sysmonwait) != 0 { // TODO: fast atomic
+	if atomic.Load(&sched.sysmonwait) != 0 {
 		systemstack(entersyscall_sysmon)
 		save(pc, sp)
 	}
@@ -2779,7 +2806,7 @@ func newproc1(fn *funcval, argp *uint8, narg int32, nret int32, callerpc uintptr
 	}
 	runqput(_p_, newg, true)
 
-	if atomic.Load(&sched.npidle) != 0 && atomic.Load(&sched.nmspinning) == 0 && unsafe.Pointer(fn.fn) != unsafe.Pointer(funcPC(main)) { // TODO: fast atomic
+	if atomic.Load(&sched.npidle) != 0 && atomic.Load(&sched.nmspinning) == 0 && unsafe.Pointer(fn.fn) != unsafe.Pointer(funcPC(main)) {
 		wakep()
 	}
 	_g_.m.locks--
@@ -3577,7 +3604,7 @@ func sysmon() {
 			delay = 10 * 1000
 		}
 		usleep(delay)
-		if debug.schedtrace <= 0 && (sched.gcwaiting != 0 || atomic.Load(&sched.npidle) == uint32(gomaxprocs)) { // TODO: fast atomic
+		if debug.schedtrace <= 0 && (sched.gcwaiting != 0 || atomic.Load(&sched.npidle) == uint32(gomaxprocs)) {
 			lock(&sched.lock)
 			if atomic.Load(&sched.gcwaiting) != 0 || atomic.Load(&sched.npidle) == uint32(gomaxprocs) {
 				atomic.Store(&sched.sysmonwait, 1)
@@ -3826,7 +3853,7 @@ func schedtrace(detailed bool) {
 		if lockedg != nil {
 			id3 = lockedg.goid
 		}
-		print("  M", mp.id, ": p=", id1, " curg=", id2, " mallocing=", mp.mallocing, " throwing=", mp.throwing, " preemptoff=", mp.preemptoff, ""+" locks=", mp.locks, " dying=", mp.dying, " helpgc=", mp.helpgc, " spinning=", mp.spinning, " blocked=", getg().m.blocked, " lockedg=", id3, "\n")
+		print("  M", mp.id, ": p=", id1, " curg=", id2, " mallocing=", mp.mallocing, " throwing=", mp.throwing, " preemptoff=", mp.preemptoff, ""+" locks=", mp.locks, " dying=", mp.dying, " helpgc=", mp.helpgc, " spinning=", mp.spinning, " blocked=", mp.blocked, " lockedg=", id3, "\n")
 	}
 
 	lock(&allglock)
@@ -4007,7 +4034,7 @@ const randomizeScheduler = raceenabled
 // If the run queue is full, runnext puts g on the global queue.
 // Executed only by the owner P.
 func runqput(_p_ *p, gp *g, next bool) {
-	if randomizeScheduler && next && fastrand1()%2 == 0 {
+	if randomizeScheduler && next && fastrand()%2 == 0 {
 		next = false
 	}
 
@@ -4060,7 +4087,7 @@ func runqputslow(_p_ *p, gp *g, h, t uint32) bool {
 
 	if randomizeScheduler {
 		for i := uint32(1); i <= n; i++ {
-			j := fastrand1() % (i + 1)
+			j := fastrand() % (i + 1)
 			batch[i], batch[j] = batch[j], batch[i]
 		}
 	}

@@ -67,7 +67,7 @@ type Label struct {
 	Breakpc  *obj.Prog // pointer to code
 	Continpc *obj.Prog // pointer to code
 
-	Used bool
+	Used bool // for "label defined and not used" error
 }
 
 type SymFlags uint8
@@ -155,8 +155,6 @@ var Debug_checknil int
 var Debug_typeassert int
 
 var localpkg *Pkg // package being compiled
-
-var autopkg *Pkg // fake package for allocating auto variables
 
 var importpkg *Pkg // package being imported
 

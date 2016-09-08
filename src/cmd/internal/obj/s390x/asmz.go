@@ -137,6 +137,9 @@ var optab = []Optab{
 	Optab{AMOVBZ, C_ADDR, C_NONE, C_NONE, C_REG, 75, 0},
 	Optab{AMOVB, C_ADDR, C_NONE, C_NONE, C_REG, 75, 0},
 
+	// interlocked load and op
+	Optab{ALAAG, C_REG, C_REG, C_NONE, C_LOREG, 99, 0},
+
 	// integer arithmetic
 	Optab{AADD, C_REG, C_REG, C_NONE, C_REG, 2, 0},
 	Optab{AADD, C_REG, C_NONE, C_NONE, C_REG, 2, 0},
@@ -188,6 +191,7 @@ var optab = []Optab{
 	Optab{AFMOVD, C_ZCON, C_NONE, C_NONE, C_FREG, 67, 0},
 	Optab{ACEFBRA, C_REG, C_NONE, C_NONE, C_FREG, 82, 0},
 	Optab{ACFEBRA, C_FREG, C_NONE, C_NONE, C_REG, 83, 0},
+	Optab{AFIEBR, C_SCON, C_FREG, C_NONE, C_FREG, 48, 0},
 
 	// load symbol address (plus offset)
 	Optab{AMOVD, C_SYMADDR, C_NONE, C_NONE, C_REG, 19, 0},
@@ -651,7 +655,7 @@ func oplook(ctxt *obj.Link, p *obj.Prog) *Optab {
 	}
 
 	// cannot find a case; abort
-	ctxt.Diag("illegal combination %v %v %v %v %v\n", obj.Aconv(p.As), DRconv(a1), DRconv(a2), DRconv(a3), DRconv(a4))
+	ctxt.Diag("illegal combination %v %v %v %v %v\n", p.As, DRconv(a1), DRconv(a2), DRconv(a3), DRconv(a4))
 	ctxt.Diag("prog: %v\n", p)
 	return nil
 }
@@ -809,6 +813,16 @@ func buildop(ctxt *obj.Link) {
 			opset(ASTCKC, r)
 			opset(ASTCKE, r)
 			opset(ASTCKF, r)
+		case ALAAG:
+			opset(ALAA, r)
+			opset(ALAAL, r)
+			opset(ALAALG, r)
+			opset(ALAN, r)
+			opset(ALANG, r)
+			opset(ALAX, r)
+			opset(ALAXG, r)
+			opset(ALAO, r)
+			opset(ALAOG, r)
 		case ASTMG:
 			opset(ASTMY, r)
 		case ALMG:
@@ -899,6 +913,8 @@ func buildop(ctxt *obj.Link) {
 			opset(ACLFDBR, r)
 			opset(ACLGEBR, r)
 			opset(ACLGDBR, r)
+		case AFIEBR:
+			opset(AFIDBR, r)
 		case ACMPBEQ:
 			opset(ACMPBGE, r)
 			opset(ACMPBGT, r)
@@ -3192,6 +3208,20 @@ func asmout(ctxt *obj.Link, asm *[]byte) {
 			zRRE(op_LCGR, uint32(p.To.Reg), uint32(r), asm)
 		}
 
+	case 48: // floating-point round to integer
+		m3 := vregoff(ctxt, &p.From)
+		if 0 > m3 || m3 > 7 {
+			ctxt.Diag("mask (%v) must be in the range [0, 7]", m3)
+		}
+		var opcode uint32
+		switch p.As {
+		case AFIEBR:
+			opcode = op_FIEBR
+		case AFIDBR:
+			opcode = op_FIDBR
+		}
+		zRRF(opcode, uint32(m3), 0, uint32(p.To.Reg), uint32(p.Reg), asm)
+
 	case 67: // fmov $0 freg
 		var opcode uint32
 		switch p.As {
@@ -3800,6 +3830,39 @@ func asmout(ctxt *obj.Link, asm *[]byte) {
 			zRSY(op_LMG, uint32(rstart), uint32(rend), uint32(reg), uint32(offset), asm)
 		}
 
+	case 99: // interlocked load and op
+		if p.To.Index != 0 {
+			ctxt.Diag("cannot use indexed address")
+		}
+		offset := regoff(ctxt, &p.To)
+		if offset < -DISP20/2 || offset >= DISP20/2 {
+			ctxt.Diag("%v does not fit into 20-bit signed integer", offset)
+		}
+		var opcode uint32
+		switch p.As {
+		case ALAA:
+			opcode = op_LAA
+		case ALAAG:
+			opcode = op_LAAG
+		case ALAAL:
+			opcode = op_LAAL
+		case ALAALG:
+			opcode = op_LAALG
+		case ALAN:
+			opcode = op_LAN
+		case ALANG:
+			opcode = op_LANG
+		case ALAX:
+			opcode = op_LAX
+		case ALAXG:
+			opcode = op_LAXG
+		case ALAO:
+			opcode = op_LAO
+		case ALAOG:
+			opcode = op_LAOG
+		}
+		zRSY(opcode, uint32(p.Reg), uint32(p.From.Reg), uint32(p.To.Reg), uint32(offset), asm)
+
 	case 100: // VRX STORE
 		op, m3, _ := vop(p.As)
 		if p.From3 != nil {
@@ -4039,7 +4102,7 @@ func zopload(ctxt *obj.Link, a obj.As) uint32 {
 		return op_LRVH
 	}
 
-	ctxt.Diag("unknown store opcode %v", obj.Aconv(a))
+	ctxt.Diag("unknown store opcode %v", a)
 	return 0
 }
 
@@ -4071,7 +4134,7 @@ func zopstore(ctxt *obj.Link, a obj.As) uint32 {
 		return op_STRVH
 	}
 
-	ctxt.Diag("unknown store opcode %v", obj.Aconv(a))
+	ctxt.Diag("unknown store opcode %v", a)
 	return 0
 }
 
@@ -4089,7 +4152,7 @@ func zoprre(ctxt *obj.Link, a obj.As) uint32 {
 	case ACEBR:
 		return op_CEBR
 	}
-	ctxt.Diag("unknown rre opcode %v", obj.Aconv(a))
+	ctxt.Diag("unknown rre opcode %v", a)
 	return 0
 }
 
@@ -4101,7 +4164,7 @@ func zoprr(ctxt *obj.Link, a obj.As) uint32 {
 	case ACMPWU:
 		return op_CLR
 	}
-	ctxt.Diag("unknown rr opcode %v", obj.Aconv(a))
+	ctxt.Diag("unknown rr opcode %v", a)
 	return 0
 }
 
@@ -4117,7 +4180,7 @@ func zopril(ctxt *obj.Link, a obj.As) uint32 {
 	case ACMPWU:
 		return op_CLFI
 	}
-	ctxt.Diag("unknown ril opcode %v", obj.Aconv(a))
+	ctxt.Diag("unknown ril opcode %v", a)
 	return 0
 }
 

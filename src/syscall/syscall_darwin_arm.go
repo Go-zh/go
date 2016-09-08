@@ -6,8 +6,6 @@ package syscall
 
 import "unsafe"
 
-func Getpagesize() int { return 4096 }
-
 func TimespecToNsec(ts Timespec) int64 { return int64(ts.Sec)*1e9 + int64(ts.Nsec) }
 
 func NsecToTimespec(nsec int64) (ts Timespec) {
@@ -26,14 +24,19 @@ func NsecToTimeval(nsec int64) (tv Timeval) {
 }
 
 //sysnb	gettimeofday(tp *Timeval) (sec int32, usec int32, err error)
-func Gettimeofday(tv *Timeval) (err error) {
+func Gettimeofday(tv *Timeval) error {
 	// The tv passed to gettimeofday must be non-nil
 	// but is otherwise unused. The answers come back
 	// in the two registers.
 	sec, usec, err := gettimeofday(tv)
-	tv.Sec = int32(sec)
-	tv.Usec = int32(usec)
-	return err
+	if err != nil {
+		return err
+	}
+	if sec != 0 || usec != 0 {
+		tv.Sec = int32(sec)
+		tv.Usec = int32(usec)
+	}
+	return nil
 }
 
 func SetKevent(k *Kevent_t, fd, mode, flags int) {

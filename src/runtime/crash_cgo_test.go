@@ -42,8 +42,11 @@ func TestCgoTraceback(t *testing.T) {
 }
 
 func TestCgoCallbackGC(t *testing.T) {
-	if runtime.GOOS == "plan9" || runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "plan9", "windows":
 		t.Skipf("no pthreads on %s", runtime.GOOS)
+	case "freebsd":
+		testenv.SkipFlaky(t, 16396)
 	}
 	if testing.Short() {
 		switch {
@@ -252,7 +255,21 @@ func testCgoPprof(t *testing.T, buildArg, runArg string) {
 	fn := strings.TrimSpace(string(got))
 	defer os.Remove(fn)
 
-	top, err := exec.Command("go", "tool", "pprof", "-top", "-nodecount=1", exe, fn).CombinedOutput()
+	cmd := testEnv(exec.Command(testenv.GoToolPath(t), "tool", "pprof", "-top", "-nodecount=1", exe, fn))
+
+	found := false
+	for i, e := range cmd.Env {
+		if strings.HasPrefix(e, "PPROF_TMPDIR=") {
+			cmd.Env[i] = "PPROF_TMPDIR=" + os.TempDir()
+			found = true
+			break
+		}
+	}
+	if !found {
+		cmd.Env = append(cmd.Env, "PPROF_TMPDIR="+os.TempDir())
+	}
+
+	top, err := cmd.CombinedOutput()
 	t.Logf("%s", top)
 	if err != nil {
 		t.Fatal(err)

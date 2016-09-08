@@ -20,6 +20,8 @@ const (
 	// From NetBSD's <sys/ucontext.h>
 	_UC_SIGMASK = 0x01
 	_UC_CPU     = 0x04
+
+	_EAGAIN = 35
 )
 
 type mOS struct {
@@ -77,8 +79,9 @@ var sigset_all = sigset{[4]uint32{^uint32(0), ^uint32(0), ^uint32(0), ^uint32(0)
 
 // From NetBSD's <sys/sysctl.h>
 const (
-	_CTL_HW  = 6
-	_HW_NCPU = 3
+	_CTL_HW      = 6
+	_HW_NCPU     = 3
+	_HW_PAGESIZE = 7
 )
 
 func getncpu() int32 {
@@ -90,6 +93,17 @@ func getncpu() int32 {
 		return int32(out)
 	}
 	return 1
+}
+
+func getPageSize() uintptr {
+	mib := [2]uint32{_CTL_HW, _HW_PAGESIZE}
+	out := uint32(0)
+	nout := unsafe.Sizeof(out)
+	ret := sysctl(&mib[0], 2, (*byte)(unsafe.Pointer(&out)), &nout, nil, 0)
+	if ret >= 0 {
+		return uintptr(out)
+	}
+	return 0
 }
 
 //go:nosplit
@@ -162,6 +176,9 @@ func newosproc(mp *m, stk unsafe.Pointer) {
 	ret := lwp_create(unsafe.Pointer(&uc), 0, unsafe.Pointer(&mp.procid))
 	if ret < 0 {
 		print("runtime: failed to create new OS thread (have ", mcount()-1, " already; errno=", -ret, ")\n")
+		if ret == -_EAGAIN {
+			println("runtime: may need to increase max user processes (ulimit -p)")
+		}
 		throw("runtime.newosproc")
 	}
 }
@@ -181,6 +198,7 @@ func netbsdMstart() {
 
 func osinit() {
 	ncpu = getncpu()
+	physPageSize = getPageSize()
 }
 
 var urandom_dev = []byte("/dev/urandom\x00")

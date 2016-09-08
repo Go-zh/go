@@ -122,6 +122,15 @@
 // proportion to the allocation cost. Adjusting GOGC just changes the linear constant
 // (and also the amount of extra memory used).
 
+// Oblets
+//
+// In order to prevent long pauses while scanning large objects and to
+// improve parallelism, the garbage collector breaks up scan jobs for
+// objects larger than maxObletBytes into "oblets" of at most
+// maxObletBytes. When scanning encounters the beginning of a large
+// object, it scans only the first oblet and enqueues the remaining
+// oblets as new scan jobs.
+
 package runtime
 
 import (
@@ -220,10 +229,11 @@ var gcphase uint32
 // The compiler knows about this variable.
 // If you change it, you must change the compiler too.
 var writeBarrier struct {
-	enabled bool   // compiler emits a check of this before calling write barrier
-	needed  bool   // whether we need a write barrier for current GC phase
-	cgo     bool   // whether we need a write barrier for a cgo check
-	alignme uint64 // guarantee alignment so that compiler can use a 32 or 64-bit load
+	enabled bool    // compiler emits a check of this before calling write barrier
+	pad     [3]byte // compiler uses 32-bit load for "enabled" field
+	needed  bool    // whether we need a write barrier for current GC phase
+	cgo     bool    // whether we need a write barrier for a cgo check
+	alignme uint64  // guarantee alignment so that compiler can use a 32 or 64-bit load
 }
 
 // gcBlackenEnabled is 1 if mutator assists and background mark
@@ -615,7 +625,7 @@ func (c *gcControllerState) enlistWorker() {
 	}
 	myID := gp.m.p.ptr().id
 	for tries := 0; tries < 5; tries++ {
-		id := int32(fastrand1() % uint32(gomaxprocs-1))
+		id := int32(fastrand() % uint32(gomaxprocs-1))
 		if id >= myID {
 			id++
 		}
@@ -741,11 +751,10 @@ const gcCreditSlack = 2000
 // can accumulate on a P before updating gcController.assistTime.
 const gcAssistTimeSlack = 5000
 
-// gcOverAssistBytes determines how many extra allocation bytes of
-// assist credit a GC assist builds up when an assist happens. This
-// amortizes the cost of an assist by pre-paying for this many bytes
-// of future allocations.
-const gcOverAssistBytes = 1 << 20
+// gcOverAssistWork determines how many extra units of scan work a GC
+// assist does when an assist happens. This amortizes the cost of an
+// assist by pre-paying for this many bytes of future allocations.
+const gcOverAssistWork = 64 << 10
 
 var work struct {
 	full  uint64                   // lock-free list of full blocks workbuf
@@ -1073,9 +1082,8 @@ top:
 		// Transition from mark 1 to mark 2.
 		//
 		// The global work list is empty, but there can still be work
-		// sitting in the per-P work caches and there can be more
-		// objects reachable from global roots since they don't have write
-		// barriers. Rescan some roots and flush work caches.
+		// sitting in the per-P work caches.
+		// Flush and disable work caches.
 
 		gcMarkRootCheck()
 
@@ -1095,8 +1103,7 @@ top:
 			// ensure all Ps see gcBlackenPromptly. This
 			// also blocks until any remaining mark 1
 			// workers have exited their loop so we can
-			// start new mark 2 workers that will observe
-			// the new root marking jobs.
+			// start new mark 2 workers.
 			forEachP(func(_p_ *p) {
 				_p_.gcw.dispose()
 			})
