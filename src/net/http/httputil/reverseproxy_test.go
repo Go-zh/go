@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -148,6 +149,9 @@ func TestReverseProxyStripHeadersPresentInConnection(t *testing.T) {
 		if c := r.Header.Get("Upgrade"); c != "" {
 			t.Errorf("handler got header %q = %q; want empty", "Upgrade", c)
 		}
+		w.Header().Set("Connection", "Upgrade, "+fakeConnectionToken)
+		w.Header().Set("Upgrade", "should be deleted")
+		w.Header().Set(fakeConnectionToken, "should be deleted")
 		io.WriteString(w, backendResponse)
 	}))
 	defer backend.Close()
@@ -179,6 +183,12 @@ func TestReverseProxyStripHeadersPresentInConnection(t *testing.T) {
 	}
 	if got, want := string(bodyBytes), backendResponse; got != want {
 		t.Errorf("got body %q; want %q", got, want)
+	}
+	if c := res.Header.Get("Upgrade"); c != "" {
+		t.Errorf("handler got header %q = %q; want empty", "Upgrade", c)
+	}
+	if c := res.Header.Get(fakeConnectionToken); c != "" {
+		t.Errorf("handler got header %q = %q; want empty", fakeConnectionToken, c)
 	}
 }
 
@@ -570,5 +580,87 @@ func TestReverseProxy_NilBody(t *testing.T) {
 	defer res.Body.Close()
 	if res.StatusCode != 502 {
 		t.Errorf("status code = %v; want 502 (Gateway Error)", res.Status)
+	}
+}
+
+// Issue 14237. Test ModifyResponse and that an error from it
+// causes the proxy to return StatusBadGateway, or StatusOK otherwise.
+func TestReverseProxyModifyResponse(t *testing.T) {
+	backendServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("X-Hit-Mod", fmt.Sprintf("%v", r.URL.Path == "/mod"))
+	}))
+	defer backendServer.Close()
+
+	rpURL, _ := url.Parse(backendServer.URL)
+	rproxy := NewSingleHostReverseProxy(rpURL)
+	rproxy.ErrorLog = log.New(ioutil.Discard, "", 0) // quiet for tests
+	rproxy.ModifyResponse = func(resp *http.Response) error {
+		if resp.Header.Get("X-Hit-Mod") != "true" {
+			return fmt.Errorf("tried to by-pass proxy")
+		}
+		return nil
+	}
+
+	frontendProxy := httptest.NewServer(rproxy)
+	defer frontendProxy.Close()
+
+	tests := []struct {
+		url      string
+		wantCode int
+	}{
+		{frontendProxy.URL + "/mod", http.StatusOK},
+		{frontendProxy.URL + "/schedule", http.StatusBadGateway},
+	}
+
+	for i, tt := range tests {
+		resp, err := http.Get(tt.url)
+		if err != nil {
+			t.Fatalf("failed to reach proxy: %v", err)
+		}
+		if g, e := resp.StatusCode, tt.wantCode; g != e {
+			t.Errorf("#%d: got res.StatusCode %d; expected %d", i, g, e)
+		}
+		resp.Body.Close()
+	}
+}
+
+// Issue 16659: log errors from short read
+func TestReverseProxy_CopyBuffer(t *testing.T) {
+	backendServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out := "this call was relayed by the reverse proxy"
+		// Coerce a wrong content length to induce io.UnexpectedEOF
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(out)*2))
+		fmt.Fprintln(w, out)
+	}))
+	defer backendServer.Close()
+
+	rpURL, err := url.Parse(backendServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var proxyLog bytes.Buffer
+	rproxy := NewSingleHostReverseProxy(rpURL)
+	rproxy.ErrorLog = log.New(&proxyLog, "", log.Lshortfile)
+	frontendProxy := httptest.NewServer(rproxy)
+	defer frontendProxy.Close()
+
+	resp, err := http.Get(frontendProxy.URL)
+	if err != nil {
+		t.Fatalf("failed to reach proxy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if _, err := ioutil.ReadAll(resp.Body); err == nil {
+		t.Fatalf("want non-nil error")
+	}
+	expected := []string{
+		"EOF",
+		"read",
+	}
+	for _, phrase := range expected {
+		if !bytes.Contains(proxyLog.Bytes(), []byte(phrase)) {
+			t.Errorf("expected log to contain phrase %q", phrase)
+		}
 	}
 }

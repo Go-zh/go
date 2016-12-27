@@ -32,21 +32,21 @@ type mOS struct {
 func setitimer(mode int32, new, old *itimerval)
 
 //go:noescape
-func sigaction(sig int32, new, old *sigactiont)
+func sigaction(sig uint32, new, old *sigactiont)
 
 //go:noescape
-func sigaltstack(new, old *sigaltstackt)
+func sigaltstack(new, old *stackt)
 
 //go:noescape
-func sigprocmask(mode int32, new, old *sigset)
+func sigprocmask(how int32, new, old *sigset)
 
 //go:noescape
 func sysctl(mib *uint32, miblen uint32, out *byte, size *uintptr, dst *byte, ndst uintptr) int32
 
 func lwp_tramp()
 
-func raise(sig int32)
-func raiseproc(sig int32)
+func raise(sig uint32)
+func raiseproc(sig uint32)
 
 //go:noescape
 func getcontext(ctxt unsafe.Pointer)
@@ -192,7 +192,8 @@ func newosproc(mp *m, stk unsafe.Pointer) {
 // At this point all signals are blocked, so there is no race.
 //go:nosplit
 func netbsdMstart() {
-	signalstack(nil)
+	st := stackt{ss_flags: _SS_DISABLE}
+	sigaltstack(&st, nil)
 	mstart()
 }
 
@@ -222,28 +223,11 @@ func mpreinit(mp *m) {
 	mp.gsignal.m = mp
 }
 
-//go:nosplit
-func msigsave(mp *m) {
-	sigprocmask(_SIG_SETMASK, nil, &mp.sigmask)
-}
-
-//go:nosplit
-func msigrestore(sigmask sigset) {
-	sigprocmask(_SIG_SETMASK, &sigmask, nil)
-}
-
-//go:nosplit
-func sigblock() {
-	sigprocmask(_SIG_SETMASK, &sigset_all, nil)
-}
-
 // Called to initialize a new m (including the bootstrap m).
 // Called on the new thread, cannot allocate memory.
 func minit() {
 	_g_ := getg()
 	_g_.m.procid = uint64(lwp_self())
-
-	// Initialize signal handling.
 
 	// On NetBSD a thread created by pthread_create inherits the
 	// signal stack of the creating thread. We always create a
@@ -255,22 +239,13 @@ func minit() {
 	signalstack(&_g_.m.gsignal.stack)
 	_g_.m.newSigstack = true
 
-	// restore signal mask from m.sigmask and unblock essential signals
-	nmask := _g_.m.sigmask
-	for i := range sigtable {
-		if sigtable[i].flags&_SigUnblock != 0 {
-			nmask.__bits[(i-1)/32] &^= 1 << ((uint32(i) - 1) & 31)
-		}
-	}
-	sigprocmask(_SIG_SETMASK, &nmask, nil)
+	minitSignalMask()
 }
 
 // Called from dropm to undo the effect of an minit.
 //go:nosplit
 func unminit() {
-	if getg().m.newSigstack {
-		signalstack(nil)
-	}
+	unminitSignals()
 }
 
 func memlimit() uintptr {
@@ -287,12 +262,9 @@ type sigactiont struct {
 
 //go:nosplit
 //go:nowritebarrierrec
-func setsig(i int32, fn uintptr, restart bool) {
+func setsig(i uint32, fn uintptr) {
 	var sa sigactiont
-	sa.sa_flags = _SA_SIGINFO | _SA_ONSTACK
-	if restart {
-		sa.sa_flags |= _SA_RESTART
-	}
+	sa.sa_flags = _SA_SIGINFO | _SA_ONSTACK | _SA_RESTART
 	sa.sa_mask = sigset_all
 	if fn == funcPC(sighandler) {
 		fn = funcPC(sigtramp)
@@ -303,44 +275,33 @@ func setsig(i int32, fn uintptr, restart bool) {
 
 //go:nosplit
 //go:nowritebarrierrec
-func setsigstack(i int32) {
+func setsigstack(i uint32) {
 	throw("setsigstack")
 }
 
 //go:nosplit
 //go:nowritebarrierrec
-func getsig(i int32) uintptr {
+func getsig(i uint32) uintptr {
 	var sa sigactiont
 	sigaction(i, nil, &sa)
-	if sa.sa_sigaction == funcPC(sigtramp) {
-		return funcPC(sighandler)
-	}
 	return sa.sa_sigaction
 }
 
+// setSignaltstackSP sets the ss_sp field of a stackt.
 //go:nosplit
-func signalstack(s *stack) {
-	var st sigaltstackt
-	if s == nil {
-		st.ss_flags = _SS_DISABLE
-	} else {
-		st.ss_sp = s.lo
-		st.ss_size = s.hi - s.lo
-		st.ss_flags = 0
-	}
-	sigaltstack(&st, nil)
+func setSignalstackSP(s *stackt, sp uintptr) {
+	s.ss_sp = sp
 }
 
 //go:nosplit
 //go:nowritebarrierrec
-func updatesigmask(m sigmask) {
-	var mask sigset
-	copy(mask.__bits[:], m[:])
-	sigprocmask(_SIG_SETMASK, &mask, nil)
+func sigaddset(mask *sigset, i int) {
+	mask.__bits[(i-1)/32] |= 1 << ((uint32(i) - 1) & 31)
 }
 
-func unblocksig(sig int32) {
-	var mask sigset
-	mask.__bits[(sig-1)/32] |= 1 << ((uint32(sig) - 1) & 31)
-	sigprocmask(_SIG_UNBLOCK, &mask, nil)
+func sigdelset(mask *sigset, i int) {
+	mask.__bits[(i-1)/32] &^= 1 << ((uint32(i) - 1) & 31)
+}
+
+func (c *sigctxt) fixsigcode(sig uint32) {
 }

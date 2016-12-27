@@ -52,6 +52,11 @@ type ReverseProxy struct {
 	// get byte slices for use by io.CopyBuffer when
 	// copying HTTP response bodies.
 	BufferPool BufferPool
+
+	// ModifyResponse is an optional function that
+	// modifies the Response from the backend.
+	// If it returns an error, the proxy returns a StatusBadGateway error.
+	ModifyResponse func(*http.Response) error
 }
 
 // A BufferPool is an interface for getting and returning temporary
@@ -156,7 +161,7 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// copied above) so we only copy it if necessary.
 	copiedHeaders := false
 
-	// Remove headers with the same name as the connection-tokens.
+	// Remove hop-by-hop headers listed in the "Connection" header.
 	// See RFC 2616, section 14.10.
 	if c := outreq.Header.Get("Connection"); c != "" {
 		for _, f := range strings.Split(c, ",") {
@@ -202,8 +207,26 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Remove hop-by-hop headers listed in the
+	// "Connection" header of the response.
+	if c := res.Header.Get("Connection"); c != "" {
+		for _, f := range strings.Split(c, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				res.Header.Del(f)
+			}
+		}
+	}
+
 	for _, h := range hopHeaders {
 		res.Header.Del(h)
+	}
+
+	if p.ModifyResponse != nil {
+		if err := p.ModifyResponse(res); err != nil {
+			p.logf("http: proxy error: %v", err)
+			rw.WriteHeader(http.StatusBadGateway)
+			return
+		}
 	}
 
 	copyHeader(rw.Header(), res.Header)
@@ -211,7 +234,7 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// The "Trailer" header isn't included in the Transport's response,
 	// at least for *http.Transport. Build it up from Trailer.
 	if len(res.Trailer) > 0 {
-		var trailerKeys []string
+		trailerKeys := make([]string, 0, len(res.Trailer))
 		for k := range res.Trailer {
 			trailerKeys = append(trailerKeys, k)
 		}
@@ -250,9 +273,37 @@ func (p *ReverseProxy) copyResponse(dst io.Writer, src io.Reader) {
 	if p.BufferPool != nil {
 		buf = p.BufferPool.Get()
 	}
-	io.CopyBuffer(dst, src, buf)
+	p.copyBuffer(dst, src, buf)
 	if p.BufferPool != nil {
 		p.BufferPool.Put(buf)
+	}
+}
+
+func (p *ReverseProxy) copyBuffer(dst io.Writer, src io.Reader, buf []byte) (int64, error) {
+	if len(buf) == 0 {
+		buf = make([]byte, 32*1024)
+	}
+	var written int64
+	for {
+		nr, rerr := src.Read(buf)
+		if rerr != nil && rerr != io.EOF {
+			p.logf("httputil: ReverseProxy read error during body copy: %v", rerr)
+		}
+		if nr > 0 {
+			nw, werr := dst.Write(buf[:nr])
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if werr != nil {
+				return written, werr
+			}
+			if nr != nw {
+				return written, io.ErrShortWrite
+			}
+		}
+		if rerr != nil {
+			return written, rerr
+		}
 	}
 }
 

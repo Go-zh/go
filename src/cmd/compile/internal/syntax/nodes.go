@@ -14,7 +14,8 @@ type Node interface {
 }
 
 type node struct {
-	doc  *Comment // nil means no comment(s) attached
+	// commented out for now since not yet used
+	// doc  *Comment // nil means no comment(s) attached
 	pos  uint32
 	line uint32
 }
@@ -33,6 +34,7 @@ func (n *node) init(p *parser) {
 // ----------------------------------------------------------------------------
 // Files
 
+// package PkgName; DeclList[0], DeclList[1], ...
 type File struct {
 	PkgName  *Name
 	DeclList []Decl
@@ -49,6 +51,8 @@ type (
 		aDecl()
 	}
 
+	//              Path
+	// LocalPkgName Path
 	ImportDecl struct {
 		LocalPkgName *Name // including "."; nil means no rename present
 		Path         *BasicLit
@@ -56,6 +60,9 @@ type (
 		decl
 	}
 
+	// NameList
+	// NameList      = Values
+	// NameList Type = Values
 	ConstDecl struct {
 		NameList []*Name
 		Type     Expr   // nil means no type
@@ -64,13 +71,18 @@ type (
 		decl
 	}
 
+	// Name Type
 	TypeDecl struct {
-		Name  *Name
-		Type  Expr
-		Group *Group // nil means not part of a group
+		Name   *Name
+		Type   Expr
+		Group  *Group // nil means not part of a group
+		Pragma Pragma
 		decl
 	}
 
+	// NameList Type
+	// NameList Type = Values
+	// NameList      = Values
 	VarDecl struct {
 		NameList []*Name
 		Type     Expr   // nil means no type
@@ -79,6 +91,10 @@ type (
 		decl
 	}
 
+	// func          Name Type { Body }
+	// func          Name Type
+	// func Receiver Name Type { Body }
+	// func Receiver Name Type
 	FuncDecl struct {
 		Attr    map[string]bool // go:attr map
 		Recv    *Field          // nil means regular function
@@ -418,6 +434,8 @@ func (simpleStmt) aSimpleStmt() {}
 // ----------------------------------------------------------------------------
 // Comments
 
+// TODO(gri) Consider renaming to CommentPos, CommentPlacement, etc.
+//           Kind = Above doesn't make much sense.
 type CommentKind uint
 
 const (

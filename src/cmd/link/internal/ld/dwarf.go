@@ -36,10 +36,10 @@ func (c dwctxt) AddInt(s dwarf.Sym, size int, i int64) {
 }
 func (c dwctxt) AddBytes(s dwarf.Sym, b []byte) {
 	ls := s.(*Symbol)
-	Addbytes(c.linkctxt, ls, b)
+	Addbytes(ls, b)
 }
 func (c dwctxt) AddString(s dwarf.Sym, v string) {
-	Addstring(c.linkctxt, s.(*Symbol), v)
+	Addstring(s.(*Symbol), v)
 }
 func (c dwctxt) SymValue(s dwarf.Sym) int64 {
 	return s.(*Symbol).Value
@@ -56,7 +56,7 @@ func (c dwctxt) AddSectionOffset(s dwarf.Sym, size int, t interface{}, ofs int64
 	ls := s.(*Symbol)
 	switch size {
 	default:
-		c.linkctxt.Diag("invalid size %d in adddwarfref\n", size)
+		Errorf(ls, "invalid size %d in adddwarfref\n", size)
 		fallthrough
 	case SysArch.PtrSize:
 		Addaddr(c.linkctxt, ls, t.(*Symbol))
@@ -82,10 +82,10 @@ var gdbscript string
 var dwarfp []*Symbol
 
 func writeabbrev(ctxt *Link, syms []*Symbol) []*Symbol {
-	s := Linklookup(ctxt, ".debug_abbrev", 0)
+	s := ctxt.Syms.Lookup(".debug_abbrev", 0)
 	s.Type = obj.SDWARFSECT
 	abbrevsym = s
-	Addbytes(ctxt, s, dwarf.GetAbbrev())
+	Addbytes(s, dwarf.GetAbbrev())
 	return append(syms, s)
 }
 
@@ -146,7 +146,7 @@ func newdie(ctxt *Link, parent *dwarf.DWDie, abbrev int, name string, version in
 
 	if name != "" && (abbrev <= dwarf.DW_ABRV_VARIABLE || abbrev >= dwarf.DW_ABRV_NULLTYPE) {
 		if abbrev != dwarf.DW_ABRV_VARIABLE || version == 0 {
-			sym := Linklookup(ctxt, dwarf.InfoPrefix+name, version)
+			sym := ctxt.Syms.Lookup(dwarf.InfoPrefix+name, version)
 			sym.Attr |= AttrHidden
 			sym.Type = obj.SDWARFINFO
 			die.Sym = sym
@@ -173,7 +173,7 @@ func walktypedef(die *dwarf.DWDie) *dwarf.DWDie {
 }
 
 func walksymtypedef(ctxt *Link, s *Symbol) *Symbol {
-	if t := Linkrlookup(ctxt, s.Name+"..def", int(s.Version)); t != nil {
+	if t := ctxt.Syms.ROLookup(s.Name+"..def", int(s.Version)); t != nil {
 		return t
 	}
 	return s
@@ -200,7 +200,7 @@ var prefixBuf = []byte(dwarf.InfoPrefix)
 func find(ctxt *Link, name string) *Symbol {
 	n := append(prefixBuf, name...)
 	// The string allocation below is optimized away because it is only used in a map lookup.
-	s := Linkrlookup(ctxt, string(n), 0)
+	s := ctxt.Syms.ROLookup(string(n), 0)
 	prefixBuf = n[:len(dwarf.InfoPrefix)]
 	if s != nil && s.Type == obj.SDWARFINFO {
 		return s
@@ -220,7 +220,7 @@ func adddwarfref(ctxt *Link, s *Symbol, t *Symbol, size int) int64 {
 	var result int64
 	switch size {
 	default:
-		ctxt.Diag("invalid size %d in adddwarfref\n", size)
+		Errorf(s, "invalid size %d in adddwarfref\n", size)
 		fallthrough
 	case SysArch.PtrSize:
 		result = Addaddr(ctxt, s, t)
@@ -312,7 +312,7 @@ func newabslocexprattr(die *dwarf.DWDie, addr int64, sym *Symbol) {
 
 // Lookup predefined types
 func lookupOrDiag(ctxt *Link, n string) *Symbol {
-	s := Linkrlookup(ctxt, n, 0)
+	s := ctxt.Syms.ROLookup(n, 0)
 	if s == nil || s.Size == 0 {
 		Exitf("dwarf: missing type: %s", n)
 	}
@@ -335,10 +335,10 @@ func dotypedef(ctxt *Link, parent *dwarf.DWDie, name string, def *dwarf.DWDie) {
 		return
 	}
 	if def == nil {
-		ctxt.Diag("dwarf: bad def in dotypedef")
+		Errorf(nil, "dwarf: bad def in dotypedef")
 	}
 
-	sym := Linklookup(ctxt, dtolsym(def.Sym).Name+"..def", 0)
+	sym := ctxt.Syms.Lookup(dtolsym(def.Sym).Name+"..def", 0)
 	sym.Attr |= AttrHidden
 	sym.Type = obj.SDWARFINFO
 	def.Sym = sym
@@ -359,7 +359,7 @@ func defgotype(ctxt *Link, gotype *Symbol) *Symbol {
 	}
 
 	if !strings.HasPrefix(gotype.Name, "type.") {
-		ctxt.Diag("dwarf: type name doesn't start with \"type.\": %s", gotype.Name)
+		Errorf(gotype, "dwarf: type name doesn't start with \"type.\"")
 		return mustFind(ctxt, "<unspecified>")
 	}
 
@@ -526,7 +526,7 @@ func newtype(ctxt *Link, gotype *Symbol) *dwarf.DWDie {
 		die = newdie(ctxt, &dwtypes, dwarf.DW_ABRV_BARE_PTRTYPE, name, 0)
 
 	default:
-		ctxt.Diag("dwarf: definition of unknown kind %d: %s", kind, gotype.Name)
+		Errorf(gotype, "dwarf: definition of unknown kind %d", kind)
 		die = newdie(ctxt, &dwtypes, dwarf.DW_ABRV_TYPEDECL, name, 0)
 		newrefattr(die, dwarf.DW_AT_type, mustFind(ctxt, "<unspecified>"))
 	}
@@ -658,7 +658,7 @@ const (
 func mkinternaltype(ctxt *Link, abbrev int, typename, keyname, valname string, f func(*dwarf.DWDie)) *Symbol {
 	name := mkinternaltypename(typename, keyname, valname)
 	symname := dwarf.InfoPrefix + name
-	s := Linkrlookup(ctxt, symname, 0)
+	s := ctxt.Syms.ROLookup(symname, 0)
 	if s != nil && s.Type == obj.SDWARFINFO {
 		return s
 	}
@@ -814,7 +814,7 @@ func synthesizechantypes(ctxt *Link, die *dwarf.DWDie) {
 }
 
 // For use with pass.c::genasmsym
-func defdwsymb(ctxt *Link, sym *Symbol, s string, t int, v int64, size int64, ver int, gotype *Symbol) {
+func defdwsymb(ctxt *Link, sym *Symbol, s string, t SymbolType, v int64, gotype *Symbol) {
 	if strings.HasPrefix(s, "go.string.") {
 		return
 	}
@@ -834,15 +834,15 @@ func defdwsymb(ctxt *Link, sym *Symbol, s string, t int, v int64, size int64, ve
 	default:
 		return
 
-	case 'd', 'b', 'D', 'B':
-		dv = newdie(ctxt, &dwglobals, dwarf.DW_ABRV_VARIABLE, s, ver)
+	case DataSym, BSSSym:
+		dv = newdie(ctxt, &dwglobals, dwarf.DW_ABRV_VARIABLE, s, int(sym.Version))
 		newabslocexprattr(dv, v, sym)
-		if ver == 0 {
+		if sym.Version == 0 {
 			newattr(dv, dwarf.DW_AT_external, dwarf.DW_CLS_FLAG, 1, 0)
 		}
 		fallthrough
 
-	case 'a', 'p':
+	case AutoSym, ParamSym:
 		dt = defgotype(ctxt, gotype)
 	}
 
@@ -879,32 +879,104 @@ func finddebugruntimepath(s *Symbol) {
 }
 
 /*
- * Generate short opcodes when possible, long ones when necessary.
+ * Generate a sequence of opcodes that is as short as possible.
  * See section 6.2.5
  */
 const (
-	LINE_BASE   = -1
-	LINE_RANGE  = 4
+	LINE_BASE   = -4
+	LINE_RANGE  = 10
+	PC_RANGE    = (255 - OPCODE_BASE) / LINE_RANGE
 	OPCODE_BASE = 10
 )
 
-func putpclcdelta(linkctxt *Link, ctxt dwarf.Context, s *Symbol, deltaPC int64, deltaLC int64) {
-	if LINE_BASE <= deltaLC && deltaLC < LINE_BASE+LINE_RANGE {
-		var opcode int64 = OPCODE_BASE + (deltaLC - LINE_BASE) + (LINE_RANGE * deltaPC)
-		if OPCODE_BASE <= opcode && opcode < 256 {
-			Adduint8(linkctxt, s, uint8(opcode))
-			return
+func putpclcdelta(linkctxt *Link, ctxt dwarf.Context, s *Symbol, deltaPC uint64, deltaLC int64) {
+	// Choose a special opcode that minimizes the number of bytes needed to
+	// encode the remaining PC delta and LC delta.
+	var opcode int64
+	if deltaLC < LINE_BASE {
+		if deltaPC >= PC_RANGE {
+			opcode = OPCODE_BASE + (LINE_RANGE * PC_RANGE)
+		} else {
+			opcode = OPCODE_BASE + (LINE_RANGE * int64(deltaPC))
+		}
+	} else if deltaLC < LINE_BASE+LINE_RANGE {
+		if deltaPC >= PC_RANGE {
+			opcode = OPCODE_BASE + (deltaLC - LINE_BASE) + (LINE_RANGE * PC_RANGE)
+			if opcode > 255 {
+				opcode -= LINE_RANGE
+			}
+		} else {
+			opcode = OPCODE_BASE + (deltaLC - LINE_BASE) + (LINE_RANGE * int64(deltaPC))
+		}
+	} else {
+		if deltaPC <= PC_RANGE {
+			opcode = OPCODE_BASE + (LINE_RANGE - 1) + (LINE_RANGE * int64(deltaPC))
+			if opcode > 255 {
+				opcode = 255
+			}
+		} else {
+			// Use opcode 249 (pc+=23, lc+=5) or 255 (pc+=24, lc+=1).
+			//
+			// Let x=deltaPC-PC_RANGE.  If we use opcode 255, x will be the remaining
+			// deltaPC that we need to encode separately before emitting 255.  If we
+			// use opcode 249, we will need to encode x+1.  If x+1 takes one more
+			// byte to encode than x, then we use opcode 255.
+			//
+			// In all other cases x and x+1 take the same number of bytes to encode,
+			// so we use opcode 249, which may save us a byte in encoding deltaLC,
+			// for similar reasons.
+			switch deltaPC - PC_RANGE {
+			// PC_RANGE is the largest deltaPC we can encode in one byte, using
+			// DW_LNS_const_add_pc.
+			//
+			// (1<<16)-1 is the largest deltaPC we can encode in three bytes, using
+			// DW_LNS_fixed_advance_pc.
+			//
+			// (1<<(7n))-1 is the largest deltaPC we can encode in n+1 bytes for
+			// n=1,3,4,5,..., using DW_LNS_advance_pc.
+			case PC_RANGE, (1 << 7) - 1, (1 << 16) - 1, (1 << 21) - 1, (1 << 28) - 1,
+				(1 << 35) - 1, (1 << 42) - 1, (1 << 49) - 1, (1 << 56) - 1, (1 << 63) - 1:
+				opcode = 255
+			default:
+				opcode = OPCODE_BASE + LINE_RANGE*PC_RANGE - 1 // 249
+			}
+		}
+	}
+	if opcode < OPCODE_BASE || opcode > 255 {
+		panic(fmt.Sprintf("produced invalid special opcode %d", opcode))
+	}
+
+	// Subtract from deltaPC and deltaLC the amounts that the opcode will add.
+	deltaPC -= uint64((opcode - OPCODE_BASE) / LINE_RANGE)
+	deltaLC -= int64((opcode-OPCODE_BASE)%LINE_RANGE + LINE_BASE)
+
+	// Encode deltaPC.
+	if deltaPC != 0 {
+		if deltaPC <= PC_RANGE {
+			// Adjust the opcode so that we can use the 1-byte DW_LNS_const_add_pc
+			// instruction.
+			opcode -= LINE_RANGE * int64(PC_RANGE-deltaPC)
+			if opcode < OPCODE_BASE {
+				panic(fmt.Sprintf("produced invalid special opcode %d", opcode))
+			}
+			Adduint8(linkctxt, s, dwarf.DW_LNS_const_add_pc)
+		} else if (1<<14) <= deltaPC && deltaPC < (1<<16) {
+			Adduint8(linkctxt, s, dwarf.DW_LNS_fixed_advance_pc)
+			Adduint16(linkctxt, s, uint16(deltaPC))
+		} else {
+			Adduint8(linkctxt, s, dwarf.DW_LNS_advance_pc)
+			dwarf.Uleb128put(ctxt, s, int64(deltaPC))
 		}
 	}
 
-	if deltaPC != 0 {
-		Adduint8(linkctxt, s, dwarf.DW_LNS_advance_pc)
-		dwarf.Sleb128put(ctxt, s, deltaPC)
+	// Encode deltaLC.
+	if deltaLC != 0 {
+		Adduint8(linkctxt, s, dwarf.DW_LNS_advance_line)
+		dwarf.Sleb128put(ctxt, s, deltaLC)
 	}
 
-	Adduint8(linkctxt, s, dwarf.DW_LNS_advance_line)
-	dwarf.Sleb128put(ctxt, s, deltaLC)
-	Adduint8(linkctxt, s, dwarf.DW_LNS_copy)
+	// Output the special opcode.
+	Adduint8(linkctxt, s, uint8(opcode))
 }
 
 /*
@@ -921,7 +993,7 @@ func getCompilationDir() string {
 func writelines(ctxt *Link, syms []*Symbol) ([]*Symbol, []*Symbol) {
 	var dwarfctxt dwarf.Context = dwctxt{ctxt}
 	if linesec == nil {
-		linesec = Linklookup(ctxt, ".debug_line", 0)
+		linesec = ctxt.Syms.Lookup(".debug_line", 0)
 	}
 	linesec.Type = obj.SDWARFSECT
 	linesec.R = linesec.R[:0]
@@ -940,6 +1012,9 @@ func writelines(ctxt *Link, syms []*Symbol) ([]*Symbol, []*Symbol) {
 	lang := dwarf.DW_LANG_Go
 
 	s := ctxt.Textp[0]
+	if ctxt.DynlinkingGo() && Headtype == obj.Hdarwin {
+		s = ctxt.Textp[1] // skip runtime.text
+	}
 
 	dwinfo = newdie(ctxt, &dwroot, dwarf.DW_ABRV_COMPUNIT, "go", 0)
 	newattr(dwinfo, dwarf.DW_AT_language, dwarf.DW_CLS_CONSTANT, int64(lang), 0)
@@ -977,7 +1052,7 @@ func writelines(ctxt *Link, syms []*Symbol) ([]*Symbol, []*Symbol) {
 	Adduint8(ctxt, ls, 0)              // include_directories  (empty)
 
 	for _, f := range ctxt.Filesyms {
-		Addstring(ctxt, ls, f.Name)
+		Addstring(ls, f.Name)
 		Adduint8(ctxt, ls, 0)
 		Adduint8(ctxt, ls, 0)
 		Adduint8(ctxt, ls, 0)
@@ -999,13 +1074,12 @@ func writelines(ctxt *Link, syms []*Symbol) ([]*Symbol, []*Symbol) {
 
 	var pcfile Pciter
 	var pcline Pciter
-	for _, ctxt.Cursym = range ctxt.Textp {
-		s := ctxt.Cursym
+	for _, s := range ctxt.Textp {
 
 		epc = s.Value + s.Size
 		epcs = s
 
-		dsym := Linklookup(ctxt, dwarf.InfoPrefix+s.Name, int(s.Version))
+		dsym := ctxt.Syms.Lookup(dwarf.InfoPrefix+s.Name, int(s.Version))
 		dsym.Attr |= AttrHidden
 		dsym.Type = obj.SDWARFINFO
 		for _, r := range dsym.R {
@@ -1015,7 +1089,7 @@ func writelines(ctxt *Link, syms []*Symbol) ([]*Symbol, []*Symbol) {
 					continue
 				}
 				n := nameFromDIESym(r.Sym)
-				defgotype(ctxt, Linklookup(ctxt, "type."+n, 0))
+				defgotype(ctxt, ctxt.Syms.Lookup("type."+n, 0))
 			}
 		}
 		funcs = append(funcs, dsym)
@@ -1046,7 +1120,7 @@ func writelines(ctxt *Link, syms []*Symbol) ([]*Symbol, []*Symbol) {
 				file = int(pcfile.value)
 			}
 
-			putpclcdelta(ctxt, dwarfctxt, ls, s.Value+int64(pcline.pc)-pc, int64(pcline.value)-int64(line))
+			putpclcdelta(ctxt, dwarfctxt, ls, uint64(s.Value+int64(pcline.pc)-pc), int64(pcline.value)-int64(line))
 
 			pc = s.Value + int64(pcline.pc)
 			line = int(pcline.value)
@@ -1102,7 +1176,7 @@ func appendPCDeltaCFA(b []byte, deltapc, cfa int64) []byte {
 func writeframes(ctxt *Link, syms []*Symbol) []*Symbol {
 	var dwarfctxt dwarf.Context = dwctxt{ctxt}
 	if framesec == nil {
-		framesec = Linklookup(ctxt, ".debug_frame", 0)
+		framesec = ctxt.Syms.Lookup(".debug_frame", 0)
 	}
 	framesec.Type = obj.SDWARFSECT
 	framesec.R = framesec.R[:0]
@@ -1148,12 +1222,11 @@ func writeframes(ctxt *Link, syms []*Symbol) []*Symbol {
 		Exitf("dwarf: cieReserve too small by %d bytes.", -pad)
 	}
 
-	Addbytes(ctxt, fs, zeros[:pad])
+	Addbytes(fs, zeros[:pad])
 
 	var deltaBuf []byte
 	var pcsp Pciter
-	for _, ctxt.Cursym = range ctxt.Textp {
-		s := ctxt.Cursym
+	for _, s := range ctxt.Textp {
 		if s.FuncInfo == nil {
 			continue
 		}
@@ -1210,7 +1283,7 @@ func writeframes(ctxt *Link, syms []*Symbol) []*Symbol {
 		}
 		Addaddr(ctxt, fs, s)
 		adduintxx(ctxt, fs, uint64(s.Size), SysArch.PtrSize) // address range
-		Addbytes(ctxt, fs, deltaBuf)
+		Addbytes(fs, deltaBuf)
 	}
 	return syms
 }
@@ -1224,7 +1297,7 @@ const (
 
 func writeinfo(ctxt *Link, syms []*Symbol, funcs []*Symbol) []*Symbol {
 	if infosec == nil {
-		infosec = Linklookup(ctxt, ".debug_info", 0)
+		infosec = ctxt.Syms.Lookup(".debug_info", 0)
 	}
 	infosec.R = infosec.R[:0]
 	infosec.Type = obj.SDWARFINFO
@@ -1232,7 +1305,7 @@ func writeinfo(ctxt *Link, syms []*Symbol, funcs []*Symbol) []*Symbol {
 	syms = append(syms, infosec)
 
 	if arangessec == nil {
-		arangessec = Linklookup(ctxt, ".dwarfaranges", 0)
+		arangessec = ctxt.Syms.Lookup(".dwarfaranges", 0)
 	}
 	arangessec.R = arangessec.R[:0]
 
@@ -1292,7 +1365,7 @@ func ispubtype(die *dwarf.DWDie) bool {
 }
 
 func writepub(ctxt *Link, sname string, ispub func(*dwarf.DWDie) bool, syms []*Symbol) []*Symbol {
-	s := Linklookup(ctxt, sname, 0)
+	s := ctxt.Syms.Lookup(sname, 0)
 	s.Type = obj.SDWARFSECT
 	syms = append(syms, s)
 
@@ -1316,7 +1389,7 @@ func writepub(ctxt *Link, sname string, ispub func(*dwarf.DWDie) bool, syms []*S
 				fmt.Println("Missing sym for ", name)
 			}
 			adddwarfref(ctxt, s, dtolsym(die.Sym), 4)
-			Addstring(ctxt, s, name)
+			Addstring(s, name)
 		}
 
 		Adduint32(ctxt, s, 0)
@@ -1332,7 +1405,7 @@ func writepub(ctxt *Link, sname string, ispub func(*dwarf.DWDie) bool, syms []*S
  *  because we need die->offs of dwarf.DW_globals.
  */
 func writearanges(ctxt *Link, syms []*Symbol) []*Symbol {
-	s := Linklookup(ctxt, ".debug_aranges", 0)
+	s := ctxt.Syms.Lookup(".debug_aranges", 0)
 	s.Type = obj.SDWARFSECT
 	// The first tuple is aligned to a multiple of the size of a single tuple
 	// (twice the size of an address)
@@ -1376,11 +1449,11 @@ func writearanges(ctxt *Link, syms []*Symbol) []*Symbol {
 func writegdbscript(ctxt *Link, syms []*Symbol) []*Symbol {
 
 	if gdbscript != "" {
-		s := Linklookup(ctxt, ".debug_gdb_scripts", 0)
+		s := ctxt.Syms.Lookup(".debug_gdb_scripts", 0)
 		s.Type = obj.SDWARFSECT
 		syms = append(syms, s)
 		Adduint8(ctxt, s, 1) // magic 1 byte?
-		Addstring(ctxt, s, gdbscript)
+		Addstring(s, gdbscript)
 	}
 
 	return syms
@@ -1401,15 +1474,15 @@ func dwarfgeneratedebugsyms(ctxt *Link) {
 	if *FlagW { // disable dwarf
 		return
 	}
-	if *FlagS && HEADTYPE != obj.Hdarwin {
+	if *FlagS && Headtype != obj.Hdarwin {
 		return
 	}
-	if HEADTYPE == obj.Hplan9 {
+	if Headtype == obj.Hplan9 {
 		return
 	}
 
 	if Linkmode == LinkExternal {
-		if !Iself && HEADTYPE != obj.Hdarwin {
+		if !Iself && Headtype != obj.Hdarwin {
 			return
 		}
 	}
@@ -1487,21 +1560,21 @@ func dwarfaddshstrings(ctxt *Link, shstrtab *Symbol) {
 		return
 	}
 
-	Addstring(ctxt, shstrtab, ".debug_abbrev")
-	Addstring(ctxt, shstrtab, ".debug_aranges")
-	Addstring(ctxt, shstrtab, ".debug_frame")
-	Addstring(ctxt, shstrtab, ".debug_info")
-	Addstring(ctxt, shstrtab, ".debug_line")
-	Addstring(ctxt, shstrtab, ".debug_pubnames")
-	Addstring(ctxt, shstrtab, ".debug_pubtypes")
-	Addstring(ctxt, shstrtab, ".debug_gdb_scripts")
+	Addstring(shstrtab, ".debug_abbrev")
+	Addstring(shstrtab, ".debug_aranges")
+	Addstring(shstrtab, ".debug_frame")
+	Addstring(shstrtab, ".debug_info")
+	Addstring(shstrtab, ".debug_line")
+	Addstring(shstrtab, ".debug_pubnames")
+	Addstring(shstrtab, ".debug_pubtypes")
+	Addstring(shstrtab, ".debug_gdb_scripts")
 	if Linkmode == LinkExternal {
-		Addstring(ctxt, shstrtab, elfRelType+".debug_info")
-		Addstring(ctxt, shstrtab, elfRelType+".debug_aranges")
-		Addstring(ctxt, shstrtab, elfRelType+".debug_line")
-		Addstring(ctxt, shstrtab, elfRelType+".debug_frame")
-		Addstring(ctxt, shstrtab, elfRelType+".debug_pubnames")
-		Addstring(ctxt, shstrtab, elfRelType+".debug_pubtypes")
+		Addstring(shstrtab, elfRelType+".debug_info")
+		Addstring(shstrtab, elfRelType+".debug_aranges")
+		Addstring(shstrtab, elfRelType+".debug_line")
+		Addstring(shstrtab, elfRelType+".debug_frame")
+		Addstring(shstrtab, elfRelType+".debug_pubnames")
+		Addstring(shstrtab, elfRelType+".debug_pubtypes")
 	}
 }
 
@@ -1514,13 +1587,13 @@ func dwarfaddelfsectionsyms(ctxt *Link) {
 	if Linkmode != LinkExternal {
 		return
 	}
-	sym := Linklookup(ctxt, ".debug_info", 0)
+	sym := ctxt.Syms.Lookup(".debug_info", 0)
 	putelfsectionsym(sym, sym.Sect.Elfsect.shnum)
-	sym = Linklookup(ctxt, ".debug_abbrev", 0)
+	sym = ctxt.Syms.Lookup(".debug_abbrev", 0)
 	putelfsectionsym(sym, sym.Sect.Elfsect.shnum)
-	sym = Linklookup(ctxt, ".debug_line", 0)
+	sym = ctxt.Syms.Lookup(".debug_line", 0)
 	putelfsectionsym(sym, sym.Sect.Elfsect.shnum)
-	sym = Linklookup(ctxt, ".debug_frame", 0)
+	sym = ctxt.Syms.Lookup(".debug_frame", 0)
 	putelfsectionsym(sym, sym.Sect.Elfsect.shnum)
 }
 
@@ -1535,8 +1608,7 @@ func dwarfaddpeheaders(ctxt *Link) {
 		h := newPEDWARFSection(ctxt, sect.Name, int64(sect.Length))
 		fileoff := sect.Vaddr - Segdwarf.Vaddr + Segdwarf.Fileoff
 		if uint64(h.PointerToRawData) != fileoff {
-			ctxt.Diag("%s.PointerToRawData = %#x, want %#x", sect.Name, h.PointerToRawData, fileoff)
-			errorexit()
+			Exitf("%s.PointerToRawData = %#x, want %#x", sect.Name, h.PointerToRawData, fileoff)
 		}
 	}
 }

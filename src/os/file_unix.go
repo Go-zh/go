@@ -11,7 +11,16 @@ import (
 	"syscall"
 )
 
+// fixLongPath is a noop on non-Windows platforms.
+func fixLongPath(path string) string {
+	return path
+}
+
 func rename(oldname, newname string) error {
+	fi, err := Lstat(newname)
+	if err == nil && fi.IsDir() {
+		return &LinkError{"rename", oldname, newname, syscall.EEXIST}
+	}
 	e := syscall.Rename(oldname, newname)
 	if e != nil {
 		return &LinkError{"rename", oldname, newname, e}
@@ -124,7 +133,7 @@ func (f *File) Close() error {
 }
 
 func (file *file) close() error {
-	if file == nil || file.fd < 0 {
+	if file == nil || file.fd == badFd {
 		return syscall.EINVAL
 	}
 	var err error

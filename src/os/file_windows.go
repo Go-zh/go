@@ -26,9 +26,11 @@ type file struct {
 	l       sync.Mutex // used to implement windows pread/pwrite
 
 	// only for console io
-	isConsole bool
-	lastbits  []byte // first few bytes of the last incomplete rune in last write
-	readbuf   []rune // input console buffer
+	isConsole      bool
+	lastbits       []byte   // first few bytes of the last incomplete rune in last write
+	readuint16     []uint16 // buffer to hold uint16s obtained with ReadConsole
+	readbyte       []byte   // buffer to hold decoding of readuint16 from utf16 to utf8
+	readbyteOffset int      // readbyte[readOffset:] is yet to be consumed with file.Read
 }
 
 // Fd returns the Windows handle referencing the open file.
@@ -44,11 +46,14 @@ func (file *File) Fd() uintptr {
 // Unlike NewFile, it does not check that h is syscall.InvalidHandle.
 func newFile(h syscall.Handle, name string) *File {
 	f := &File{&file{fd: h, name: name}}
-	var m uint32
-	if syscall.GetConsoleMode(f.fd, &m) == nil {
-		f.isConsole = true
-	}
 	runtime.SetFinalizer(f.file, (*file).close)
+	return f
+}
+
+// newConsoleFile creates new File that will be used as console.
+func newConsoleFile(h syscall.Handle, name string) *File {
+	f := newFile(h, name)
+	f.isConsole = true
 	return f
 }
 
@@ -57,6 +62,10 @@ func NewFile(fd uintptr, name string) *File {
 	h := syscall.Handle(fd)
 	if h == syscall.InvalidHandle {
 		return nil
+	}
+	var m uint32
+	if syscall.GetConsoleMode(h, &m) == nil {
+		return newConsoleFile(h, name)
 	}
 	return newFile(h, name)
 }
@@ -77,7 +86,7 @@ const DevNull = "NUL"
 func (f *file) isdir() bool { return f != nil && f.dirinfo != nil }
 
 func openFile(name string, flag int, perm FileMode) (file *File, err error) {
-	r, e := syscall.Open(name, flag|syscall.O_CLOEXEC, syscallMode(perm))
+	r, e := syscall.Open(fixLongPath(name), flag|syscall.O_CLOEXEC, syscallMode(perm))
 	if e != nil {
 		return nil, e
 	}
@@ -86,10 +95,13 @@ func openFile(name string, flag int, perm FileMode) (file *File, err error) {
 
 func openDir(name string) (file *File, err error) {
 	var mask string
-	if len(name) == 2 && name[1] == ':' { // it is a drive letter, like C:
-		mask = name + `*`
+
+	path := fixLongPath(name)
+
+	if len(path) == 2 && path[1] == ':' || (len(path) > 0 && path[len(path)-1] == '\\') { // it is a drive letter, like C:
+		mask = path + `*`
 	} else {
-		mask = name + `\*`
+		mask = path + `\*`
 	}
 	maskp, e := syscall.UTF16PtrFromString(mask)
 	if e != nil {
@@ -105,11 +117,11 @@ func openDir(name string) (file *File, err error) {
 			return nil, e
 		}
 		var fa syscall.Win32FileAttributeData
-		namep, e := syscall.UTF16PtrFromString(name)
+		pathp, e := syscall.UTF16PtrFromString(path)
 		if e != nil {
 			return nil, e
 		}
-		e = syscall.GetFileAttributesEx(namep, syscall.GetFileExInfoStandard, (*byte)(unsafe.Pointer(&fa)))
+		e = syscall.GetFileAttributesEx(pathp, syscall.GetFileExInfoStandard, (*byte)(unsafe.Pointer(&fa)))
 		if e != nil {
 			return nil, e
 		}
@@ -118,7 +130,7 @@ func openDir(name string) (file *File, err error) {
 		}
 		d.isempty = true
 	}
-	d.path = name
+	d.path = path
 	if !isAbs(d.path) {
 		d.path, e = syscall.FullPath(d.path)
 		if e != nil {
@@ -184,12 +196,14 @@ func (file *file) close() error {
 	if e != nil {
 		err = &PathError{"close", file.name, e}
 	}
-	file.fd = syscall.InvalidHandle // so it can't be closed again
+	file.fd = badFd // so it can't be closed again
 
 	// no need for a finalizer anymore
 	runtime.SetFinalizer(file, nil)
 	return err
 }
+
+var readConsole = syscall.ReadConsole // changed for testing
 
 // readConsole reads utf16 characters from console File,
 // encodes them into utf8 and stores them in buffer b.
@@ -198,50 +212,70 @@ func (f *File) readConsole(b []byte) (n int, err error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
-	if len(f.readbuf) == 0 {
-		numBytes := len(b)
-		// Windows  can't read bytes over max of int16.
-		// Some versions of Windows can read even less.
-		// See golang.org/issue/13697.
-		if numBytes > 10000 {
-			numBytes = 10000
+
+	if f.readuint16 == nil {
+		// Note: syscall.ReadConsole fails for very large buffers.
+		// The limit is somewhere around (but not exactly) 16384.
+		// Stay well below.
+		f.readuint16 = make([]uint16, 0, 10000)
+		f.readbyte = make([]byte, 0, 4*cap(f.readuint16))
+	}
+
+	for f.readbyteOffset >= len(f.readbyte) {
+		n := cap(f.readuint16) - len(f.readuint16)
+		if n > len(b) {
+			n = len(b)
 		}
-		mbytes := make([]byte, numBytes)
-		var nmb uint32
-		err := syscall.ReadFile(f.fd, mbytes, &nmb, nil)
+		var nw uint32
+		err := readConsole(f.fd, &f.readuint16[:len(f.readuint16)+1][len(f.readuint16)], uint32(n), &nw, nil)
 		if err != nil {
 			return 0, err
 		}
-		if nmb > 0 {
-			var pmb *byte
-			if len(b) > 0 {
-				pmb = &mbytes[0]
+		uint16s := f.readuint16[:len(f.readuint16)+int(nw)]
+		f.readuint16 = f.readuint16[:0]
+		buf := f.readbyte[:0]
+		for i := 0; i < len(uint16s); i++ {
+			r := rune(uint16s[i])
+			if utf16.IsSurrogate(r) {
+				if i+1 == len(uint16s) {
+					if nw > 0 {
+						// Save half surrogate pair for next time.
+						f.readuint16 = f.readuint16[:1]
+						f.readuint16[0] = uint16(r)
+						break
+					}
+					r = utf8.RuneError
+				} else {
+					r = utf16.DecodeRune(r, rune(uint16s[i+1]))
+					if r != utf8.RuneError {
+						i++
+					}
+				}
 			}
-			acp := windows.GetACP()
-			nwc, err := windows.MultiByteToWideChar(acp, 2, pmb, int32(nmb), nil, 0)
-			if err != nil {
-				return 0, err
-			}
-			wchars := make([]uint16, nwc)
-			pwc := &wchars[0]
-			nwc, err = windows.MultiByteToWideChar(acp, 2, pmb, int32(nmb), pwc, nwc)
-			if err != nil {
-				return 0, err
-			}
-			f.readbuf = utf16.Decode(wchars[:nwc])
+			n := utf8.EncodeRune(buf[len(buf):cap(buf)], r)
+			buf = buf[:len(buf)+n]
+		}
+		f.readbyte = buf
+		f.readbyteOffset = 0
+		if nw == 0 {
+			break
 		}
 	}
-	for i, r := range f.readbuf {
-		if utf8.RuneLen(r) > len(b) {
-			f.readbuf = f.readbuf[i:]
-			return n, nil
+
+	src := f.readbyte[f.readbyteOffset:]
+	var i int
+	for i = 0; i < len(src) && i < len(b); i++ {
+		x := src[i]
+		if x == 0x1A { // Ctrl-Z
+			if i == 0 {
+				f.readbyteOffset++
+			}
+			break
 		}
-		nr := utf8.EncodeRune(b, r)
-		b = b[nr:]
-		n += nr
+		b[i] = x
 	}
-	f.readbuf = nil
-	return n, nil
+	f.readbyteOffset += i
+	return i, nil
 }
 
 // read reads up to len(b) bytes from the File.
@@ -386,7 +420,7 @@ func Truncate(name string, size int64) error {
 // Remove removes the named file or directory.
 // If there is an error, it will be of type *PathError.
 func Remove(name string) error {
-	p, e := syscall.UTF16PtrFromString(name)
+	p, e := syscall.UTF16PtrFromString(fixLongPath(name))
 	if e != nil {
 		return &PathError{"remove", name, e}
 	}
@@ -423,7 +457,7 @@ func Remove(name string) error {
 }
 
 func rename(oldname, newname string) error {
-	e := windows.Rename(oldname, newname)
+	e := windows.Rename(fixLongPath(oldname), fixLongPath(newname))
 	if e != nil {
 		return &LinkError{"rename", oldname, newname, e}
 	}
@@ -468,11 +502,11 @@ func TempDir() string {
 // Link creates newname as a hard link to the oldname file.
 // If there is an error, it will be of type *LinkError.
 func Link(oldname, newname string) error {
-	n, err := syscall.UTF16PtrFromString(newname)
+	n, err := syscall.UTF16PtrFromString(fixLongPath(newname))
 	if err != nil {
 		return &LinkError{"link", oldname, newname, err}
 	}
-	o, err := syscall.UTF16PtrFromString(oldname)
+	o, err := syscall.UTF16PtrFromString(fixLongPath(oldname))
 	if err != nil {
 		return &LinkError{"link", oldname, newname, err}
 	}
@@ -503,11 +537,11 @@ func Symlink(oldname, newname string) error {
 	fi, err := Lstat(destpath)
 	isdir := err == nil && fi.IsDir()
 
-	n, err := syscall.UTF16PtrFromString(newname)
+	n, err := syscall.UTF16PtrFromString(fixLongPath(newname))
 	if err != nil {
 		return &LinkError{"symlink", oldname, newname, err}
 	}
-	o, err := syscall.UTF16PtrFromString(oldname)
+	o, err := syscall.UTF16PtrFromString(fixLongPath(oldname))
 	if err != nil {
 		return &LinkError{"symlink", oldname, newname, err}
 	}
@@ -522,3 +556,5 @@ func Symlink(oldname, newname string) error {
 	}
 	return nil
 }
+
+const badFd = syscall.InvalidHandle

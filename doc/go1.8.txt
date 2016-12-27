@@ -1,37 +1,55 @@
+This file lists things yet to be moved into go1.8.html or deemed too
+minor to mention. Either way, delete from here when done.
 
 Tools:
 
-compile: SSA for 386, arm, arm64, ppc64le, ... (many CLs)
-yacc: "go tool yacc" is removed. now at golang.org/x/tools/cmd/goyacc (CL 27324, CL 27325)
 go: -buildmode=c-archive now builds PIC on ELF (CL 24180)
 go: mobile pkg dir change, recommend using go list in scripts (CL 24930, CL 27929)
-
-Ports:
-
-
+go, dist: can set default pkg-config tool using PKG_CONFIG env var (CL 29991)
+go: can set secure/insecure GIT schemes using GIT_ALLOW_PROTOCOL env var (CL 30135)
 
 API additions and behavior changes:
 
-crypto/tls: set Conn.ConnectionState.ServerName unconditionally (CL 22862)
-crypto/tls: support AES-128-CBC cipher suites with SHA-256 (CL 27315)
-crypto/tls: don't generate random ticket keys if already set (CL 27317)
-crypto/x509: require a NULL parameters for RSA public keys (CL 16166)
-crypto/x509: return error for missing SerialNumber (CL 27238)
-crypto/x509: support PSS signatures (CL 24743)
-net/http: make Transport retry non-idempotent requests if no bytes written (CL 27117)
-net: support "option ndots:0" in resolv.conf (CL 24901)
-net: use libresolv rules for ndots range and validation (CL 24901)
-runtime: fix map iterator concurrent map check (CL 23711)
+cmd/compile, runtime, etc: get rid of constant FP registers (CL 28095)
+cmd/compile, runtime: add go:yeswritebarrierrec pragma (CL 30938)
+cmd/compile/internal/gc: enable new parser by default (CL 27203)
+cmd/compile/internal/syntax: fast Go syntax trees, initial commit (CL 27195)
+cmd/compile: add compiler phase timing (CL 24462)
+cmd/compile: add inline explainer (CL 22782)
+cmd/compile: enable flag-specified dump of specific phase+function (CL 23044)
 
-Optimizations:
+cmd/internal/obj, cmd/link: darwin dynlink support (CL 29393)
+cmd/internal/objfile: add ppc64/ppc64le disassembler support (CL 9682)
+cmd/link, cmd/go: delay linking of mingwex and mingw32 until very end (CL 26670)
+cmd/link: R_ADDR dynamic relocs for internal PIE (CL 29118)
+cmd/link: add trampolines for too far calls in ppc64x (CL 30850)
+cmd/link: allow internal PIE linking (CL 28543)
+cmd/link: fix -X importpath.name=value when import path needs escaping (CL 31970)
+cmd/link: fix -buildmode=pie / -linkshared combination (CL 28996)
+cmd/link: for -buildmode=exe pass -no-pie to external linker (CL 33106)
+cmd/link: insert trampolines for too-far jumps on ARM (CL 29397)
+cmd/link: non-executable stack support for Solaris (CL 24142)
+cmd/link: put text at address 0x1000000 on darwin/amd64 (CL 32185)
+cmd/link: remove the -shared flag (CL 28852)
+cmd/link: split large elf text sections on ppc64x (CL 27790)
+cmd/link: trampoline support for external linking on ARM (CL 31143)
+cmd/objdump: implement objdump of .o files (CL 24818)
 
-cmd/compile: handle e == T comparison more efficiently (CL 26660)
-cmd/compile: inline _, ok = i.(T) (CL 26658)
-cmd/compile: inline x, ok := y.(T) where T is a scalar (CL 26659)
-cmd/compile: optimize bool to int conversion (CL 22711)
-container/heap: remove one unnecessary comparison in Fix (CL 24273)
-encoding/hex: change lookup table from string to array (CL 27254)
-hash/crc32: improve the processing of the last bytes in the SSE4.2 code for AMD64 (CL 24470)
-math/big: avoid allocation in float.{Add, Sub} when there's no aliasing (CL 23568)
-math/big: use array instead of slice for deBruijn lookups (CL 26663)
-strings: add special cases for Join of 2 and 3 strings (CL 25005)
+go/build: allow % in ${SRCDIR} expansion for Jenkins (CL 31611)
+go/build: do not record go:binary-only-package if build tags not satisfied (CL 31577)
+go/build: implement default GOPATH (CL 32019)
+
+runtime/race: update race runtime (CL 32160)
+runtime: assume 64kB physical pages on ARM (CL 25021)
+runtime: disable stack rescanning by default (CL 31766)
+runtime: don't call cgocallback from signal handler (CL 30218)
+runtime: fix check for vacuous page boundary rounding (CL 27230)
+runtime: fix map iterator concurrent map check (CL 24749)
+runtime: fix newextram PC passed to race detector (CL 29712)
+runtime: implement unconditional hybrid barrier (CL 31765)
+runtime: include pre-panic/throw logs in core dumps (CL 32013)
+runtime: limit the number of map overflow buckets (CL 25049)
+runtime: pass windows float syscall args via XMM (CL 32173)
+runtime: print sigcode on signal crash (CL 32183)
+runtime: record current PC for SIGPROF on non-Go thread (CL 30252)
+runtime: sleep on CLOCK_MONOTONIC in futexsleep1 on freebsd (CL 30154)

@@ -13,6 +13,7 @@ type mOS struct {
 	waitsemacount uint32
 	notesig       *int8
 	errstr        *byte
+	ignoreHangup  bool
 }
 
 func closefd(fd int32) int32
@@ -56,7 +57,7 @@ func noted(mode int32) int32
 func nsec(*int64) int64
 
 //go:noescape
-func sigtramp(ureg, msg unsafe.Pointer)
+func sigtramp(ureg, note unsafe.Pointer)
 
 func setfpmasks()
 
@@ -467,7 +468,7 @@ func badsignal2() {
 	exits(&_badsignal[0])
 }
 
-func raisebadsignal(sig int32) {
+func raisebadsignal(sig uint32) {
 	badsignal2()
 }
 

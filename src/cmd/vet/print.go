@@ -94,7 +94,7 @@ func formatString(f *File, call *ast.CallExpr) (string, int) {
 	if typ != nil {
 		if sig, ok := typ.(*types.Signature); ok {
 			if !sig.Variadic() {
-				// Skip checking non-variadic functions
+				// Skip checking non-variadic functions.
 				return "", -1
 			}
 			idx := sig.Params().Len() - 2
@@ -103,30 +103,36 @@ func formatString(f *File, call *ast.CallExpr) (string, int) {
 				// fixed arguments.
 				return "", -1
 			}
-			s, ok := stringLiteralArg(f, call, idx)
+			s, ok := stringConstantArg(f, call, idx)
 			if !ok {
-				// The last argument before variadic args isn't a string
+				// The last argument before variadic args isn't a string.
 				return "", -1
 			}
 			return s, idx
 		}
 	}
 
-	// Cannot determine call's signature. Fallback to scanning for the first
-	// string argument in the call
+	// Cannot determine call's signature. Fall back to scanning for the first
+	// string constant in the call.
 	for idx := range call.Args {
-		if s, ok := stringLiteralArg(f, call, idx); ok {
+		if s, ok := stringConstantArg(f, call, idx); ok {
 			return s, idx
+		}
+		if f.pkg.types[call.Args[idx]].Type == types.Typ[types.String] {
+			// Skip checking a call with a non-constant format
+			// string argument, since its contents are unavailable
+			// for validation.
+			return "", -1
 		}
 	}
 	return "", -1
 }
 
-// stringLiteralArg returns call's string constant argument at the index idx.
+// stringConstantArg returns call's string constant argument at the index idx.
 //
 // ("", false) is returned if call's argument at the index idx isn't a string
-// literal.
-func stringLiteralArg(f *File, call *ast.CallExpr, idx int) (string, bool) {
+// constant.
+func stringConstantArg(f *File, call *ast.CallExpr, idx int) (string, bool) {
 	if idx >= len(call.Args) {
 		return "", false
 	}
@@ -184,6 +190,12 @@ func isStringer(f *File, d *ast.FuncDecl) bool {
 	return d.Recv != nil && d.Name.Name == "String" && d.Type.Results != nil &&
 		len(d.Type.Params.List) == 0 && len(d.Type.Results.List) == 1 &&
 		f.pkg.types[d.Type.Results.List[0].Type].Type == types.Typ[types.String]
+}
+
+// isFormatter reports whether t satisfies fmt.Formatter.
+// Unlike fmt.Stringer, it's impossible to satisfy fmt.Formatter without importing fmt.
+func (f *File) isFormatter(t types.Type) bool {
+	return formatterType != nil && types.Implements(t, formatterType)
 }
 
 // formatState holds the parsed representation of a printf directive such as "%3.*[4]d".
@@ -417,8 +429,6 @@ const (
 )
 
 // printVerbs identifies which flags are known to printf for each verb.
-// TODO: A type that implements Formatter may do what it wants, and vet
-// will complain incorrectly.
 var printVerbs = []printVerb{
 	// '-' is a width modifier, always valid.
 	// '.' is a precision for float, max width for strings.
@@ -460,7 +470,16 @@ func (f *File) okPrintfArg(call *ast.CallExpr, state *formatState) (ok bool) {
 			break
 		}
 	}
-	if !found {
+
+	// Does current arg implement fmt.Formatter?
+	formatter := false
+	if state.argNum < len(call.Args) {
+		if tv, ok := f.pkg.types[call.Args[state.argNum]]; ok {
+			formatter = f.isFormatter(tv.Type)
+		}
+	}
+
+	if !found && !formatter {
 		f.Badf(call.Pos(), "unrecognized printf verb %q", state.verb)
 		return false
 	}
@@ -488,7 +507,7 @@ func (f *File) okPrintfArg(call *ast.CallExpr, state *formatState) (ok bool) {
 			return false
 		}
 	}
-	if state.verb == '%' {
+	if state.verb == '%' || formatter {
 		return true
 	}
 	argNum := state.argNums[len(state.argNums)-1]

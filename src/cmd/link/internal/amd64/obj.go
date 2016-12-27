@@ -35,27 +35,19 @@ import (
 	"cmd/internal/sys"
 	"cmd/link/internal/ld"
 	"fmt"
-	"log"
 )
 
-// Reading object files.
-
-func Main() {
-	linkarchinit()
-	ld.Main()
-}
-
-func linkarchinit() {
+func Init() {
 	ld.SysArch = sys.ArchAMD64
-	if obj.Getgoarch() == "amd64p32" {
+	if obj.GOARCH == "amd64p32" {
 		ld.SysArch = sys.ArchAMD64P32
 	}
 
-	ld.Thearch.Funcalign = FuncAlign
-	ld.Thearch.Maxalign = MaxAlign
-	ld.Thearch.Minalign = MinAlign
-	ld.Thearch.Dwarfregsp = DWARFREGSP
-	ld.Thearch.Dwarfreglr = DWARFREGLR
+	ld.Thearch.Funcalign = funcAlign
+	ld.Thearch.Maxalign = maxAlign
+	ld.Thearch.Minalign = minAlign
+	ld.Thearch.Dwarfregsp = dwarfRegSP
+	ld.Thearch.Dwarfreglr = dwarfRegLR
 
 	ld.Thearch.Adddynrel = adddynrel
 	ld.Thearch.Archinit = archinit
@@ -73,6 +65,7 @@ func linkarchinit() {
 	ld.Thearch.Append16 = ld.Append16l
 	ld.Thearch.Append32 = ld.Append32l
 	ld.Thearch.Append64 = ld.Append64l
+	ld.Thearch.TLSIEtoLE = tlsIEtoLE
 
 	ld.Thearch.Linuxdynld = "/lib64/ld-linux-x86-64.so.2"
 	ld.Thearch.Freebsddynld = "/libexec/ld-elf.so.1"
@@ -83,40 +76,9 @@ func linkarchinit() {
 }
 
 func archinit(ctxt *ld.Link) {
-	// getgoextlinkenabled is based on GO_EXTLINK_ENABLED when
-	// Go was built; see ../../make.bash.
-	if ld.Linkmode == ld.LinkAuto && obj.Getgoextlinkenabled() == "0" {
-		ld.Linkmode = ld.LinkInternal
-	}
-
-	if ld.Buildmode == ld.BuildmodeCArchive || ld.Buildmode == ld.BuildmodeCShared || ctxt.DynlinkingGo() {
-		ld.Linkmode = ld.LinkExternal
-	}
-
-	switch ld.HEADTYPE {
+	switch ld.Headtype {
 	default:
-		if ld.Linkmode == ld.LinkAuto {
-			ld.Linkmode = ld.LinkInternal
-		}
-		if ld.Linkmode == ld.LinkExternal && obj.Getgoextlinkenabled() != "1" {
-			log.Fatalf("cannot use -linkmode=external with -H %s", ld.Headstr(int(ld.HEADTYPE)))
-		}
-
-	case obj.Hdarwin,
-		obj.Hdragonfly,
-		obj.Hfreebsd,
-		obj.Hlinux,
-		obj.Hnacl,
-		obj.Hnetbsd,
-		obj.Hopenbsd,
-		obj.Hsolaris,
-		obj.Hwindows:
-		break
-	}
-
-	switch ld.HEADTYPE {
-	default:
-		ld.Exitf("unknown -H option: %v", ld.HEADTYPE)
+		ld.Exitf("unknown -H option: %v", ld.Headtype)
 
 	case obj.Hplan9: /* plan 9 */
 		ld.HEADR = 32 + 8
@@ -139,7 +101,7 @@ func archinit(ctxt *ld.Link) {
 			*ld.FlagRound = 4096
 		}
 		if *ld.FlagTextAddr == -1 {
-			*ld.FlagTextAddr = 4096 + int64(ld.HEADR)
+			*ld.FlagTextAddr = 0x1000000 + int64(ld.HEADR)
 		}
 		if *ld.FlagDataAddr == -1 {
 			*ld.FlagDataAddr = 0
@@ -179,7 +141,7 @@ func archinit(ctxt *ld.Link) {
 			*ld.FlagRound = 0x10000
 		}
 
-	case obj.Hwindows: /* PE executable */
+	case obj.Hwindows, obj.Hwindowsgui: /* PE executable */
 		ld.Peinit(ctxt)
 
 		ld.HEADR = ld.PEFILEHEADR

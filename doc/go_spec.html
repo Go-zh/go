@@ -6,7 +6,7 @@
 
 <!--{
 	"Title": "The Go Programming Language Specification",
-	"Subtitle": "Version of September 1, 2016",
+	"Subtitle": "Version of November 18, 2016",
 	"Path": "/ref/spec"
 }-->
 
@@ -1225,7 +1225,7 @@ implementation must:
 
 	<li>Represent floating-point constants, including the parts of
 	    a complex constant, with a mantissa of at least 256 bits
-	    and a signed exponent of at least 32 bits.</li>
+	    and a signed binary exponent of at least 16 bits.</li>
 
 	<li>Give an error if unable to represent an integer constant
 	    precisely.</li>
@@ -4509,8 +4509,10 @@ For array and slice literals the following rules apply:
 	<li>Each element has an associated integer index marking
 	    its position in the array.
 	</li>
-	<li>An element with a key uses the key as its index; the
-	    key must be a constant integer expression.
+	<li>An element with a key uses the key as its index. The
+	    key must be a non-negative constant representable by
+	    a value of type <code>int</code>; and if it is typed
+	    it must be of integer type.
 	</li>
 	<li>An element without a key uses the previous element's index plus one.
 	    If the first element has no key, its index is zero.
@@ -4623,10 +4625,11 @@ the <code>&amp;T</code> when the element or key type is <code>*T</code>.
 [][]int{{1, 2, 3}, {4, 5}}          // same as [][]int{[]int{1, 2, 3}, []int{4, 5}}
 [][]Point{{{0, 1}, {1, 2}}}         // same as [][]Point{[]Point{Point{0, 1}, Point{1, 2}}}
 map[string]Point{"orig": {0, 0}}    // same as map[string]Point{"orig": Point{0, 0}}
-
-[...]*Point{{1.5, -3.5}, {0, 0}}    // same as [...]*Point{&amp;Point{1.5, -3.5}, &amp;Point{0, 0}}
-
 map[Point]string{{0, 0}: "orig"}    // same as map[Point]string{Point{0, 0}: "orig"}
+
+type PPoint *Point
+[2]*Point{{1.5, -3.5}, {}}          // same as [2]*Point{&amp;Point{1.5, -3.5}, &amp;Point{}}
+[2]PPoint{{1.5, -3.5}, {}}          // same as [2]PPoint{PPoint(&amp;Point{1.5, -3.5}), PPoint(&amp;Point{})}
 </pre>
 </div>
 
@@ -4641,10 +4644,11 @@ map[Point]string{{0, 0}: "orig"}    // same as map[Point]string{Point{0, 0}: "or
 [][]int{{1, 2, 3}, {4, 5}}        // 等价于 [][]int{[]int{1, 2, 3}, []int{4, 5}}
 [][]Point{{{0, 1}, {1, 2}}}       // 等价于 [][]Point{[]Point{Point{0, 1}, Point{1, 2}}}
 map[string]Point{"orig": {0, 0}}  // 等价于 map[string]Point{"orig": Point{0, 0}}
-
-[...]*Point{{1.5, -3.5}, {0, 0}}  // 等价于 [...]*Point{&amp;Point{1.5, -3.5}, &amp;Point{0, 0}}
-
 map[Point]string{{0, 0}: "orig"}  // 等价于 map[Point]string{Point{0, 0}: "orig"}
+
+type PPoint *Point
+[2]*Point{{1.5, -3.5}, {}}        // 等价于 [2]*Point{&amp;Point{1.5, -3.5}, &amp;Point{}}
+[2]PPoint{{1.5, -3.5}, {}}        // 等价于 [2]PPoint{PPoint(&amp;Point{1.5, -3.5}), PPoint(&amp;Point{})}
 </pre>
 
 <div class="english">
@@ -6123,13 +6127,16 @@ known to be <code>T</code> in a correct program.
 </p>
 
 <pre>
-var x interface{} = 7  // x has dynamic type int and value 7
-i := x.(int)           // i has type int and value 7
+var x interface{} = 7          // x has dynamic type int and value 7
+i := x.(int)                   // i has type int and value 7
 
 type I interface { m() }
-var y I
-s := y.(string)        // illegal: string does not implement I (missing method m)
-r := y.(io.Reader)     // r has type io.Reader and y must implement both I and io.Reader
+
+func f(y I) {
+	s := y.(string)        // illegal: string does not implement I (missing method m)
+	r := y.(io.Reader)     // r has type io.Reader and the dynamic type of y must implement both I and io.Reader
+	…
+}
 </pre>
 </div>
 
@@ -6144,9 +6151,12 @@ var x interface{} = 7  // x 拥有动态类型 int 与值 7
 i := x.(int)           // i 拥有类型 int 与值 7
 
 type I interface { m() }
-var y I
-s := y.(string)        // 非法：string 没有实现 I（缺少方法 m）
-r := y.(io.Reader)     // r 拥有 类型 io.Reader 且 y 必须同时实现了 I 和 io.Reader
+
+func f(y I) {
+	s := y.(string)        // 非法：string 没有实现 I（缺少方法 m）
+	r := y.(io.Reader)     // r 拥有 类型 io.Reader 且 y 必须同时实现了 I 和 io.Reader
+	…
+}
 </pre>
 
 <div class="english">
@@ -7527,10 +7537,12 @@ in any of these cases:
 	to <code>T</code>.
 	</li>
 	<li>
-	<code>x</code>'s type and <code>T</code> have identical
+	ignoring struct tags (see below),
+	<code>x</code>'s type and <code>T</code> have <a href="#Type_identity">identical</a>
 	<a href="#Types">underlying types</a>.
 	</li>
 	<li>
+	ignoring struct tags (see below),
 	<code>x</code>'s type and <code>T</code> are unnamed pointer types
 	and their pointer base types have identical underlying types.
 	</li>
@@ -7578,6 +7590,37 @@ in any of these cases:
 	当 <code>x</code> 为字符串且 <code>T</code> 为字节切片或符文切片时。
 	</li>
 </ul>
+
+<div class="english">
+<p>
+<a href="#Struct_types">Struct tags</a> are ignored when comparing struct types
+for identity for the purpose of conversion:
+</p>
+<div>
+
+<p>
+在为了转换而通过比较识别结构体类型时，<a href="#结构体类型">结构体标注</a> 会被忽略：
+</p>
+
+<pre>
+type Person struct {
+	Name    string
+	Address *struct {
+		Street string
+		City   string
+	}
+}
+
+var data *struct {
+	Name    string `json:"name"`
+	Address *struct {
+		Street string `json:"street"`
+		City   string `json:"city"`
+	} `json:"address"`
+}
+
+var person = (*Person)(data)  // ignoring tags, the underlying types are identical
+</pre>
 
 <div class="english">
 <p>
@@ -9367,8 +9410,8 @@ The "fallthrough" statement is not permitted in a type switch.
 
 <div class="english">
 <p>
-A "for" statement specifies repeated execution of a block. The iteration is
-controlled by a condition, a "for" clause, or a "range" clause.
+A "for" statement specifies repeated execution of a block. There are three forms:
+The iteration may be controlled by a single condition, a "for" clause, or a "range" clause.
 </p>
 
 <pre class="ebnf">
@@ -9378,13 +9421,19 @@ Condition = Expression .
 </div>
 
 <p>
-"for"语句指定块的重复执行。迭代通过条件、"for"子句或"range"子句控制。
+"for"语句指定块的重复执行。它有三种形式：迭代通过条件、"for"子句或"range"子句控制。
 </p>
 
 <pre class="ebnf">
 For语句 = "for" [ 条件 | For子句 | Range子句 ] 块 .
 条件 = 表达式 .
 </pre>
+
+<div class="english">
+<h4 id="For_condition">For statements with single condition</h4>
+</div>
+
+<h4 id="For条件">单条件 for 语句</h4>
 
 <div class="english">
 <p>
@@ -9406,6 +9455,12 @@ for a &lt; b {
 	a *= 2
 }
 </pre>
+
+<div class="english">
+<h4 id="For_clause">For statements with <code>for</code> clause</h4>
+</div>
+
+<h4 id="For从句">带 <code>for</code> 从句的 for 语句</h4>
 
 <div class="english">
 <p>
@@ -9460,6 +9515,8 @@ for cond { S() }    is the same as    for ; cond ; { S() }
 for      { S() }    is the same as    for true     { S() }
 </pre>
 </div>
+
+<h4 id="For_range">For statements with <code>range</code> clause</h4>
 
 <p>
 若初始化语句非空，则只在第一次迭代的条件求值前执行一次。
@@ -11173,12 +11230,12 @@ var a = complex(2, -2)             // complex128
 const b = complex(1.0, -1.4)       // untyped complex constant 1 - 1.4i
 x := float32(math.Cos(math.Pi/2))  // float32
 var c64 = complex(5, -x)           // complex64
-const s uint = complex(1, 0)       // untyped complex constant 1 + 0i can be converted to uint
-_ = complex(1, 2&lt;&lt;s)               // illegal: 2 has floating-point type, cannot shift
+var s uint = complex(1, 0)         // untyped complex constant 1 + 0i can be converted to uint
+_ = complex(1, 2&lt;&lt;s)               // illegal: 2 assumes floating-point type, cannot shift
 var rl = real(c64)                 // float32
 var im = imag(a)                   // float64
 const c = imag(b)                  // untyped constant -1.4
-_ = imag(3 &lt;&lt; s)                   // illegal: 3 has complex type, cannot shift
+_ = imag(3 &lt;&lt; s)                   // illegal: 3 assumes complex type, cannot shift
 </pre>
 </div>
 
@@ -11192,7 +11249,7 @@ _ = complex(1, 2&lt;&lt;s)               // 非法：2 为浮点数类型，无�
 var rl = real(c64)                 // float32
 var im = imag(a)                   // float64
 const c = imag(b)                  // 无类型化常量 -1.4
-_ = imag(3 &lt;&lt; s)                   // 非法：3 为复数类型，无法移位
+_ = imag(3 &lt;&lt; s)                   // 非法：3 视为复数类型，无法移位
 </pre>
 
 <div class="english">

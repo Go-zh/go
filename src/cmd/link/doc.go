@@ -41,6 +41,8 @@ Flags:
 		Set the value of the string variable in importpath named name to value.
 		Note that before Go 1.5 this option took two separate arguments.
 		Now it takes one argument split on the first = sign.
+		To discover which name to use, run `go tool nm PROGRAM`;
+		usable variables will be tagged "D" or "d".
 	-buildmode mode
 		Set build mode (default exe).
 	-cpuprofile file
@@ -85,6 +87,8 @@ Flags:
 		Link with C/C++ memory sanitizer support.
 	-o file
 		Write output to file (default a.out, or a.out.exe on Windows).
+	-pluginpath path
+		The path name used to prefix exported plugin symbols.
 	-r dir1:dir2:...
 		Set the ELF dynamic linker search path.
 	-race

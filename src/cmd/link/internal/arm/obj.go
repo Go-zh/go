@@ -35,29 +35,22 @@ import (
 	"cmd/internal/sys"
 	"cmd/link/internal/ld"
 	"fmt"
-	"log"
 )
 
-// Reading object files.
-
-func Main() {
-	linkarchinit()
-	ld.Main()
-}
-
-func linkarchinit() {
+func Init() {
 	ld.SysArch = sys.ArchARM
 
-	ld.Thearch.Funcalign = FuncAlign
-	ld.Thearch.Maxalign = MaxAlign
-	ld.Thearch.Minalign = MinAlign
-	ld.Thearch.Dwarfregsp = DWARFREGSP
-	ld.Thearch.Dwarfreglr = DWARFREGLR
+	ld.Thearch.Funcalign = funcAlign
+	ld.Thearch.Maxalign = maxAlign
+	ld.Thearch.Minalign = minAlign
+	ld.Thearch.Dwarfregsp = dwarfRegSP
+	ld.Thearch.Dwarfreglr = dwarfRegLR
 
 	ld.Thearch.Adddynrel = adddynrel
 	ld.Thearch.Archinit = archinit
 	ld.Thearch.Archreloc = archreloc
 	ld.Thearch.Archrelocvariant = archrelocvariant
+	ld.Thearch.Trampoline = trampoline
 	ld.Thearch.Asmb = asmb
 	ld.Thearch.Elfreloc1 = elfreloc1
 	ld.Thearch.Elfsetupplt = elfsetupplt
@@ -79,35 +72,9 @@ func linkarchinit() {
 }
 
 func archinit(ctxt *ld.Link) {
-	// getgoextlinkenabled is based on GO_EXTLINK_ENABLED when
-	// Go was built; see ../../make.bash.
-	if ld.Linkmode == ld.LinkAuto && obj.Getgoextlinkenabled() == "0" {
-		ld.Linkmode = ld.LinkInternal
-	}
-
-	if ld.Buildmode == ld.BuildmodeCArchive || ld.Buildmode == ld.BuildmodeCShared || ctxt.DynlinkingGo() {
-		ld.Linkmode = ld.LinkExternal
-	}
-
-	switch ld.HEADTYPE {
+	switch ld.Headtype {
 	default:
-		if ld.Linkmode == ld.LinkAuto {
-			ld.Linkmode = ld.LinkInternal
-		}
-		if ld.Linkmode == ld.LinkExternal && obj.Getgoextlinkenabled() != "1" {
-			log.Fatalf("cannot use -linkmode=external with -H %s", ld.Headstr(int(ld.HEADTYPE)))
-		}
-
-	case obj.Hlinux,
-		obj.Hfreebsd,
-		obj.Hnacl,
-		obj.Hdarwin:
-		break
-	}
-
-	switch ld.HEADTYPE {
-	default:
-		ld.Exitf("unknown -H option: %v", ld.HEADTYPE)
+		ld.Exitf("unknown -H option: %v", ld.Headtype)
 
 	case obj.Hplan9: /* plan 9 */
 		ld.HEADR = 32

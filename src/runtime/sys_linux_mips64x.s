@@ -174,15 +174,12 @@ TEXT runtime·mincore(SB),NOSPLIT,$-8-28
 
 // func now() (sec int64, nsec int32)
 TEXT time·now(SB),NOSPLIT,$16
-	MOVV	$0(R29), R4
-	MOVV	$0, R5
-	MOVV	$SYS_gettimeofday, R2
+	MOVW	$0, R4 // CLOCK_REALTIME
+	MOVV	$0(R29), R5
+	MOVV	$SYS_clock_gettime, R2
 	SYSCALL
 	MOVV	0(R29), R3	// sec
-	MOVV	8(R29), R5	// usec
-	MOVV	$1000, R4
-	MULVU	R4, R5
-	MOVV	LO, R5
+	MOVV	8(R29), R5	// nsec
 	MOVV	R3, sec+0(FP)
 	MOVW	R5, nsec+8(FP)
 	RET
@@ -204,7 +201,7 @@ TEXT runtime·nanotime(SB),NOSPLIT,$16
 	RET
 
 TEXT runtime·rtsigprocmask(SB),NOSPLIT,$-8-28
-	MOVW	sig+0(FP), R4
+	MOVW	how+0(FP), R4
 	MOVV	new+8(FP), R5
 	MOVV	old+16(FP), R6
 	MOVW	size+24(FP), R7

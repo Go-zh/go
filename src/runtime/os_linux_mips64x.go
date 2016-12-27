@@ -30,7 +30,7 @@ func cputicks() int64 {
 
 const (
 	_SS_DISABLE  = 2
-	_NSIG        = 65
+	_NSIG        = 129
 	_SI_USER     = 0
 	_SIG_BLOCK   = 1
 	_SIG_UNBLOCK = 2
@@ -47,6 +47,8 @@ type rlimit struct {
 
 var sigset_all = sigset{^uint64(0), ^uint64(0)}
 
+//go:nosplit
+//go:nowritebarrierrec
 func sigaddset(mask *sigset, i int) {
 	(*mask)[(i-1)/64] |= 1 << ((uint32(i) - 1) & 63)
 }
@@ -57,8 +59,4 @@ func sigdelset(mask *sigset, i int) {
 
 func sigfillset(mask *[2]uint64) {
 	(*mask)[0], (*mask)[1] = ^uint64(0), ^uint64(0)
-}
-
-func sigcopyset(mask *sigset, m sigmask) {
-	(*mask)[0] = uint64(m[0]) | uint64(m[1])<<32
 }

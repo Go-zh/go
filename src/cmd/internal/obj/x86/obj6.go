@@ -55,7 +55,8 @@ func CanUse1InsnTLS(ctxt *obj.Link) bool {
 		case obj.Hlinux,
 			obj.Hnacl,
 			obj.Hplan9,
-			obj.Hwindows:
+			obj.Hwindows,
+			obj.Hwindowsgui:
 			return false
 		}
 
@@ -63,8 +64,7 @@ func CanUse1InsnTLS(ctxt *obj.Link) bool {
 	}
 
 	switch ctxt.Headtype {
-	case obj.Hplan9,
-		obj.Hwindows:
+	case obj.Hplan9, obj.Hwindows, obj.Hwindowsgui:
 		return false
 	case obj.Hlinux:
 		return !ctxt.Flag_shared
@@ -181,7 +181,7 @@ func progedit(ctxt *obj.Link, p *obj.Prog) {
 	}
 
 	// TODO: Remove.
-	if ctxt.Headtype == obj.Hwindows && p.Mode == 64 || ctxt.Headtype == obj.Hplan9 {
+	if (ctxt.Headtype == obj.Hwindows || ctxt.Headtype == obj.Hwindowsgui) && p.Mode == 64 || ctxt.Headtype == obj.Hplan9 {
 		if p.From.Scale == 1 && p.From.Index == REG_TLS {
 			p.From.Scale = 2
 		}
@@ -266,7 +266,7 @@ func progedit(ctxt *obj.Link, p *obj.Prog) {
 			p.From.Type = obj.TYPE_MEM
 			p.From.Name = obj.NAME_EXTERN
 			p.From.Sym = s
-			p.From.Sym.Local = true
+			p.From.Sym.Set(obj.AttrLocal, true)
 			p.From.Offset = 0
 		}
 
@@ -306,7 +306,7 @@ func progedit(ctxt *obj.Link, p *obj.Prog) {
 			p.From.Type = obj.TYPE_MEM
 			p.From.Name = obj.NAME_EXTERN
 			p.From.Sym = s
-			p.From.Sym.Local = true
+			p.From.Sym.Set(obj.AttrLocal, true)
 			p.From.Offset = 0
 		}
 	}
@@ -379,12 +379,12 @@ func rewriteToUseGot(ctxt *obj.Link, p *obj.Prog) {
 	// We only care about global data: NAME_EXTERN means a global
 	// symbol in the Go sense, and p.Sym.Local is true for a few
 	// internally defined symbols.
-	if p.As == lea && p.From.Type == obj.TYPE_MEM && p.From.Name == obj.NAME_EXTERN && !p.From.Sym.Local {
+	if p.As == lea && p.From.Type == obj.TYPE_MEM && p.From.Name == obj.NAME_EXTERN && !p.From.Sym.Local() {
 		// $LEA sym, Rx becomes $MOV $sym, Rx which will be rewritten below
 		p.As = mov
 		p.From.Type = obj.TYPE_ADDR
 	}
-	if p.From.Type == obj.TYPE_ADDR && p.From.Name == obj.NAME_EXTERN && !p.From.Sym.Local {
+	if p.From.Type == obj.TYPE_ADDR && p.From.Name == obj.NAME_EXTERN && !p.From.Sym.Local() {
 		// $MOV $sym, Rx becomes $MOV sym@GOT, Rx
 		// $MOV $sym+<off>, Rx becomes $MOV sym@GOT, Rx; $LEA <off>(Rx), Rx
 		// On 386 only, more complicated things like PUSHL $sym become $MOV sym@GOT, CX; PUSHL CX
@@ -430,12 +430,12 @@ func rewriteToUseGot(ctxt *obj.Link, p *obj.Prog) {
 	// MOVx sym, Ry becomes $MOV sym@GOT, R15; MOVx (R15), Ry
 	// MOVx Ry, sym becomes $MOV sym@GOT, R15; MOVx Ry, (R15)
 	// An addition may be inserted between the two MOVs if there is an offset.
-	if p.From.Name == obj.NAME_EXTERN && !p.From.Sym.Local {
-		if p.To.Name == obj.NAME_EXTERN && !p.To.Sym.Local {
+	if p.From.Name == obj.NAME_EXTERN && !p.From.Sym.Local() {
+		if p.To.Name == obj.NAME_EXTERN && !p.To.Sym.Local() {
 			ctxt.Diag("cannot handle NAME_EXTERN on both sides in %v with -dynlink", p)
 		}
 		source = &p.From
-	} else if p.To.Name == obj.NAME_EXTERN && !p.To.Sym.Local {
+	} else if p.To.Name == obj.NAME_EXTERN && !p.To.Sym.Local() {
 		source = &p.To
 	} else {
 		return
@@ -445,7 +445,7 @@ func rewriteToUseGot(ctxt *obj.Link, p *obj.Prog) {
 		// to a PLT, so make sure the GOT pointer is loaded into BX.
 		// RegTo2 is set on the replacement call insn to stop it being
 		// processed when it is in turn passed to progedit.
-		if p.Mode == 64 || (p.To.Sym != nil && p.To.Sym.Local) || p.RegTo2 != 0 {
+		if p.Mode == 64 || (p.To.Sym != nil && p.To.Sym.Local()) || p.RegTo2 != 0 {
 			return
 		}
 		p1 := obj.Appendp(ctxt, p)
@@ -564,7 +564,7 @@ func rewriteToPcrel(ctxt *obj.Link, p *obj.Prog) {
 	q.To.Sym = obj.Linklookup(ctxt, "__x86.get_pc_thunk."+strings.ToLower(Rconv(int(dst))), 0)
 	q.To.Type = obj.TYPE_MEM
 	q.To.Name = obj.NAME_EXTERN
-	q.To.Sym.Local = true
+	q.To.Sym.Set(obj.AttrLocal, true)
 	r.As = p.As
 	r.Scond = p.Scond
 	r.From = p.From
@@ -632,11 +632,27 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym) {
 		autoffset = 0
 	}
 
+	hasCall := false
+	for q := p; q != nil; q = q.Link {
+		if q.As == obj.ACALL || q.As == obj.ADUFFCOPY || q.As == obj.ADUFFZERO {
+			hasCall = true
+			break
+		}
+	}
+
 	var bpsize int
-	if p.Mode == 64 && ctxt.Framepointer_enabled && autoffset > 0 && p.From3.Offset&obj.NOFRAME == 0 {
-		// Make room for to save a base pointer. If autoffset == 0,
-		// this might do something special like a tail jump to
-		// another function, so in that case we omit this.
+	if p.Mode == 64 && ctxt.Framepointer_enabled &&
+		p.From3.Offset&obj.NOFRAME == 0 && // (1) below
+		!(autoffset == 0 && p.From3.Offset&obj.NOSPLIT != 0) && // (2) below
+		!(autoffset == 0 && !hasCall) { // (3) below
+		// Make room to save a base pointer.
+		// There are 2 cases we must avoid:
+		// 1) If noframe is set (which we do for functions which tail call).
+		// 2) Scary runtime internals which would be all messed up by frame pointers.
+		//    We detect these using a heuristic: frameless nosplit functions.
+		//    TODO: Maybe someday we label them all with NOFRAME and get rid of this heuristic.
+		// For performance, we also want to avoid:
+		// 3) Frameless leaf functions
 		bpsize = ctxt.Arch.PtrSize
 		autoffset += int32(bpsize)
 		p.To.Offset += int64(bpsize)
@@ -660,8 +676,13 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym) {
 		for q := p; q != nil; q = q.Link {
 			switch q.As {
 			case obj.ACALL:
-				leaf = false
-				break LeafSearch
+				// Treat common runtime calls that take no arguments
+				// the same as duffcopy and duffzero.
+				if !isZeroArgRuntimeCall(q.To.Sym) {
+					leaf = false
+					break LeafSearch
+				}
+				fallthrough
 			case obj.ADUFFCOPY, obj.ADUFFZERO:
 				if autoffset >= obj.StackSmall-8 {
 					leaf = false
@@ -928,6 +949,17 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym) {
 	}
 }
 
+func isZeroArgRuntimeCall(s *obj.LSym) bool {
+	if s == nil {
+		return false
+	}
+	switch s.Name {
+	case "runtime.panicindex", "runtime.panicslice", "runtime.panicdivide":
+		return true
+	}
+	return false
+}
+
 func indir_cx(ctxt *obj.Link, p *obj.Prog, a *obj.Addr) {
 	if ctxt.Headtype == obj.Hnacl && p.Mode == 64 {
 		a.Type = obj.TYPE_MEM
@@ -998,7 +1030,7 @@ func stacksplit(ctxt *obj.Link, p *obj.Prog, framesize int32, textarg int32) *ob
 		p.From.Reg = REG_SP
 		indir_cx(ctxt, p, &p.To)
 		p.To.Offset = 2 * int64(ctxt.Arch.PtrSize) // G.stackguard0
-		if ctxt.Cursym.Cfunc {
+		if ctxt.Cursym.CFunc() {
 			p.To.Offset = 3 * int64(ctxt.Arch.PtrSize) // G.stackguard1
 		}
 	} else if framesize <= obj.StackBig {
@@ -1020,7 +1052,7 @@ func stacksplit(ctxt *obj.Link, p *obj.Prog, framesize int32, textarg int32) *ob
 		p.From.Reg = REG_AX
 		indir_cx(ctxt, p, &p.To)
 		p.To.Offset = 2 * int64(ctxt.Arch.PtrSize) // G.stackguard0
-		if ctxt.Cursym.Cfunc {
+		if ctxt.Cursym.CFunc() {
 			p.To.Offset = 3 * int64(ctxt.Arch.PtrSize) // G.stackguard1
 		}
 	} else {
@@ -1044,7 +1076,7 @@ func stacksplit(ctxt *obj.Link, p *obj.Prog, framesize int32, textarg int32) *ob
 		p.As = mov
 		indir_cx(ctxt, p, &p.From)
 		p.From.Offset = 2 * int64(ctxt.Arch.PtrSize) // G.stackguard0
-		if ctxt.Cursym.Cfunc {
+		if ctxt.Cursym.CFunc() {
 			p.From.Offset = 3 * int64(ctxt.Arch.PtrSize) // G.stackguard1
 		}
 		p.To.Type = obj.TYPE_REG
@@ -1097,11 +1129,23 @@ func stacksplit(ctxt *obj.Link, p *obj.Prog, framesize int32, textarg int32) *ob
 	for last = ctxt.Cursym.Text; last.Link != nil; last = last.Link {
 	}
 
+	// Now we are at the end of the function, but logically
+	// we are still in function prologue. We need to fix the
+	// SP data and PCDATA.
 	spfix := obj.Appendp(ctxt, last)
 	spfix.As = obj.ANOP
 	spfix.Spadj = -framesize
 
-	call := obj.Appendp(ctxt, spfix)
+	pcdata := obj.Appendp(ctxt, spfix)
+	pcdata.Lineno = ctxt.Cursym.Text.Lineno
+	pcdata.Mode = ctxt.Cursym.Text.Mode
+	pcdata.As = obj.APCDATA
+	pcdata.From.Type = obj.TYPE_CONST
+	pcdata.From.Offset = obj.PCDATA_StackMapIndex
+	pcdata.To.Type = obj.TYPE_CONST
+	pcdata.To.Offset = -1 // pcdata starts at -1 at function entry
+
+	call := obj.Appendp(ctxt, pcdata)
 	call.Lineno = ctxt.Cursym.Text.Lineno
 	call.Mode = ctxt.Cursym.Text.Mode
 	call.As = obj.ACALL
@@ -1109,7 +1153,7 @@ func stacksplit(ctxt *obj.Link, p *obj.Prog, framesize int32, textarg int32) *ob
 	call.To.Name = obj.NAME_EXTERN
 	morestack := "runtime.morestack"
 	switch {
-	case ctxt.Cursym.Cfunc:
+	case ctxt.Cursym.CFunc():
 		morestack = "runtime.morestackc"
 	case ctxt.Cursym.Text.From3Offset()&obj.NEEDCTXT == 0:
 		morestack = "runtime.morestack_noctxt"

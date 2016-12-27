@@ -15,12 +15,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -76,7 +78,7 @@ func newOpensslOutputSink() *opensslOutputSink {
 
 // opensslEndOfHandshake is a message that the “openssl s_server” tool will
 // print when a handshake completes if run with “-state”.
-const opensslEndOfHandshake = "SSL_accept:SSLv3 write finished A"
+const opensslEndOfHandshake = "SSL_accept:SSLv3/TLS write finished"
 
 func (o *opensslOutputSink) Write(data []byte) (n int, err error) {
 	o.line = append(o.line, data...)
@@ -275,6 +277,8 @@ func (test *clientTest) loadData() (flows [][]byte, err error) {
 }
 
 func (test *clientTest) run(t *testing.T, write bool) {
+	checkOpenSSLVersion(t)
+
 	var clientConn, serverConn net.Conn
 	var recordingConn *recordingConn
 	var childProcess *exec.Cmd
@@ -355,7 +359,7 @@ func (test *clientTest) run(t *testing.T, write bool) {
 				}
 
 				if expected := i + 1; client.handshakes != expected {
-					t.Errorf("client should have recorded %d handshakes, but believes that %d have occured", expected, client.handshakes)
+					t.Errorf("client should have recorded %d handshakes, but believes that %d have occurred", expected, client.handshakes)
 				}
 			}()
 
@@ -409,7 +413,7 @@ func (test *clientTest) run(t *testing.T, write bool) {
 		childProcess.Process.Kill()
 		childProcess.Wait()
 		if len(recordingConn.flows) < 3 {
-			childProcess.Stdout.(*bytes.Buffer).WriteTo(os.Stdout)
+			os.Stdout.Write(childProcess.Stdout.(*opensslOutputSink).all)
 			t.Fatalf("Client connection didn't work")
 		}
 		recordingConn.WriteTo(out)
@@ -417,7 +421,26 @@ func (test *clientTest) run(t *testing.T, write bool) {
 	}
 }
 
+var (
+	didParMu sync.Mutex
+	didPar   = map[*testing.T]bool{}
+)
+
+// setParallel calls t.Parallel once. If you call it twice, it would
+// panic.
+func setParallel(t *testing.T) {
+	didParMu.Lock()
+	v := didPar[t]
+	didPar[t] = true
+	didParMu.Unlock()
+	if !v {
+		t.Parallel()
+	}
+}
+
 func runClientTestForVersion(t *testing.T, template *clientTest, prefix, option string) {
+	setParallel(t)
+
 	test := *template
 	test.name = prefix + test.name
 	if len(test.command) == 0 {
@@ -534,6 +557,47 @@ func TestHandshakeClientECDHEECDSAAES128CBCSHA256(t *testing.T) {
 	runClientTestTLS12(t, test)
 }
 
+func TestHandshakeClientX25519(t *testing.T) {
+	config := testConfig.Clone()
+	config.CurvePreferences = []CurveID{X25519}
+
+	test := &clientTest{
+		name:    "X25519-ECDHE-RSA-AES-GCM",
+		command: []string{"openssl", "s_server", "-cipher", "ECDHE-RSA-AES128-GCM-SHA256"},
+		config:  config,
+	}
+
+	runClientTestTLS12(t, test)
+}
+
+func TestHandshakeClientECDHERSAChaCha20(t *testing.T) {
+	config := testConfig.Clone()
+	config.CipherSuites = []uint16{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305}
+
+	test := &clientTest{
+		name:    "ECDHE-RSA-CHACHA20-POLY1305",
+		command: []string{"openssl", "s_server", "-cipher", "ECDHE-RSA-CHACHA20-POLY1305"},
+		config:  config,
+	}
+
+	runClientTestTLS12(t, test)
+}
+
+func TestHandshakeClientECDHEECDSAChaCha20(t *testing.T) {
+	config := testConfig.Clone()
+	config.CipherSuites = []uint16{TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305}
+
+	test := &clientTest{
+		name:    "ECDHE-ECDSA-CHACHA20-POLY1305",
+		command: []string{"openssl", "s_server", "-cipher", "ECDHE-ECDSA-CHACHA20-POLY1305"},
+		config:  config,
+		cert:    testECDSACertificate,
+		key:     testECDSAPrivateKey,
+	}
+
+	runClientTestTLS12(t, test)
+}
+
 func TestHandshakeClientCertRSA(t *testing.T) {
 	config := testConfig.Clone()
 	cert, _ := X509KeyPair([]byte(clientCertificatePEM), []byte(clientKeyPEM))
@@ -541,7 +605,7 @@ func TestHandshakeClientCertRSA(t *testing.T) {
 
 	test := &clientTest{
 		name:    "ClientCert-RSA-RSA",
-		command: []string{"openssl", "s_server", "-cipher", "RC4-SHA", "-verify", "1"},
+		command: []string{"openssl", "s_server", "-cipher", "AES128", "-verify", "1"},
 		config:  config,
 	}
 
@@ -577,7 +641,7 @@ func TestHandshakeClientCertECDSA(t *testing.T) {
 
 	test := &clientTest{
 		name:    "ClientCert-ECDSA-RSA",
-		command: []string{"openssl", "s_server", "-cipher", "RC4-SHA", "-verify", "1"},
+		command: []string{"openssl", "s_server", "-cipher", "AES128", "-verify", "1"},
 		config:  config,
 	}
 
@@ -727,45 +791,55 @@ func TestLRUClientSessionCache(t *testing.T) {
 	}
 }
 
-func TestHandshakeClientKeyLog(t *testing.T) {
-	config := testConfig.Clone()
-	buf := &bytes.Buffer{}
-	config.KeyLogWriter = buf
+func TestKeyLog(t *testing.T) {
+	var serverBuf, clientBuf bytes.Buffer
 
-	// config.Rand is zero reader, so client random is all-0
-	var zeroRandom = strings.Repeat("0", 64)
+	clientConfig := testConfig.Clone()
+	clientConfig.KeyLogWriter = &clientBuf
 
-	test := &clientTest{
-		name:    "KeyLogWriter",
-		command: []string{"openssl", "s_server"},
-		config:  config,
-		validate: func(state ConnectionState) error {
-			var format, clientRandom, masterSecret string
-			if _, err := fmt.Fscanf(buf, "%s %s %s\n", &format, &clientRandom, &masterSecret); err != nil {
-				return fmt.Errorf("failed to parse KeyLogWriter: " + err.Error())
-			}
-			if format != "CLIENT_RANDOM" {
-				return fmt.Errorf("got key log format %q, wanted CLIENT_RANDOM", format)
-			}
-			if clientRandom != zeroRandom {
-				return fmt.Errorf("got key log client random %q, wanted %q", clientRandom, zeroRandom)
-			}
+	serverConfig := testConfig.Clone()
+	serverConfig.KeyLogWriter = &serverBuf
 
-			// Master secret is random from server; check length only
-			if len(masterSecret) != 96 {
-				return fmt.Errorf("got wrong length master secret in key log %v, want 96", len(masterSecret))
-			}
+	c, s := net.Pipe()
+	done := make(chan bool)
 
-			// buf should contain no more lines
-			var trailingGarbage string
-			if _, err := fmt.Fscanln(buf, &trailingGarbage); err == nil {
-				return fmt.Errorf("expected exactly one key in log, got trailing garbage %q", trailingGarbage)
-			}
+	go func() {
+		defer close(done)
 
-			return nil
-		},
+		if err := Server(s, serverConfig).Handshake(); err != nil {
+			t.Errorf("server: %s", err)
+			return
+		}
+		s.Close()
+	}()
+
+	if err := Client(c, clientConfig).Handshake(); err != nil {
+		t.Fatalf("client: %s", err)
 	}
-	runClientTestTLS10(t, test)
+
+	c.Close()
+	<-done
+
+	checkKeylogLine := func(side, loggedLine string) {
+		if len(loggedLine) == 0 {
+			t.Fatalf("%s: no keylog line was produced", side)
+		}
+		const expectedLen = 13 /* "CLIENT_RANDOM" */ +
+			1 /* space */ +
+			32*2 /* hex client nonce */ +
+			1 /* space */ +
+			48*2 /* hex master secret */ +
+			1 /* new line */
+		if len(loggedLine) != expectedLen {
+			t.Fatalf("%s: keylog line has incorrect length (want %d, got %d): %q", side, expectedLen, len(loggedLine), loggedLine)
+		}
+		if !strings.HasPrefix(loggedLine, "CLIENT_RANDOM "+strings.Repeat("0", 64)+" ") {
+			t.Fatalf("%s: keylog line has incorrect structure or nonce: %q", side, loggedLine)
+		}
+	}
+
+	checkKeylogLine("client", string(clientBuf.Bytes()))
+	checkKeylogLine("server", string(serverBuf.Bytes()))
 }
 
 func TestHandshakeClientALPNMatch(t *testing.T) {
@@ -782,27 +856,6 @@ func TestHandshakeClientALPNMatch(t *testing.T) {
 			// The server's preferences should override the client.
 			if state.NegotiatedProtocol != "proto1" {
 				return fmt.Errorf("Got protocol %q, wanted proto1", state.NegotiatedProtocol)
-			}
-			return nil
-		},
-	}
-	runClientTestTLS12(t, test)
-}
-
-func TestHandshakeClientALPNNoMatch(t *testing.T) {
-	config := testConfig.Clone()
-	config.NextProtos = []string{"proto3"}
-
-	test := &clientTest{
-		name: "ALPN-NoMatch",
-		// Note that this needs OpenSSL 1.0.2 because that is the first
-		// version that supports the -alpn flag.
-		command: []string{"openssl", "s_server", "-alpn", "proto1,proto2"},
-		config:  config,
-		validate: func(state ConnectionState) error {
-			// There's no overlap so OpenSSL will not select a protocol.
-			if state.NegotiatedProtocol != "" {
-				return fmt.Errorf("Got protocol %q, wanted ''", state.NegotiatedProtocol)
 			}
 			return nil
 		},
@@ -1034,6 +1087,160 @@ func TestServerSelectingUnconfiguredCipherSuite(t *testing.T) {
 	}
 }
 
+func TestVerifyPeerCertificate(t *testing.T) {
+	issuer, err := x509.ParseCertificate(testRSACertificateIssuer)
+	if err != nil {
+		panic(err)
+	}
+
+	rootCAs := x509.NewCertPool()
+	rootCAs.AddCert(issuer)
+
+	now := func() time.Time { return time.Unix(1476984729, 0) }
+
+	sentinelErr := errors.New("TestVerifyPeerCertificate")
+
+	verifyCallback := func(called *bool, rawCerts [][]byte, validatedChains [][]*x509.Certificate) error {
+		if l := len(rawCerts); l != 1 {
+			return fmt.Errorf("got len(rawCerts) = %d, wanted 1", l)
+		}
+		if len(validatedChains) == 0 {
+			return errors.New("got len(validatedChains) = 0, wanted non-zero")
+		}
+		*called = true
+		return nil
+	}
+
+	tests := []struct {
+		configureServer func(*Config, *bool)
+		configureClient func(*Config, *bool)
+		validate        func(t *testing.T, testNo int, clientCalled, serverCalled bool, clientErr, serverErr error)
+	}{
+		{
+			configureServer: func(config *Config, called *bool) {
+				config.InsecureSkipVerify = false
+				config.VerifyPeerCertificate = func(rawCerts [][]byte, validatedChains [][]*x509.Certificate) error {
+					return verifyCallback(called, rawCerts, validatedChains)
+				}
+			},
+			configureClient: func(config *Config, called *bool) {
+				config.InsecureSkipVerify = false
+				config.VerifyPeerCertificate = func(rawCerts [][]byte, validatedChains [][]*x509.Certificate) error {
+					return verifyCallback(called, rawCerts, validatedChains)
+				}
+			},
+			validate: func(t *testing.T, testNo int, clientCalled, serverCalled bool, clientErr, serverErr error) {
+				if clientErr != nil {
+					t.Errorf("test[%d]: client handshake failed: %v", testNo, clientErr)
+				}
+				if serverErr != nil {
+					t.Errorf("test[%d]: server handshake failed: %v", testNo, serverErr)
+				}
+				if !clientCalled {
+					t.Errorf("test[%d]: client did not call callback", testNo)
+				}
+				if !serverCalled {
+					t.Errorf("test[%d]: server did not call callback", testNo)
+				}
+			},
+		},
+		{
+			configureServer: func(config *Config, called *bool) {
+				config.InsecureSkipVerify = false
+				config.VerifyPeerCertificate = func(rawCerts [][]byte, validatedChains [][]*x509.Certificate) error {
+					return sentinelErr
+				}
+			},
+			configureClient: func(config *Config, called *bool) {
+				config.VerifyPeerCertificate = nil
+			},
+			validate: func(t *testing.T, testNo int, clientCalled, serverCalled bool, clientErr, serverErr error) {
+				if serverErr != sentinelErr {
+					t.Errorf("#%d: got server error %v, wanted sentinelErr", testNo, serverErr)
+				}
+			},
+		},
+		{
+			configureServer: func(config *Config, called *bool) {
+				config.InsecureSkipVerify = false
+			},
+			configureClient: func(config *Config, called *bool) {
+				config.VerifyPeerCertificate = func(rawCerts [][]byte, validatedChains [][]*x509.Certificate) error {
+					return sentinelErr
+				}
+			},
+			validate: func(t *testing.T, testNo int, clientCalled, serverCalled bool, clientErr, serverErr error) {
+				if clientErr != sentinelErr {
+					t.Errorf("#%d: got client error %v, wanted sentinelErr", testNo, clientErr)
+				}
+			},
+		},
+		{
+			configureServer: func(config *Config, called *bool) {
+				config.InsecureSkipVerify = false
+			},
+			configureClient: func(config *Config, called *bool) {
+				config.InsecureSkipVerify = true
+				config.VerifyPeerCertificate = func(rawCerts [][]byte, validatedChains [][]*x509.Certificate) error {
+					if l := len(rawCerts); l != 1 {
+						return fmt.Errorf("got len(rawCerts) = %d, wanted 1", l)
+					}
+					// With InsecureSkipVerify set, this
+					// callback should still be called but
+					// validatedChains must be empty.
+					if l := len(validatedChains); l != 0 {
+						return errors.New("got len(validatedChains) = 0, wanted zero")
+					}
+					*called = true
+					return nil
+				}
+			},
+			validate: func(t *testing.T, testNo int, clientCalled, serverCalled bool, clientErr, serverErr error) {
+				if clientErr != nil {
+					t.Errorf("test[%d]: client handshake failed: %v", testNo, clientErr)
+				}
+				if serverErr != nil {
+					t.Errorf("test[%d]: server handshake failed: %v", testNo, serverErr)
+				}
+				if !clientCalled {
+					t.Errorf("test[%d]: client did not call callback", testNo)
+				}
+			},
+		},
+	}
+
+	for i, test := range tests {
+		c, s := net.Pipe()
+		done := make(chan error)
+
+		var clientCalled, serverCalled bool
+
+		go func() {
+			config := testConfig.Clone()
+			config.ServerName = "example.golang"
+			config.ClientAuth = RequireAndVerifyClientCert
+			config.ClientCAs = rootCAs
+			config.Time = now
+			test.configureServer(config, &serverCalled)
+
+			err = Server(s, config).Handshake()
+			s.Close()
+			done <- err
+		}()
+
+		config := testConfig.Clone()
+		config.ServerName = "example.golang"
+		config.RootCAs = rootCAs
+		config.Time = now
+		test.configureClient(config, &clientCalled)
+		clientErr := Client(c, config).Handshake()
+		c.Close()
+		serverErr := <-done
+
+		test.validate(t, i, clientCalled, serverCalled, clientErr, serverErr)
+	}
+}
+
 // brokenConn wraps a net.Conn and causes all Writes after a certain number to
 // fail with brokenConnErr.
 type brokenConn struct {
@@ -1121,5 +1328,238 @@ func TestBuffering(t *testing.T) {
 
 	if n := serverWCC.numWrites; n != 2 {
 		t.Errorf("expected server handshake to complete with only two writes, but saw %d", n)
+	}
+}
+
+func TestAlertFlushing(t *testing.T) {
+	c, s := net.Pipe()
+	done := make(chan bool)
+
+	clientWCC := &writeCountingConn{Conn: c}
+	serverWCC := &writeCountingConn{Conn: s}
+
+	serverConfig := testConfig.Clone()
+
+	// Cause a signature-time error
+	brokenKey := rsa.PrivateKey{PublicKey: testRSAPrivateKey.PublicKey}
+	brokenKey.D = big.NewInt(42)
+	serverConfig.Certificates = []Certificate{{
+		Certificate: [][]byte{testRSACertificate},
+		PrivateKey:  &brokenKey,
+	}}
+
+	go func() {
+		Server(serverWCC, serverConfig).Handshake()
+		serverWCC.Close()
+		done <- true
+	}()
+
+	err := Client(clientWCC, testConfig).Handshake()
+	if err == nil {
+		t.Fatal("client unexpectedly returned no error")
+	}
+
+	const expectedError = "remote error: tls: handshake failure"
+	if e := err.Error(); !strings.Contains(e, expectedError) {
+		t.Fatalf("expected to find %q in error but error was %q", expectedError, e)
+	}
+	clientWCC.Close()
+	<-done
+
+	if n := clientWCC.numWrites; n != 1 {
+		t.Errorf("expected client handshake to complete with one write, but saw %d", n)
+	}
+
+	if n := serverWCC.numWrites; n != 1 {
+		t.Errorf("expected server handshake to complete with one write, but saw %d", n)
+	}
+}
+
+func TestHandshakeRace(t *testing.T) {
+	t.Parallel()
+	// This test races a Read and Write to try and complete a handshake in
+	// order to provide some evidence that there are no races or deadlocks
+	// in the handshake locking.
+	for i := 0; i < 32; i++ {
+		c, s := net.Pipe()
+
+		go func() {
+			server := Server(s, testConfig)
+			if err := server.Handshake(); err != nil {
+				panic(err)
+			}
+
+			var request [1]byte
+			if n, err := server.Read(request[:]); err != nil || n != 1 {
+				panic(err)
+			}
+
+			server.Write(request[:])
+			server.Close()
+		}()
+
+		startWrite := make(chan struct{})
+		startRead := make(chan struct{})
+		readDone := make(chan struct{})
+
+		client := Client(c, testConfig)
+		go func() {
+			<-startWrite
+			var request [1]byte
+			client.Write(request[:])
+		}()
+
+		go func() {
+			<-startRead
+			var reply [1]byte
+			if n, err := client.Read(reply[:]); err != nil || n != 1 {
+				panic(err)
+			}
+			c.Close()
+			readDone <- struct{}{}
+		}()
+
+		if i&1 == 1 {
+			startWrite <- struct{}{}
+			startRead <- struct{}{}
+		} else {
+			startRead <- struct{}{}
+			startWrite <- struct{}{}
+		}
+		<-readDone
+	}
+}
+
+func TestTLS11SignatureSchemes(t *testing.T) {
+	expected := tls11SignatureSchemesNumECDSA + tls11SignatureSchemesNumRSA
+	if expected != len(tls11SignatureSchemes) {
+		t.Errorf("expected to find %d TLS 1.1 signature schemes, but found %d", expected, len(tls11SignatureSchemes))
+	}
+}
+
+var getClientCertificateTests = []struct {
+	setup               func(*Config)
+	expectedClientError string
+	verify              func(*testing.T, int, *ConnectionState)
+}{
+	{
+		func(clientConfig *Config) {
+			// Returning a Certificate with no certificate data
+			// should result in an empty message being sent to the
+			// server.
+			clientConfig.GetClientCertificate = func(cri *CertificateRequestInfo) (*Certificate, error) {
+				if len(cri.SignatureSchemes) == 0 {
+					panic("empty SignatureSchemes")
+				}
+				return new(Certificate), nil
+			}
+		},
+		"",
+		func(t *testing.T, testNum int, cs *ConnectionState) {
+			if l := len(cs.PeerCertificates); l != 0 {
+				t.Errorf("#%d: expected no certificates but got %d", testNum, l)
+			}
+		},
+	},
+	{
+		func(clientConfig *Config) {
+			// With TLS 1.1, the SignatureSchemes should be
+			// synthesised from the supported certificate types.
+			clientConfig.MaxVersion = VersionTLS11
+			clientConfig.GetClientCertificate = func(cri *CertificateRequestInfo) (*Certificate, error) {
+				if len(cri.SignatureSchemes) == 0 {
+					panic("empty SignatureSchemes")
+				}
+				return new(Certificate), nil
+			}
+		},
+		"",
+		func(t *testing.T, testNum int, cs *ConnectionState) {
+			if l := len(cs.PeerCertificates); l != 0 {
+				t.Errorf("#%d: expected no certificates but got %d", testNum, l)
+			}
+		},
+	},
+	{
+		func(clientConfig *Config) {
+			// Returning an error should abort the handshake with
+			// that error.
+			clientConfig.GetClientCertificate = func(cri *CertificateRequestInfo) (*Certificate, error) {
+				return nil, errors.New("GetClientCertificate")
+			}
+		},
+		"GetClientCertificate",
+		func(t *testing.T, testNum int, cs *ConnectionState) {
+		},
+	},
+	{
+		func(clientConfig *Config) {
+			clientConfig.GetClientCertificate = func(cri *CertificateRequestInfo) (*Certificate, error) {
+				return &testConfig.Certificates[0], nil
+			}
+		},
+		"",
+		func(t *testing.T, testNum int, cs *ConnectionState) {
+			if l := len(cs.VerifiedChains); l != 0 {
+				t.Errorf("#%d: expected some verified chains, but found none", testNum)
+			}
+		},
+	},
+}
+
+func TestGetClientCertificate(t *testing.T) {
+	issuer, err := x509.ParseCertificate(testRSACertificateIssuer)
+	if err != nil {
+		panic(err)
+	}
+
+	for i, test := range getClientCertificateTests {
+		serverConfig := testConfig.Clone()
+		serverConfig.ClientAuth = RequestClientCert
+		serverConfig.RootCAs = x509.NewCertPool()
+		serverConfig.RootCAs.AddCert(issuer)
+
+		clientConfig := testConfig.Clone()
+
+		test.setup(clientConfig)
+
+		type serverResult struct {
+			cs  ConnectionState
+			err error
+		}
+
+		c, s := net.Pipe()
+		done := make(chan serverResult)
+
+		go func() {
+			defer s.Close()
+			server := Server(s, serverConfig)
+			err := server.Handshake()
+
+			var cs ConnectionState
+			if err == nil {
+				cs = server.ConnectionState()
+			}
+			done <- serverResult{cs, err}
+		}()
+
+		clientErr := Client(c, clientConfig).Handshake()
+		c.Close()
+
+		result := <-done
+
+		if clientErr != nil {
+			if len(test.expectedClientError) == 0 {
+				t.Errorf("#%d: client error: %v", i, clientErr)
+			} else if got := clientErr.Error(); got != test.expectedClientError {
+				t.Errorf("#%d: expected client error %q, but got %q", i, test.expectedClientError, got)
+			}
+		} else if len(test.expectedClientError) > 0 {
+			t.Errorf("#%d: expected client error %q, but got no error", i, test.expectedClientError)
+		} else if err := result.err; err != nil {
+			t.Errorf("#%d: server error: %v", i, err)
+		} else {
+			test.verify(t, i, &result.cs)
+		}
 	}
 }

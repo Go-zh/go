@@ -154,7 +154,9 @@ func runTests(t *testing.T) ([]byte, error) {
 	// It is required because the tests contain a lot of data races on the same addresses
 	// (the tests are simple and the memory is constantly reused).
 	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, "GOMAXPROCS=") || strings.HasPrefix(env, "GODEBUG=") {
+		if strings.HasPrefix(env, "GOMAXPROCS=") ||
+			strings.HasPrefix(env, "GODEBUG=") ||
+			strings.HasPrefix(env, "GORACE=") {
 			continue
 		}
 		cmd.Env = append(cmd.Env, env)
@@ -171,9 +173,11 @@ func runTests(t *testing.T) ([]byte, error) {
 	// (that's what is done for C++ ThreadSanitizer tests). This is issue #14119.
 	cmd.Env = append(cmd.Env,
 		"GOMAXPROCS=1",
-		"GORACE=suppress_equal_stacks=0 suppress_equal_addresses=0 exitcode=0",
+		"GORACE=suppress_equal_stacks=0 suppress_equal_addresses=0",
 	)
-	return cmd.CombinedOutput()
+	// There are races: we expect tests to fail and the exit code to be non-zero.
+	out, _ := cmd.CombinedOutput()
+	return out, nil
 }
 
 func TestIssue8102(t *testing.T) {

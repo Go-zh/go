@@ -24,25 +24,14 @@ type parser struct {
 	fnest  int    // function nesting level (for error handling)
 	xnest  int    // expression nesting level (for complit ambiguity resolution)
 	indent []byte // tracing support
-
-	nerrors int // error count
 }
 
 func (p *parser) init(src io.Reader, errh ErrorHandler, pragh PragmaHandler) {
-	p.scanner.init(src, func(pos, line int, msg string) {
-		p.nerrors++
-		if !debug && errh != nil {
-			errh(pos, line, msg)
-			return
-		}
-		panic(fmt.Sprintf("%d: %s\n", line, msg))
-	}, pragh)
+	p.scanner.init(src, errh, pragh)
 
 	p.fnest = 0
 	p.xnest = 0
 	p.indent = nil
-
-	p.nerrors = 0
 }
 
 func (p *parser) got(tok token) bool {
@@ -74,7 +63,7 @@ func (p *parser) syntax_error_at(pos, line int, msg string) {
 		defer p.trace("syntax_error (" + msg + ")")()
 	}
 
-	if p.tok == _EOF && p.nerrors > 0 {
+	if p.tok == _EOF && p.first != nil {
 		return // avoid meaningless follow-up errors
 	}
 
@@ -205,7 +194,7 @@ func (p *parser) file() *File {
 	p.want(_Semi)
 
 	// don't bother continuing if package clause has errors
-	if p.nerrors > 0 {
+	if p.first != nil {
 		return nil
 	}
 
@@ -352,6 +341,7 @@ func (p *parser) typeDecl(group *Group) Decl {
 		p.advance(_Semi, _Rparen)
 	}
 	d.Group = group
+	d.Pragma = p.pragma
 
 	return d
 }
@@ -1817,24 +1807,19 @@ func (p *parser) commClause() *CommClause {
 	switch p.tok {
 	case _Case:
 		p.next()
-		lhs := p.exprList()
+		c.Comm = p.simpleStmt(nil, false)
 
-		if _, ok := lhs.(*ListExpr); !ok && p.tok == _Arrow {
-			// lhs <- x
-		} else {
-			// lhs
-			// lhs = <-x
-			// lhs := <-x
-			if p.tok == _Assign || p.tok == _Define {
-				// TODO(gri) check that lhs has at most 2 entries
-			} else if p.tok == _Colon {
-				// TODO(gri) check that lhs has at most 1 entry
-			} else {
-				panic("unimplemented")
-			}
-		}
-
-		c.Comm = p.simpleStmt(lhs, false)
+		// The syntax restricts the possible simple statements here to:
+		//
+		//     lhs <- x (send statement)
+		//     <-x
+		//     lhs = <-x
+		//     lhs := <-x
+		//
+		// All these (and more) are recognized by simpleStmt and invalid
+		// syntax trees are flagged later, during type checking.
+		// TODO(gri) eventually may want to restrict valid syntax trees
+		// here.
 
 	case _Default:
 		p.next()
@@ -1854,7 +1839,7 @@ func (p *parser) commClause() *CommClause {
 }
 
 // TODO(gri) find a better solution
-var missing_stmt Stmt = new(EmptyStmt) // = Nod(OXXX, nil, nil)
+var missing_stmt Stmt = new(EmptyStmt) // = nod(OXXX, nil, nil)
 
 // Statement =
 // 	Declaration | LabeledStmt | SimpleStmt |
@@ -1921,7 +1906,7 @@ func (p *parser) stmt() Stmt {
 		s.Tok = _Fallthrough
 		return s
 		// // will be converted to OFALL
-		// stmt := Nod(OXFALL, nil, nil)
+		// stmt := nod(OXFALL, nil, nil)
 		// stmt.Xoffset = int64(block)
 		// return stmt
 
@@ -1946,7 +1931,7 @@ func (p *parser) stmt() Stmt {
 		s.Tok = _Goto
 		s.Label = p.name()
 		return s
-		// stmt := Nod(OGOTO, p.new_name(p.name()), nil)
+		// stmt := nod(OGOTO, p.new_name(p.name()), nil)
 		// stmt.Sym = dclstack // context, for goto restrictions
 		// return stmt
 

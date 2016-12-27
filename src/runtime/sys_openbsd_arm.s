@@ -87,9 +87,10 @@ TEXT runtime·usleep(SB),NOSPLIT,$16
 TEXT runtime·raise(SB),NOSPLIT,$12
 	MOVW	$0x12B, R12
 	SWI	$0			// sys_getthrid
-					// arg 1 - pid, already in R0
+					// arg 1 - tid, already in R0
 	MOVW	sig+0(FP), R1		// arg 2 - signum
-	MOVW	$37, R12		// sys_kill
+	MOVW	$0, R2			// arg 3 - tcb
+	MOVW	$119, R12		// sys_thrkill
 	SWI	$0
 	RET
 
@@ -98,7 +99,7 @@ TEXT runtime·raiseproc(SB),NOSPLIT,$12
 	SWI	$0			// sys_getpid
 					// arg 1 - pid, already in R0
 	MOVW	sig+0(FP), R1		// arg 2 - signum
-	MOVW	$37, R12		// sys_kill
+	MOVW	$122, R12		// sys_kill
 	SWI	$0
 	RET
 
@@ -198,8 +199,8 @@ TEXT runtime·sigaction(SB),NOSPLIT,$0
 	MOVW.CS	R8, (R8)
 	RET
 
-TEXT runtime·sigprocmask(SB),NOSPLIT,$0
-	MOVW	mode+0(FP), R0		// arg 1 - mode
+TEXT runtime·obsdsigprocmask(SB),NOSPLIT,$0
+	MOVW	how+0(FP), R0		// arg 1 - mode
 	MOVW	new+4(FP), R1		// arg 2 - new
 	MOVW	$48, R12		// sys_sigprocmask
 	SWI	$0

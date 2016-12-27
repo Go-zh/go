@@ -59,8 +59,8 @@ func deadcode(ctxt *Link) {
 	d.init()
 	d.flood()
 
-	callSym := Linkrlookup(ctxt, "reflect.Value.Call", 0)
-	methSym := Linkrlookup(ctxt, "reflect.Value.Method", 0)
+	callSym := ctxt.Syms.ROLookup("reflect.Value.Call", 0)
+	methSym := ctxt.Syms.ROLookup("reflect.Value.Method", 0)
 	reflectSeen := false
 
 	if ctxt.DynlinkingGo() {
@@ -108,11 +108,10 @@ func deadcode(ctxt *Link) {
 	}
 
 	if Buildmode != BuildmodeShared {
-		// Keep a typelink or itablink if the symbol it points at is being kept.
-		// (When BuildmodeShared, always keep typelinks and itablinks.)
-		for _, s := range ctxt.Allsym {
-			if strings.HasPrefix(s.Name, "go.typelink.") ||
-				strings.HasPrefix(s.Name, "go.itablink.") {
+		// Keep a itablink if the symbol it points at is being kept.
+		// (When BuildmodeShared, always keep itablinks.)
+		for _, s := range ctxt.Syms.Allsym {
+			if strings.HasPrefix(s.Name, "go.itablink.") {
 				s.Attr.Set(AttrReachable, len(s.R) == 1 && s.R[0].Sym.Attr.Reachable())
 			}
 		}
@@ -223,7 +222,7 @@ func (d *deadcodepass) init() {
 
 	if SysArch.Family == sys.ARM {
 		// mark some functions that are only referenced after linker code editing
-		if d.ctxt.Goarm == 5 {
+		if obj.GOARM == 5 {
 			names = append(names, "_sfloat")
 		}
 		names = append(names, "runtime.read_tls_fallback")
@@ -232,7 +231,7 @@ func (d *deadcodepass) init() {
 	if Buildmode == BuildmodeShared {
 		// Mark all symbols defined in this library as reachable when
 		// building a shared library.
-		for _, s := range d.ctxt.Allsym {
+		for _, s := range d.ctxt.Syms.Allsym {
 			if s.Type != 0 && s.Type != obj.SDYNIMPORT {
 				d.mark(s, nil)
 			}
@@ -241,8 +240,19 @@ func (d *deadcodepass) init() {
 		// In a normal binary, start at main.main and the init
 		// functions and mark what is reachable from there.
 		names = append(names, *flagEntrySymbol)
-		if *FlagLinkshared && Buildmode == BuildmodeExe {
+		if *FlagLinkshared && (Buildmode == BuildmodeExe || Buildmode == BuildmodePIE) {
 			names = append(names, "main.main", "main.init")
+		} else if Buildmode == BuildmodePlugin {
+			names = append(names, *flagPluginPath+".init", *flagPluginPath+".main", "go.plugin.tabs")
+
+			// We don't keep the go.plugin.exports symbol,
+			// but we do keep the symbols it refers to.
+			exports := d.ctxt.Syms.ROLookup("go.plugin.exports", 0)
+			if exports != nil {
+				for _, r := range exports.R {
+					d.mark(r.Sym, nil)
+				}
+			}
 		}
 		for _, name := range markextra {
 			names = append(names, name)
@@ -253,7 +263,7 @@ func (d *deadcodepass) init() {
 	}
 
 	for _, name := range names {
-		d.mark(Linkrlookup(d.ctxt, name, 0), nil)
+		d.mark(d.ctxt.Syms.ROLookup(name, 0), nil)
 	}
 }
 
@@ -276,6 +286,11 @@ func (d *deadcodepass) flood() {
 		}
 
 		if strings.HasPrefix(s.Name, "type.") && s.Name[5] != '.' {
+			if len(s.P) == 0 {
+				// Probably a bug. The undefined symbol check
+				// later will give a better error than deadcode.
+				continue
+			}
 			if decodetypeKind(s)&kindMask == kindInterface {
 				for _, sig := range decodeIfaceMethods(d.ctxt.Arch, s) {
 					if d.ctxt.Debugvlog > 1 {
@@ -291,6 +306,12 @@ func (d *deadcodepass) flood() {
 		for i := 0; i < len(s.R); i++ {
 			r := &s.R[i]
 			if r.Sym == nil {
+				continue
+			}
+			if r.Type == obj.R_WEAKADDROFF {
+				// An R_WEAKADDROFF relocation is not reason
+				// enough to mark the pointed-to symbol as
+				// reachable.
 				continue
 			}
 			if r.Type != obj.R_METHODOFF {

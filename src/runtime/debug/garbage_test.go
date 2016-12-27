@@ -80,7 +80,7 @@ func TestReadGCStats(t *testing.T) {
 	for i := 0; i < n; i++ {
 		dt := stats.PauseEnd[i]
 		if dt.UnixNano() != int64(mstats.PauseEnd[off]) {
-			t.Errorf("stats.PauseEnd[%d] = %d, want %d", i, dt, mstats.PauseEnd[off])
+			t.Errorf("stats.PauseEnd[%d] = %d, want %d", i, dt.UnixNano(), mstats.PauseEnd[off])
 		}
 		off = (off + len(mstats.PauseEnd) - 1) % len(mstats.PauseEnd)
 	}
@@ -113,4 +113,17 @@ func TestSetGCPercent(t *testing.T) {
 	if new != 123 {
 		t.Errorf("SetGCPercent(123); SetGCPercent(x) = %d, want 123", new)
 	}
+}
+
+func TestSetMaxThreadsOvf(t *testing.T) {
+	// Verify that a big threads count will not overflow the int32
+	// maxmcount variable, causing a panic (see Issue 16076).
+	//
+	// This can only happen when ints are 64 bits, since on platforms
+	// with 32 bit ints SetMaxThreads (which takes an int parameter)
+	// cannot be given anything that will overflow an int32.
+	//
+	// Call SetMaxThreads with 1<<31, but only on 64 bit systems.
+	nt := SetMaxThreads(1 << (30 + ^uint(0)>>63))
+	SetMaxThreads(nt) // restore previous value
 }

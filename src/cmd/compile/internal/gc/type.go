@@ -143,8 +143,11 @@ type Type struct {
 	methods    Fields
 	allMethods Fields
 
-	Nod  *Node // canonical OTYPE node
+	nod  *Node // canonical OTYPE node
 	Orig *Type // original type (type literal or predefined type)
+
+	sliceOf *Type
+	ptrTo   *Type
 
 	Sym    *Sym  // symbol containing name, for named types
 	Vargen int32 // unique name for OTYPE/ONAME
@@ -157,6 +160,7 @@ type Type struct {
 	Deferwidth bool
 	Broke      bool  // broken type definition.
 	Align      uint8 // the required alignment of this type, in bytes
+	NotInHeap  bool  // type cannot be heap allocated
 }
 
 // MapType contains Type fields specific to maps.
@@ -411,13 +415,22 @@ func typArray(elem *Type, bound int64) *Type {
 	}
 	t := typ(TARRAY)
 	t.Extra = &ArrayType{Elem: elem, Bound: bound}
+	t.NotInHeap = elem.NotInHeap
 	return t
 }
 
-// typSlice returns a new slice Type.
+// typSlice returns the slice Type with element type elem.
 func typSlice(elem *Type) *Type {
+	if t := elem.sliceOf; t != nil {
+		if t.Elem() != elem {
+			Fatalf("elem mismatch")
+		}
+		return t
+	}
+
 	t := typ(TSLICE)
 	t.Extra = SliceType{Elem: elem}
+	elem.sliceOf = t
 	return t
 }
 
@@ -425,6 +438,7 @@ func typSlice(elem *Type) *Type {
 func typDDDArray(elem *Type) *Type {
 	t := typ(TARRAY)
 	t.Extra = &ArrayType{Elem: elem, Bound: -1}
+	t.NotInHeap = elem.NotInHeap
 	return t
 }
 
@@ -446,12 +460,20 @@ func typMap(k, v *Type) *Type {
 	return t
 }
 
-// typPtr returns a new pointer type pointing to t.
+// typPtr returns the pointer type pointing to t.
 func typPtr(elem *Type) *Type {
+	if t := elem.ptrTo; t != nil {
+		if t.Elem() != elem {
+			Fatalf("elem mismatch")
+		}
+		return t
+	}
+
 	t := typ(Tptr)
 	t.Extra = PtrType{Elem: elem}
 	t.Width = int64(Widthptr)
 	t.Align = uint8(Widthptr)
+	elem.ptrTo = t
 	return t
 }
 
@@ -637,9 +659,9 @@ type Iter struct {
 	s []*Field
 }
 
-// IterFields returns the first field or method in struct or interface type t
+// iterFields returns the first field or method in struct or interface type t
 // and an Iter value to continue iterating across the rest.
-func IterFields(t *Type) (*Field, Iter) {
+func iterFields(t *Type) (*Field, Iter) {
 	return t.Fields().Iter()
 }
 
@@ -803,6 +825,17 @@ func (t *Type) FieldSlice() []*Field {
 
 // SetFields sets struct/interface type t's fields/methods to fields.
 func (t *Type) SetFields(fields []*Field) {
+	for _, f := range fields {
+		// If type T contains a field F with a go:notinheap
+		// type, then T must also be go:notinheap. Otherwise,
+		// you could heap allocate T and then get a pointer F,
+		// which would be a heap pointer to a go:notinheap
+		// type.
+		if f.Type != nil && f.Type.NotInHeap {
+			t.NotInHeap = true
+			break
+		}
+	}
 	t.Fields().Set(fields)
 }
 
@@ -892,7 +925,7 @@ func (r *Sym) cmpsym(s *Sym) ssa.Cmp {
 // ssa.CMPeq, ssa.CMPgt as t<x, t==x, t>x, for an arbitrary
 // and optimizer-centric notion of comparison.
 func (t *Type) cmp(x *Type) ssa.Cmp {
-	// This follows the structure of Eqtype in subr.go
+	// This follows the structure of eqtype in subr.go
 	// with two exceptions.
 	// 1. Symbols are compared more carefully because a <,=,> result is desired.
 	// 2. Maps are treated specially to avoid endless recursion -- maps
@@ -978,8 +1011,8 @@ func (t *Type) cmp(x *Type) ssa.Cmp {
 
 		fallthrough
 	case TINTER:
-		t1, ti := IterFields(t)
-		x1, xi := IterFields(x)
+		t1, ti := iterFields(t)
+		x1, xi := iterFields(x)
 		for ; t1 != nil && x1 != nil; t1, x1 = ti.Next(), xi.Next() {
 			if t1.Embedded != x1.Embedded {
 				return cmpForNe(t1.Embedded < x1.Embedded)
@@ -1002,8 +1035,8 @@ func (t *Type) cmp(x *Type) ssa.Cmp {
 	case TFUNC:
 		for _, f := range recvsParamsResults {
 			// Loop over fields in structs, ignoring argument names.
-			ta, ia := IterFields(f(t))
-			tb, ib := IterFields(f(x))
+			ta, ia := iterFields(f(t))
+			tb, ib := iterFields(f(x))
 			for ; ta != nil && tb != nil; ta, tb = ia.Next(), ib.Next() {
 				if ta.Isddd != tb.Isddd {
 					return cmpForNe(!ta.Isddd)
@@ -1029,7 +1062,7 @@ func (t *Type) cmp(x *Type) ssa.Cmp {
 		}
 
 	default:
-		e := fmt.Sprintf("Do not know how to compare %s with %s", t, x)
+		e := fmt.Sprintf("Do not know how to compare %v with %v", t, x)
 		panic(e)
 	}
 
@@ -1152,7 +1185,7 @@ func (t *Type) ElemType() ssa.Type {
 	return t.Elem()
 }
 func (t *Type) PtrTo() ssa.Type {
-	return Ptrto(t)
+	return ptrto(t)
 }
 
 func (t *Type) NumFields() int {

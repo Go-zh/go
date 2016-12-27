@@ -602,6 +602,25 @@
 (Trunc32to16 (And32 (Const32 [y]) x)) && y&0xFFFF == 0xFFFF -> (Trunc32to16 x)
 (Trunc16to8  (And16 (Const16 [y]) x)) && y&0xFF == 0xFF -> (Trunc16to8 x)
 
+(ZeroExt8to64  (Trunc64to8  x:(Rsh64Ux64 _ (Const64 [s])))) && s >= 56 -> x
+(ZeroExt16to64 (Trunc64to16 x:(Rsh64Ux64 _ (Const64 [s])))) && s >= 48 -> x
+(ZeroExt32to64 (Trunc64to32 x:(Rsh64Ux64 _ (Const64 [s])))) && s >= 32 -> x
+(ZeroExt8to32  (Trunc32to8  x:(Rsh32Ux64 _ (Const64 [s])))) && s >= 24 -> x
+(ZeroExt16to32 (Trunc32to16 x:(Rsh32Ux64 _ (Const64 [s])))) && s >= 16 -> x
+(ZeroExt8to16  (Trunc16to8  x:(Rsh16Ux64 _ (Const64 [s])))) && s >= 8 -> x
+
+(SignExt8to64  (Trunc64to8  x:(Rsh64x64 _ (Const64 [s])))) && s >= 56 -> x
+(SignExt16to64 (Trunc64to16 x:(Rsh64x64 _ (Const64 [s])))) && s >= 48 -> x
+(SignExt32to64 (Trunc64to32 x:(Rsh64x64 _ (Const64 [s])))) && s >= 32 -> x
+(SignExt8to32  (Trunc32to8  x:(Rsh32x64 _ (Const64 [s])))) && s >= 24 -> x
+(SignExt16to32 (Trunc32to16 x:(Rsh32x64 _ (Const64 [s])))) && s >= 16 -> x
+(SignExt8to16  (Trunc16to8  x:(Rsh16x64 _ (Const64 [s])))) && s >= 8 -> x
+
+(Slicemask (Const32 [x])) && x > 0 -> (Const32 [-1])
+(Slicemask (Const32 [0]))          -> (Const32 [0])
+(Slicemask (Const64 [x])) && x > 0 -> (Const64 [-1])
+(Slicemask (Const64 [0]))          -> (Const64 [0])
+
 // Rewrite AND of consts as shifts if possible, slightly faster for 64 bit operands
 // leading zeros can be shifted left, then right
 (And64 <t> (Const64 [y]) x) && nlz(y) + nto(y) == 64 && nto(y) >= 32
@@ -649,7 +668,6 @@
 
 // indexing operations
 // Note: bounds check has already been done
-(ArrayIndex <t> [0] x:(Load ptr mem)) -> @x.Block (Load <t> ptr mem)
 (PtrIndex <t> ptr idx) && config.PtrSize == 4 -> (AddPtr ptr (Mul32 <config.fe.TypeInt()> idx (Const32 <config.fe.TypeInt()> [t.ElemType().Size()])))
 (PtrIndex <t> ptr idx) && config.PtrSize == 8 -> (AddPtr ptr (Mul64 <config.fe.TypeInt()> idx (Const64 <config.fe.TypeInt()> [t.ElemType().Size()])))
 
@@ -717,11 +735,33 @@
         f1
         (Store [t.FieldType(0).Size()] dst f0 mem))))
 
+// Putting struct{*byte} and similar into direct interfaces.
+(IMake typ (StructMake1 val)) -> (IMake typ val)
+(StructSelect [0] x:(IData _)) -> x
+
 // un-SSAable values use mem->mem copies
 (Store [size] dst (Load <t> src mem) mem) && !config.fe.CanSSA(t) ->
 	(Move [MakeSizeAndAlign(size, t.Alignment()).Int64()] dst src mem)
 (Store [size] dst (Load <t> src mem) (VarDef {x} mem)) && !config.fe.CanSSA(t) ->
 	(Move [MakeSizeAndAlign(size, t.Alignment()).Int64()] dst src (VarDef {x} mem))
+
+// array ops
+(ArraySelect (ArrayMake1 x)) -> x
+
+(Load <t> _ _) && t.IsArray() && t.NumElem() == 0 ->
+  (ArrayMake0)
+
+(Load <t> ptr mem) && t.IsArray() && t.NumElem() == 1 && config.fe.CanSSA(t) ->
+  (ArrayMake1 (Load <t.ElemType()> ptr mem))
+
+(Store _ (ArrayMake0) mem) -> mem
+(Store [size] dst (ArrayMake1 e) mem) -> (Store [size] dst e mem)
+
+(ArraySelect [0] (Load ptr mem)) -> (Load ptr mem)
+
+// Putting [1]{*byte} and similar into direct interfaces.
+(IMake typ (ArrayMake1 val)) -> (IMake typ val)
+(ArraySelect [0] x:(IData _)) -> x
 
 // string ops
 // Decomposing StringMake and lowering of StringPtr and StringLen
@@ -749,6 +789,8 @@
 // a more comprehensive set.
 (SliceLen (SliceMake _ (Const64 <t> [c]) _)) -> (Const64 <t> [c])
 (SliceCap (SliceMake _ _ (Const64 <t> [c]))) -> (Const64 <t> [c])
+(SliceLen (SliceMake _ (Const32 <t> [c]) _)) -> (Const32 <t> [c])
+(SliceCap (SliceMake _ _ (Const32 <t> [c]))) -> (Const32 <t> [c])
 (SlicePtr (SliceMake (SlicePtr x) _ _)) -> (SlicePtr x)
 (SliceLen (SliceMake _ (SliceLen x) _)) -> (SliceLen x)
 (SliceCap (SliceMake _ _ (SliceCap x))) -> (SliceCap x)
@@ -770,7 +812,7 @@
     (ConstNil <config.fe.TypeBytePtr()>)
     (ConstNil <config.fe.TypeBytePtr()>))
 
-(Check (NilCheck (GetG _) _) next) -> (Plain nil next)
+(NilCheck (GetG mem) mem) -> mem
 
 (If (Not cond) yes no) -> (If cond no yes)
 (If (ConstBool [c]) yes no) && c == 1 -> (First nil yes no)
@@ -828,6 +870,11 @@
     (Arg <t.FieldType(1)> {n} [off+t.FieldOff(1)])
     (Arg <t.FieldType(2)> {n} [off+t.FieldOff(2)])
     (Arg <t.FieldType(3)> {n} [off+t.FieldOff(3)]))
+
+(Arg <t>) && t.IsArray() && t.NumElem() == 0 ->
+  (ArrayMake0)
+(Arg <t> {n} [off]) && t.IsArray() && t.NumElem() == 1 && config.fe.CanSSA(t) ->
+  (ArrayMake1 (Arg <t.ElemType()> {n} [off]))
 
 // strength reduction of divide by a constant.
 // Note: frontend does <=32 bits. We only need to do 64 bits here.
@@ -951,16 +998,22 @@
 (Sqrt (Const64F [c])) -> (Const64F [f2i(math.Sqrt(i2f(c)))])
 
 // recognize runtime.newobject and don't Zero/Nilcheck it
-(Zero (Load (OffPtr [c] (SP)) mem:(StaticCall {sym} _)) mem2)
+(Zero (Load (OffPtr [c] (SP)) mem) mem)
+        && mem.Op == OpStaticCall
+	&& isSameSym(mem.Aux, "runtime.newobject")
 	&& c == config.ctxt.FixedFrameSize() + config.PtrSize // offset of return value
-	&& mem2 == mem
-	&& isSameSym(sym, "runtime.newobject")
 	-> mem
-(Check (NilCheck (Load (OffPtr [c] (SP)) mem:(StaticCall {sym} _)) _) succ)
-	&& c == config.ctxt.FixedFrameSize() + config.PtrSize // offset of return value
-	&& isSameSym(sym, "runtime.newobject")
-	-> (Plain nil succ)
-(Check (NilCheck (OffPtr (Load (OffPtr [c] (SP)) mem:(StaticCall {sym} _))) _) succ)
-	&& c == config.ctxt.FixedFrameSize() + config.PtrSize // offset of return value
-	&& isSameSym(sym, "runtime.newobject")
-	-> (Plain nil succ)
+// nil checks just need to rewrite to something useless.
+// they will be deadcode eliminated soon afterwards.
+(NilCheck (Load (OffPtr [c] (SP)) mem) mem)
+	&& mem.Op == OpStaticCall
+	&& isSameSym(mem.Aux, "runtime.newobject")
+	&& c == config.ctxt.FixedFrameSize() + config.RegSize // offset of return value
+	&& warnRule(config.Debug_checknil() && int(v.Line) > 1, v, "removed nil check")
+	-> (Invalid)
+(NilCheck (OffPtr (Load (OffPtr [c] (SP)) mem)) mem)
+	&& mem.Op == OpStaticCall
+	&& isSameSym(mem.Aux, "runtime.newobject")
+	&& c == config.ctxt.FixedFrameSize() + config.RegSize // offset of return value
+	&& warnRule(config.Debug_checknil() && int(v.Line) > 1, v, "removed nil check")
+	-> (Invalid)
