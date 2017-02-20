@@ -33,7 +33,9 @@
 //            }
 //            defer pprof.StopCPUProfile()
 //        }
-//        ...
+//
+//        // ... rest of the program ...
+//
 //        if *memprofile != "" {
 //            f, err := os.Create(*memprofile)
 //            if err != nil {
@@ -76,7 +78,6 @@ import (
 	"internal/pprof/profile"
 	"io"
 	"runtime"
-	"runtime/pprof/internal/protopprof"
 	"sort"
 	"strings"
 	"sync"
@@ -183,6 +184,8 @@ func unlockProfiles() {
 // If a profile with that name already exists, NewProfile panics.
 // The convention is to use a 'import/path.' prefix to create
 // separate name spaces for each package.
+// For compatibility with various tools that read pprof data,
+// profile names should not contain spaces.
 func NewProfile(name string) *Profile {
 	lockProfiles()
 	defer unlockProfiles()
@@ -496,7 +499,7 @@ func writeHeap(w io.Writer, debug int) error {
 	}
 
 	if debug == 0 {
-		pp := protopprof.EncodeMemProfile(p, int64(runtime.MemProfileRate), time.Now())
+		pp := encodeMemProfile(p, int64(runtime.MemProfileRate), time.Now())
 		return pp.Write(w)
 	}
 
@@ -562,8 +565,12 @@ func writeHeap(w io.Writer, debug int) error {
 	fmt.Fprintf(w, "# OtherSys = %d\n", s.OtherSys)
 
 	fmt.Fprintf(w, "# NextGC = %d\n", s.NextGC)
+	fmt.Fprintf(w, "# LastGC = %d\n", s.LastGC)
 	fmt.Fprintf(w, "# PauseNs = %d\n", s.PauseNs)
+	fmt.Fprintf(w, "# PauseEnd = %d\n", s.PauseEnd)
 	fmt.Fprintf(w, "# NumGC = %d\n", s.NumGC)
+	fmt.Fprintf(w, "# NumForcedGC = %d\n", s.NumForcedGC)
+	fmt.Fprintf(w, "# GCCPUFraction = %v\n", s.GCCPUFraction)
 	fmt.Fprintf(w, "# DebugGC = %v\n", s.DebugGC)
 
 	tw.Flush()
@@ -705,7 +712,7 @@ func profileWriter(w io.Writer) {
 		buf.Write(data)
 	}
 
-	profile, err := protopprof.TranslateCPUProfile(buf.Bytes(), startTime)
+	profile, err := translateCPUProfile(buf.Bytes(), startTime)
 	if err != nil {
 		// The runtime should never produce an invalid or truncated profile.
 		// It drops records that can't fit into its log buffers.

@@ -6,12 +6,13 @@
 
 package gc
 
-import "fmt"
+import (
+	"cmd/internal/obj"
+	"fmt"
+)
 
-func Sysfunc(name string) *Node {
-	n := newname(Pkglookup(name, Runtimepkg))
-	n.Class = PFUNC
-	return n
+func Sysfunc(name string) *obj.LSym {
+	return Linksym(Pkglookup(name, Runtimepkg))
 }
 
 // addrescapes tags node n as having had its address taken
@@ -64,7 +65,7 @@ func addrescapes(n *Node) {
 			Curfn = Curfn.Func.Closure
 		}
 		ln := lineno
-		lineno = Curfn.Lineno
+		lineno = Curfn.Pos
 		moveToHeap(n)
 		Curfn = oldfn
 		lineno = ln
@@ -87,7 +88,7 @@ func addrescapes(n *Node) {
 // isParamStackCopy reports whether this is the on-stack copy of a
 // function parameter that moved to the heap.
 func (n *Node) isParamStackCopy() bool {
-	return n.Op == ONAME && (n.Class == PPARAM || n.Class == PPARAMOUT) && n.Name.Heapaddr != nil
+	return n.Op == ONAME && (n.Class == PPARAM || n.Class == PPARAMOUT) && n.Name.Param.Heapaddr != nil
 }
 
 // isParamHeapCopy reports whether this is the on-heap copy of
@@ -137,7 +138,7 @@ func moveToHeap(n *Node) {
 		stackcopy.Type = n.Type
 		stackcopy.Xoffset = n.Xoffset
 		stackcopy.Class = n.Class
-		stackcopy.Name.Heapaddr = heapaddr
+		stackcopy.Name.Param.Heapaddr = heapaddr
 		if n.Class == PPARAMOUT {
 			// Make sure the pointer to the heap copy is kept live throughout the function.
 			// The function could panic at any point, and then a defer could recover.
@@ -174,7 +175,7 @@ func moveToHeap(n *Node) {
 	n.Class = PAUTOHEAP
 	n.Ullman = 2
 	n.Xoffset = 0
-	n.Name.Heapaddr = heapaddr
+	n.Name.Param.Heapaddr = heapaddr
 	n.Esc = EscHeap
 	if Debug['m'] != 0 {
 		fmt.Printf("%v: moved to heap: %v\n", n.Line(), n)

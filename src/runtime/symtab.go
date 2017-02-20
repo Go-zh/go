@@ -285,6 +285,25 @@ func modulesinit() {
 			md.gcbssmask = progToPointerMask((*byte)(unsafe.Pointer(md.gcbss)), md.ebss-md.bss)
 		}
 	}
+
+	// Modules appear in the moduledata linked list in the order they are
+	// loaded by the dynamic loader, with one exception: the
+	// firstmoduledata itself the module that contains the runtime. This
+	// is not always the first module (when using -buildmode=shared, it
+	// is typically libstd.so, the second module). The order matters for
+	// typelinksinit, so we swap the first module with whatever module
+	// contains the main function.
+	//
+	// See Issue #18729.
+	mainText := funcPC(main_main)
+	for i, md := range *modules {
+		if md.text <= mainText && mainText <= md.etext {
+			(*modules)[0] = md
+			(*modules)[i] = &firstmoduledata
+			break
+		}
+	}
+
 	atomicstorep(unsafe.Pointer(&modulesSlice), unsafe.Pointer(modules))
 }
 
@@ -530,7 +549,7 @@ func pcvalue(f *_func, off int32, targetpc uintptr, cache *pcvalueCache, strict 
 			// a recursive stack's cycle is slightly
 			// larger than the cache.
 			if cache != nil {
-				ci := fastrand() % uint32(len(cache.entries))
+				ci := fastrandn(uint32(len(cache.entries)))
 				cache.entries[ci] = pcvalueCacheEnt{
 					targetpc: targetpc,
 					off:      off,

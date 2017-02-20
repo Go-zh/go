@@ -127,17 +127,19 @@ func init() {
 		flagsgpax = regInfo{inputs: nil, clobbers: ax, outputs: []regMask{gp &^ ax}}
 
 		gpload    = regInfo{inputs: []regMask{gpspsb, 0}, outputs: gponly}
+		gp21load  = regInfo{inputs: []regMask{gp, gpspsb, 0}, outputs: gponly}
 		gploadidx = regInfo{inputs: []regMask{gpspsb, gpsp, 0}, outputs: gponly}
 
 		gpstore         = regInfo{inputs: []regMask{gpspsb, gpsp, 0}}
 		gpstoreconst    = regInfo{inputs: []regMask{gpspsb, 0}}
 		gpstoreidx      = regInfo{inputs: []regMask{gpspsb, gpsp, gpsp, 0}}
 		gpstoreconstidx = regInfo{inputs: []regMask{gpspsb, gpsp, 0}}
-		gpstorexchg     = regInfo{inputs: []regMask{gp, gp, 0}, outputs: []regMask{gp}}
+		gpstorexchg     = regInfo{inputs: []regMask{gp, gpspsb, 0}, outputs: []regMask{gp}}
 		cmpxchg         = regInfo{inputs: []regMask{gp, ax, gp, 0}, outputs: []regMask{gp, 0}, clobbers: ax}
 
 		fp01     = regInfo{inputs: nil, outputs: fponly}
 		fp21     = regInfo{inputs: []regMask{fp, fp}, outputs: fponly}
+		fp21load = regInfo{inputs: []regMask{fp, gpspsb, 0}, outputs: fponly}
 		fpgp     = regInfo{inputs: fponly, outputs: gponly}
 		gpfp     = regInfo{inputs: gponly, outputs: fponly}
 		fp11     = regInfo{inputs: fponly, outputs: fponly}
@@ -176,6 +178,13 @@ func init() {
 		{name: "MOVSSstoreidx4", argLength: 4, reg: fpstoreidx, asm: "MOVSS", aux: "SymOff"},                // fp32 indexed by 4i store
 		{name: "MOVSDstoreidx1", argLength: 4, reg: fpstoreidx, asm: "MOVSD", aux: "SymOff"},                // fp64 indexed by i store
 		{name: "MOVSDstoreidx8", argLength: 4, reg: fpstoreidx, asm: "MOVSD", aux: "SymOff"},                // fp64 indexed by 8i store
+
+		{name: "ADDSDmem", argLength: 3, reg: fp21load, asm: "ADDSD", aux: "SymOff", resultInArg0: true, faultOnNilArg1: true}, // fp32 arg0 + tmp, tmp loaded from arg1+auxint+aux, arg2 = mem
+		{name: "ADDSSmem", argLength: 3, reg: fp21load, asm: "ADDSS", aux: "SymOff", resultInArg0: true, faultOnNilArg1: true}, // fp32 arg0 + tmp, tmp loaded from arg1+auxint+aux, arg2 = mem
+		{name: "SUBSSmem", argLength: 3, reg: fp21load, asm: "SUBSS", aux: "SymOff", resultInArg0: true, faultOnNilArg1: true}, // fp32 arg0 - tmp, tmp loaded from arg1+auxint+aux, arg2 = mem
+		{name: "SUBSDmem", argLength: 3, reg: fp21load, asm: "SUBSD", aux: "SymOff", resultInArg0: true, faultOnNilArg1: true}, // fp64 arg0 - tmp, tmp loaded from arg1+auxint+aux, arg2 = mem
+		{name: "MULSSmem", argLength: 3, reg: fp21load, asm: "MULSS", aux: "SymOff", resultInArg0: true, faultOnNilArg1: true}, // fp32 arg0 * tmp, tmp loaded from arg1+auxint+aux, arg2 = mem
+		{name: "MULSDmem", argLength: 3, reg: fp21load, asm: "MULSD", aux: "SymOff", resultInArg0: true, faultOnNilArg1: true}, // fp64 arg0 * tmp, tmp loaded from arg1+auxint+aux, arg2 = mem
 
 		// binary ops
 		{name: "ADDQ", argLength: 2, reg: gp21sp, asm: "ADDQ", commutative: true, clobberFlags: true},                // arg0 + arg1
@@ -262,8 +271,8 @@ func init() {
 		{name: "SHRB", argLength: 2, reg: gp21shift, asm: "SHRB", resultInArg0: true, clobberFlags: true},               // unsigned arg0 >> arg1, shift amount is mod 32
 		{name: "SHRQconst", argLength: 1, reg: gp11, asm: "SHRQ", aux: "Int64", resultInArg0: true, clobberFlags: true}, // unsigned arg0 >> auxint, shift amount 0-63
 		{name: "SHRLconst", argLength: 1, reg: gp11, asm: "SHRL", aux: "Int32", resultInArg0: true, clobberFlags: true}, // unsigned arg0 >> auxint, shift amount 0-31
-		{name: "SHRWconst", argLength: 1, reg: gp11, asm: "SHRW", aux: "Int16", resultInArg0: true, clobberFlags: true}, // unsigned arg0 >> auxint, shift amount 0-31
-		{name: "SHRBconst", argLength: 1, reg: gp11, asm: "SHRB", aux: "Int8", resultInArg0: true, clobberFlags: true},  // unsigned arg0 >> auxint, shift amount 0-31
+		{name: "SHRWconst", argLength: 1, reg: gp11, asm: "SHRW", aux: "Int16", resultInArg0: true, clobberFlags: true}, // unsigned arg0 >> auxint, shift amount 0-15
+		{name: "SHRBconst", argLength: 1, reg: gp11, asm: "SHRB", aux: "Int8", resultInArg0: true, clobberFlags: true},  // unsigned arg0 >> auxint, shift amount 0-7
 
 		{name: "SARQ", argLength: 2, reg: gp21shift, asm: "SARQ", resultInArg0: true, clobberFlags: true},               // signed arg0 >> arg1, shift amount is mod 64
 		{name: "SARL", argLength: 2, reg: gp21shift, asm: "SARL", resultInArg0: true, clobberFlags: true},               // signed arg0 >> arg1, shift amount is mod 32
@@ -271,13 +280,24 @@ func init() {
 		{name: "SARB", argLength: 2, reg: gp21shift, asm: "SARB", resultInArg0: true, clobberFlags: true},               // signed arg0 >> arg1, shift amount is mod 32
 		{name: "SARQconst", argLength: 1, reg: gp11, asm: "SARQ", aux: "Int64", resultInArg0: true, clobberFlags: true}, // signed arg0 >> auxint, shift amount 0-63
 		{name: "SARLconst", argLength: 1, reg: gp11, asm: "SARL", aux: "Int32", resultInArg0: true, clobberFlags: true}, // signed arg0 >> auxint, shift amount 0-31
-		{name: "SARWconst", argLength: 1, reg: gp11, asm: "SARW", aux: "Int16", resultInArg0: true, clobberFlags: true}, // signed arg0 >> auxint, shift amount 0-31
-		{name: "SARBconst", argLength: 1, reg: gp11, asm: "SARB", aux: "Int8", resultInArg0: true, clobberFlags: true},  // signed arg0 >> auxint, shift amount 0-31
+		{name: "SARWconst", argLength: 1, reg: gp11, asm: "SARW", aux: "Int16", resultInArg0: true, clobberFlags: true}, // signed arg0 >> auxint, shift amount 0-15
+		{name: "SARBconst", argLength: 1, reg: gp11, asm: "SARB", aux: "Int8", resultInArg0: true, clobberFlags: true},  // signed arg0 >> auxint, shift amount 0-7
 
 		{name: "ROLQconst", argLength: 1, reg: gp11, asm: "ROLQ", aux: "Int64", resultInArg0: true, clobberFlags: true}, // arg0 rotate left auxint, rotate amount 0-63
 		{name: "ROLLconst", argLength: 1, reg: gp11, asm: "ROLL", aux: "Int32", resultInArg0: true, clobberFlags: true}, // arg0 rotate left auxint, rotate amount 0-31
 		{name: "ROLWconst", argLength: 1, reg: gp11, asm: "ROLW", aux: "Int16", resultInArg0: true, clobberFlags: true}, // arg0 rotate left auxint, rotate amount 0-15
 		{name: "ROLBconst", argLength: 1, reg: gp11, asm: "ROLB", aux: "Int8", resultInArg0: true, clobberFlags: true},  // arg0 rotate left auxint, rotate amount 0-7
+
+		{name: "ADDLmem", argLength: 3, reg: gp21load, asm: "ADDL", typ: "UInt32", aux: "SymOff", resultInArg0: true, clobberFlags: true, faultOnNilArg1: true}, // arg0 + tmp, tmp loaded from  arg1+auxint+aux, arg2 = mem
+		{name: "ADDQmem", argLength: 3, reg: gp21load, asm: "ADDQ", typ: "UInt64", aux: "SymOff", resultInArg0: true, clobberFlags: true, faultOnNilArg1: true}, // arg0 + tmp, tmp loaded from  arg1+auxint+aux, arg2 = mem
+		{name: "SUBQmem", argLength: 3, reg: gp21load, asm: "SUBQ", typ: "UInt64", aux: "SymOff", resultInArg0: true, clobberFlags: true, faultOnNilArg1: true}, // arg0 - tmp, tmp loaded from  arg1+auxint+aux, arg2 = mem
+		{name: "SUBLmem", argLength: 3, reg: gp21load, asm: "SUBL", typ: "UInt32", aux: "SymOff", resultInArg0: true, clobberFlags: true, faultOnNilArg1: true}, // arg0 - tmp, tmp loaded from  arg1+auxint+aux, arg2 = mem
+		{name: "ANDLmem", argLength: 3, reg: gp21load, asm: "ANDL", typ: "UInt32", aux: "SymOff", resultInArg0: true, clobberFlags: true, faultOnNilArg1: true}, // arg0 & tmp, tmp loaded from  arg1+auxint+aux, arg2 = mem
+		{name: "ANDQmem", argLength: 3, reg: gp21load, asm: "ANDQ", typ: "UInt64", aux: "SymOff", resultInArg0: true, clobberFlags: true, faultOnNilArg1: true}, // arg0 & tmp, tmp loaded from  arg1+auxint+aux, arg2 = mem
+		{name: "ORQmem", argLength: 3, reg: gp21load, asm: "ORQ", typ: "UInt64", aux: "SymOff", resultInArg0: true, clobberFlags: true, faultOnNilArg1: true},   // arg0 | tmp, tmp loaded from  arg1+auxint+aux, arg2 = mem
+		{name: "ORLmem", argLength: 3, reg: gp21load, asm: "ORL", typ: "UInt32", aux: "SymOff", resultInArg0: true, clobberFlags: true, faultOnNilArg1: true},   // arg0 | tmp, tmp loaded from  arg1+auxint+aux, arg2 = mem
+		{name: "XORQmem", argLength: 3, reg: gp21load, asm: "XORQ", typ: "UInt64", aux: "SymOff", resultInArg0: true, clobberFlags: true, faultOnNilArg1: true}, // arg0 ^ tmp, tmp loaded from  arg1+auxint+aux, arg2 = mem
+		{name: "XORLmem", argLength: 3, reg: gp21load, asm: "XORL", typ: "UInt32", aux: "SymOff", resultInArg0: true, clobberFlags: true, faultOnNilArg1: true}, // arg0 ^ tmp, tmp loaded from  arg1+auxint+aux, arg2 = mem
 
 		// unary ops
 		{name: "NEGQ", argLength: 1, reg: gp11, asm: "NEGQ", resultInArg0: true, clobberFlags: true}, // -arg0
@@ -421,7 +441,8 @@ func init() {
 				inputs:   []regMask{buildReg("DI"), buildReg("X0")},
 				clobbers: buildReg("DI"),
 			},
-			clobberFlags: true,
+			clobberFlags:   true,
+			faultOnNilArg0: true,
 		},
 		{name: "MOVOconst", reg: regInfo{nil, 0, []regMask{fp}}, typ: "Int128", aux: "Int128", rematerializeable: true},
 
@@ -437,6 +458,7 @@ func init() {
 				inputs:   []regMask{buildReg("DI"), buildReg("CX"), buildReg("AX")},
 				clobbers: buildReg("DI CX"),
 			},
+			faultOnNilArg0: true,
 		},
 
 		{name: "CALLstatic", argLength: 1, reg: regInfo{clobbers: callerSave}, aux: "SymOff", clobberFlags: true, call: true},                                             // call static function aux.(*gc.Sym).  arg0=mem, auxint=argsize, returns mem
@@ -458,7 +480,9 @@ func init() {
 				inputs:   []regMask{buildReg("DI"), buildReg("SI")},
 				clobbers: buildReg("DI SI X0"), // uses X0 as a temporary
 			},
-			clobberFlags: true,
+			clobberFlags:   true,
+			faultOnNilArg0: true,
+			faultOnNilArg1: true,
 		},
 
 		// arg0 = destination pointer
@@ -473,6 +497,8 @@ func init() {
 				inputs:   []regMask{buildReg("DI"), buildReg("SI"), buildReg("CX")},
 				clobbers: buildReg("DI SI CX"),
 			},
+			faultOnNilArg0: true,
+			faultOnNilArg1: true,
 		},
 
 		// (InvertFlags (CMPQ a b)) == (CMPQ b a)

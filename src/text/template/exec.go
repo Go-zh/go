@@ -551,7 +551,7 @@ func (s *state) evalField(dot reflect.Value, fieldName string, node parse.Node, 
 	// Unless it's an interface, need to get to a value of type *T to guarantee
 	// we see all methods of T and *T.
 	ptr := receiver
-	if ptr.Kind() != reflect.Interface && ptr.CanAddr() {
+	if ptr.Kind() != reflect.Interface && ptr.Kind() != reflect.Ptr && ptr.CanAddr() {
 		ptr = ptr.Addr()
 	}
 	if method := ptr.MethodByName(fieldName); method.IsValid() {
@@ -628,7 +628,7 @@ func (s *state) evalCall(dot, fun reflect.Value, node parse.Node, name string, a
 		if numIn < numFixed {
 			s.errorf("wrong number of args for %s: want at least %d got %d", name, typ.NumIn()-1, len(args))
 		}
-	} else if numIn < typ.NumIn()-1 || !typ.IsVariadic() && numIn != typ.NumIn() {
+	} else if numIn != typ.NumIn() {
 		s.errorf("wrong number of args for %s: want %d got %d", name, typ.NumIn(), len(args))
 	}
 	if !goodFunc(typ) {

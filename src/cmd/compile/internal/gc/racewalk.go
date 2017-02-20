@@ -5,6 +5,7 @@
 package gc
 
 import (
+	"cmd/internal/src"
 	"fmt"
 	"strings"
 )
@@ -135,7 +136,7 @@ func instrumentnode(np **Node, init *Nodes, wr int, skip int) {
 	default:
 		Fatalf("instrument: unknown node type %v", n.Op)
 
-	case OAS, OASWB, OAS2FUNC:
+	case OAS, OAS2FUNC:
 		instrumentnode(&n.Left, init, 1, 0)
 		instrumentnode(&n.Right, init, 0, 0)
 		goto ret
@@ -186,8 +187,7 @@ func instrumentnode(np **Node, init *Nodes, wr int, skip int) {
 		OPLUS,
 		OREAL,
 		OIMAG,
-		OCOM,
-		OSQRT:
+		OCOM:
 		instrumentnode(&n.Left, init, wr, 0)
 		goto ret
 
@@ -226,7 +226,6 @@ func instrumentnode(np **Node, init *Nodes, wr int, skip int) {
 
 	case OLSH,
 		ORSH,
-		OLROT,
 		OAND,
 		OANDNOT,
 		OOR,
@@ -370,11 +369,6 @@ func instrumentnode(np **Node, init *Nodes, wr int, skip int) {
 
 		goto ret
 
-		// impossible nodes: only appear in backend.
-	case ORROTC, OEXTEND:
-		yyerror("instrument: %v cannot exist now", n.Op)
-		goto ret
-
 	case OGETG:
 		yyerror("instrument: OGETG can happen only in runtime which we don't instrument")
 		goto ret
@@ -495,7 +489,7 @@ func callinstr(np **Node, init *Nodes, wr int, skip int) bool {
 			*np = n
 		}
 
-		n = treecopy(n, 0)
+		n = treecopy(n, src.NoXPos)
 		makeaddable(n)
 		var f *Node
 		if flag_msan {

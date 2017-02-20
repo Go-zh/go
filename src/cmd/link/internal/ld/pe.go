@@ -101,15 +101,17 @@ type IMAGE_EXPORT_DIRECTORY struct {
 
 const (
 	PEBASE = 0x00400000
+)
 
+var (
 	// SectionAlignment must be greater than or equal to FileAlignment.
 	// The default is the page size for the architecture.
-	PESECTALIGN = 0x1000
+	PESECTALIGN int64 = 0x1000
 
 	// FileAlignment should be a power of 2 between 512 and 64 K, inclusive.
 	// The default is 512. If the SectionAlignment is less than
 	// the architecture's page size, then FileAlignment must match SectionAlignment.
-	PEFILEALIGN = 2 << 8
+	PEFILEALIGN int64 = 2 << 8
 )
 
 const (
@@ -435,8 +437,17 @@ func Peinit(ctxt *Link) {
 		dd = oh.DataDirectory[:]
 	}
 
+	if Linkmode == LinkExternal {
+		PESECTALIGN = 0
+		PEFILEALIGN = 0
+	}
+
 	PEFILEHEADR = int32(Rnd(int64(len(dosstub)+binary.Size(&fh)+l+binary.Size(&sh)), PEFILEALIGN))
-	PESECTHEADR = int32(Rnd(int64(PEFILEHEADR), PESECTALIGN))
+	if Linkmode != LinkExternal {
+		PESECTHEADR = int32(Rnd(int64(PEFILEHEADR), PESECTALIGN))
+	} else {
+		PESECTHEADR = 0
+	}
 	nextsectoff = int(PESECTHEADR)
 	nextfileoff = int(PEFILEHEADR)
 
@@ -444,6 +455,20 @@ func Peinit(ctxt *Link) {
 	ctxt.xdefine("__image_base__", obj.SDATA, PEBASE)
 
 	ctxt.xdefine("_image_base__", obj.SDATA, PEBASE)
+
+	HEADR = PEFILEHEADR
+	if *FlagTextAddr == -1 {
+		*FlagTextAddr = PEBASE + int64(PESECTHEADR)
+	}
+	if *FlagDataAddr == -1 {
+		*FlagDataAddr = 0
+	}
+	if *FlagRound == -1 {
+		*FlagRound = int(PESECTALIGN)
+	}
+	if *FlagDataAddr != 0 && *FlagRound != 0 {
+		fmt.Printf("warning: -D0x%x is ignored because of -R0x%x\n", uint64(*FlagDataAddr), uint32(*FlagRound))
+	}
 }
 
 func pewrite() {
@@ -941,12 +966,13 @@ func writePESymTableRecords(ctxt *Link) int {
 		case DataSym, BSSSym, TextSym, UndefinedSym:
 		}
 
-		// only windows/386 requires underscore prefix on external symbols
+		// Only windows/386 requires underscore prefix on external symbols.
+		// Include .text symbol as external, because .ctors section relocations refer to it.
 		if SysArch.Family == sys.I386 &&
 			Linkmode == LinkExternal &&
-			(s.Type != obj.SDYNIMPORT || s.Attr.CgoExport()) &&
-			s.Name == s.Extname &&
-			s.Name != "_main" {
+			(s.Type == obj.SHOSTOBJ ||
+				s.Attr.CgoExport() ||
+				s.Name == ".text") {
 			s.Name = "_" + s.Name
 		}
 
@@ -955,10 +981,12 @@ func writePESymTableRecords(ctxt *Link) int {
 		var value int64
 		// Note: although address of runtime.edata (type SDATA) is at the start of .bss section
 		// it still belongs to the .data section, not the .bss section.
+		// Same for runtime.epclntab (type STEXT), it belongs to .text
+		// section, not the .data section.
 		if uint64(s.Value) >= Segdata.Vaddr+Segdata.Filelen && s.Type != obj.SDATA && Linkmode == LinkExternal {
 			value = int64(uint64(s.Value) - Segdata.Vaddr - Segdata.Filelen)
 			sect = bsssect
-		} else if uint64(s.Value) >= Segdata.Vaddr {
+		} else if uint64(s.Value) >= Segdata.Vaddr && s.Type != obj.STEXT {
 			value = int64(uint64(s.Value) - Segdata.Vaddr)
 			sect = datasect
 		} else if uint64(s.Value) >= Segtext.Vaddr {
@@ -995,13 +1023,6 @@ func writePESymTableRecords(ctxt *Link) int {
 	}
 
 	if Linkmode == LinkExternal {
-		for d := dr; d != nil; d = d.next {
-			for m := d.ms; m != nil; m = m.next {
-				s := m.s.R[0].Xsym
-				put(ctxt, s, s.Name, UndefinedSym, 0, nil)
-			}
-		}
-
 		s := ctxt.Syms.Lookup(".text", 0)
 		if s.Type == obj.STEXT {
 			put(ctxt, s, s.Name, TextSym, s.Value, nil)
@@ -1222,10 +1243,10 @@ func Asmbpe(ctxt *Link) {
 	oh.BaseOfCode = t.VirtualAddress
 	oh64.ImageBase = PEBASE
 	oh.ImageBase = PEBASE
-	oh64.SectionAlignment = PESECTALIGN
-	oh.SectionAlignment = PESECTALIGN
-	oh64.FileAlignment = PEFILEALIGN
-	oh.FileAlignment = PEFILEALIGN
+	oh64.SectionAlignment = uint32(PESECTALIGN)
+	oh.SectionAlignment = uint32(PESECTALIGN)
+	oh64.FileAlignment = uint32(PEFILEALIGN)
+	oh.FileAlignment = uint32(PEFILEALIGN)
 	oh64.MajorOperatingSystemVersion = 4
 	oh.MajorOperatingSystemVersion = 4
 	oh64.MinorOperatingSystemVersion = 0

@@ -147,7 +147,7 @@ func duff(size int64) (int64, int64) {
 }
 
 func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
-	s.SetLineno(v.Line)
+	s.SetPos(v.Pos)
 	switch v.Op {
 	case ssa.OpAMD64ADDQ, ssa.OpAMD64ADDL:
 		r := v.Reg()
@@ -645,6 +645,19 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		// Break false dependency on destination register.
 		opregreg(x86.AXORPS, r, r)
 		opregreg(v.Op.Asm(), r, v.Args[0].Reg())
+	case ssa.OpAMD64ADDQmem, ssa.OpAMD64ADDLmem, ssa.OpAMD64SUBQmem, ssa.OpAMD64SUBLmem,
+		ssa.OpAMD64ANDQmem, ssa.OpAMD64ANDLmem, ssa.OpAMD64ORQmem, ssa.OpAMD64ORLmem,
+		ssa.OpAMD64XORQmem, ssa.OpAMD64XORLmem, ssa.OpAMD64ADDSDmem, ssa.OpAMD64ADDSSmem,
+		ssa.OpAMD64SUBSDmem, ssa.OpAMD64SUBSSmem, ssa.OpAMD64MULSDmem, ssa.OpAMD64MULSSmem:
+		p := gc.Prog(v.Op.Asm())
+		p.From.Type = obj.TYPE_MEM
+		p.From.Reg = v.Args[1].Reg()
+		gc.AddAux(&p.From, v)
+		p.To.Type = obj.TYPE_REG
+		p.To.Reg = v.Reg()
+		if v.Reg() != v.Args[0].Reg() {
+			v.Fatalf("input[0] and output not in same register %s", v.LongString())
+		}
 	case ssa.OpAMD64DUFFZERO:
 		off := duffStart(v.AuxInt)
 		adj := duffAdj(v.AuxInt)
@@ -658,7 +671,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		}
 		p = gc.Prog(obj.ADUFFZERO)
 		p.To.Type = obj.TYPE_ADDR
-		p.To.Sym = gc.Linksym(gc.Pkglookup("duffzero", gc.Runtimepkg))
+		p.To.Sym = gc.Duffzero
 		p.To.Offset = off
 	case ssa.OpAMD64MOVOconst:
 		if v.AuxInt != 0 {
@@ -669,7 +682,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 	case ssa.OpAMD64DUFFCOPY:
 		p := gc.Prog(obj.ADUFFCOPY)
 		p.To.Type = obj.TYPE_ADDR
-		p.To.Sym = gc.Linksym(gc.Pkglookup("duffcopy", gc.Runtimepkg))
+		p.To.Sym = gc.Duffcopy
 		p.To.Offset = v.AuxInt
 
 	case ssa.OpCopy, ssa.OpAMD64MOVQconvert, ssa.OpAMD64MOVLconvert: // TODO: use MOVQreg for reg->reg copies instead of OpCopy?
@@ -737,7 +750,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 			q.To.Reg = r
 		}
 	case ssa.OpAMD64CALLstatic:
-		if v.Aux.(*gc.Sym) == gc.Deferreturn.Sym {
+		if v.Aux.(*obj.LSym) == gc.Deferreturn {
 			// Deferred calls will appear to be returning to
 			// the CALL deferreturn(SB) that we are about to emit.
 			// However, the stack trace code will show the line
@@ -751,7 +764,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(v.Aux.(*gc.Sym))
+		p.To.Sym = v.Aux.(*obj.LSym)
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -766,7 +779,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(gc.Deferproc.Sym)
+		p.To.Sym = gc.Deferproc
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -774,7 +787,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(gc.Newproc.Sym)
+		p.To.Sym = gc.Newproc
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -875,8 +888,8 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p.To.Type = obj.TYPE_MEM
 		p.To.Reg = v.Args[0].Reg()
 		gc.AddAux(&p.To, v)
-		if gc.Debug_checknil != 0 && v.Line > 1 { // v.Line==1 in generated wrappers
-			gc.Warnl(v.Line, "generated nil check")
+		if gc.Debug_checknil != 0 && v.Pos.Line() > 1 { // v.Pos.Line()==1 in generated wrappers
+			gc.Warnl(v.Pos, "generated nil check")
 		}
 	case ssa.OpAMD64MOVLatomicload, ssa.OpAMD64MOVQatomicload:
 		p := gc.Prog(v.Op.Asm())
@@ -962,7 +975,7 @@ var nefJumps = [2][2]gc.FloatingEQNEJump{
 }
 
 func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
-	s.SetLineno(b.Line)
+	s.SetPos(b.Pos)
 
 	switch b.Kind {
 	case ssa.BlockPlain:
@@ -996,7 +1009,7 @@ func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
 		p := gc.Prog(obj.AJMP)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(b.Aux.(*gc.Sym))
+		p.To.Sym = b.Aux.(*obj.LSym)
 
 	case ssa.BlockAMD64EQF:
 		gc.SSAGenFPJump(s, b, next, &eqfJumps)

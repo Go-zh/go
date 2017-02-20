@@ -92,7 +92,7 @@ func genshift(as obj.As, r0, r1, r int16, typ int64, s int64) *obj.Prog {
 }
 
 func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
-	s.SetLineno(v.Line)
+	s.SetPos(v.Pos)
 	switch v.Op {
 	case ssa.OpInitMem:
 		// memory arg needs no code
@@ -577,7 +577,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p = gc.Prog(obj.ADUFFZERO)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(gc.Pkglookup("duffzero", gc.Runtimepkg))
+		p.To.Sym = gc.Duffzero
 		p.To.Offset = v.AuxInt
 	case ssa.OpARM64LoweredZero:
 		// MOVD.P	ZR, 8(R16)
@@ -602,7 +602,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ADUFFCOPY)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(gc.Pkglookup("duffcopy", gc.Runtimepkg))
+		p.To.Sym = gc.Duffcopy
 		p.To.Offset = v.AuxInt
 	case ssa.OpARM64LoweredMove:
 		// MOVD.P	8(R16), Rtmp
@@ -632,7 +632,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p4.To.Type = obj.TYPE_BRANCH
 		gc.Patch(p4, p)
 	case ssa.OpARM64CALLstatic:
-		if v.Aux.(*gc.Sym) == gc.Deferreturn.Sym {
+		if v.Aux.(*obj.LSym) == gc.Deferreturn {
 			// Deferred calls will appear to be returning to
 			// the CALL deferreturn(SB) that we are about to emit.
 			// However, the stack trace code will show the line
@@ -646,7 +646,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(v.Aux.(*gc.Sym))
+		p.To.Sym = v.Aux.(*obj.LSym)
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -662,7 +662,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(gc.Deferproc.Sym)
+		p.To.Sym = gc.Deferproc
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -670,7 +670,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(gc.Newproc.Sym)
+		p.To.Sym = gc.Newproc
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -690,8 +690,8 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		gc.AddAux(&p.From, v)
 		p.To.Type = obj.TYPE_REG
 		p.To.Reg = arm64.REGTMP
-		if gc.Debug_checknil != 0 && v.Line > 1 { // v.Line==1 in generated wrappers
-			gc.Warnl(v.Line, "generated nil check")
+		if gc.Debug_checknil != 0 && v.Pos.Line() > 1 { // v.Line==1 in generated wrappers
+			gc.Warnl(v.Pos, "generated nil check")
 		}
 	case ssa.OpVarDef:
 		gc.Gvardef(v.Aux.(*gc.Node))
@@ -768,7 +768,7 @@ var blockJump = map[ssa.BlockKind]struct {
 }
 
 func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
-	s.SetLineno(b.Line)
+	s.SetPos(b.Pos)
 
 	switch b.Kind {
 	case ssa.BlockPlain:
@@ -805,7 +805,7 @@ func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
 		p := gc.Prog(obj.ARET)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(b.Aux.(*gc.Sym))
+		p.To.Sym = b.Aux.(*obj.LSym)
 
 	case ssa.BlockARM64EQ, ssa.BlockARM64NE,
 		ssa.BlockARM64LT, ssa.BlockARM64GE,

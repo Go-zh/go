@@ -14,6 +14,7 @@ import (
 
 	"cmd/compile/internal/ssa"
 	"cmd/internal/obj"
+	"cmd/internal/src"
 	"cmd/internal/sys"
 )
 
@@ -43,7 +44,7 @@ func buildssa(fn *Node) *ssa.Func {
 	}
 
 	var s state
-	s.pushLine(fn.Lineno)
+	s.pushLine(fn.Pos)
 	defer s.popLine()
 
 	if fn.Func.Pragma&CgoUnsafeArgs != 0 {
@@ -53,8 +54,8 @@ func buildssa(fn *Node) *ssa.Func {
 		s.noWB = true
 	}
 	defer func() {
-		if s.WBLineno != 0 {
-			fn.Func.WBLineno = s.WBLineno
+		if s.WBPos.IsKnown() {
+			fn.Func.WBPos = s.WBPos
 		}
 	}()
 	// TODO(khr): build config just once at the start of the compiler binary
@@ -64,6 +65,9 @@ func buildssa(fn *Node) *ssa.Func {
 	s.config = initssa()
 	s.f = s.config.NewFunc()
 	s.f.Name = name
+	if fn.Func.Pragma&Nosplit != 0 {
+		s.f.NoSplit = true
+	}
 	s.exitCode = fn.Func.Exit
 	s.panics = map[funcLine]*ssa.Block{}
 	s.config.DebugTest = s.config.DebugHashMatch("GOSSAHASH", name)
@@ -116,19 +120,11 @@ func buildssa(fn *Node) *ssa.Func {
 		}
 	}
 
-	// Populate arguments.
+	// Populate SSAable arguments.
 	for _, n := range fn.Func.Dcl {
-		if n.Class != PPARAM {
-			continue
+		if n.Class == PPARAM && s.canSSA(n) {
+			s.vars[n] = s.newValue0A(ssa.OpArg, n.Type, n)
 		}
-		var v *ssa.Value
-		if s.canSSA(n) {
-			v = s.newValue0A(ssa.OpArg, n.Type, n)
-		} else {
-			// Not SSAable. Load it.
-			v = s.newValue2(ssa.OpLoad, n.Type, s.decladdrs[n], s.startmem)
-		}
-		s.vars[n] = v
 	}
 
 	// Convert the AST-based IR to the SSA-based IR
@@ -145,11 +141,11 @@ func buildssa(fn *Node) *ssa.Func {
 	// Check that we used all labels
 	for name, lab := range s.labels {
 		if !lab.used() && !lab.reported && !lab.defNode.Used {
-			yyerrorl(lab.defNode.Lineno, "label %v defined and not used", name)
+			yyerrorl(lab.defNode.Pos, "label %v defined and not used", name)
 			lab.reported = true
 		}
 		if lab.used() && !lab.defined() && !lab.reported {
-			yyerrorl(lab.useNode.Lineno, "label %v not defined", name)
+			yyerrorl(lab.useNode.Pos, "label %v not defined", name)
 			lab.reported = true
 		}
 	}
@@ -228,7 +224,7 @@ type state struct {
 	sb       *ssa.Value
 
 	// line number stack. The current line number is top of stack
-	line []int32
+	line []src.XPos
 
 	// list of panic calls by function name and line number.
 	// Used to deduplicate panic calls.
@@ -242,12 +238,12 @@ type state struct {
 
 	cgoUnsafeArgs bool
 	noWB          bool
-	WBLineno      int32 // line number of first write barrier. 0=no write barriers
+	WBPos         src.XPos // line number of first write barrier. 0=no write barriers
 }
 
 type funcLine struct {
-	f    *Node
-	line int32
+	f    *obj.LSym
+	line src.XPos
 }
 
 type ssaLabel struct {
@@ -278,11 +274,13 @@ func (s *state) label(sym *Sym) *ssaLabel {
 	return lab
 }
 
-func (s *state) Logf(msg string, args ...interface{})              { s.config.Logf(msg, args...) }
-func (s *state) Log() bool                                         { return s.config.Log() }
-func (s *state) Fatalf(msg string, args ...interface{})            { s.config.Fatalf(s.peekLine(), msg, args...) }
-func (s *state) Warnl(line int32, msg string, args ...interface{}) { s.config.Warnl(line, msg, args...) }
-func (s *state) Debug_checknil() bool                              { return s.config.Debug_checknil() }
+func (s *state) Logf(msg string, args ...interface{})   { s.config.Logf(msg, args...) }
+func (s *state) Log() bool                              { return s.config.Log() }
+func (s *state) Fatalf(msg string, args ...interface{}) { s.config.Fatalf(s.peekPos(), msg, args...) }
+func (s *state) Warnl(pos src.XPos, msg string, args ...interface{}) {
+	s.config.Warnl(pos, msg, args...)
+}
+func (s *state) Debug_checknil() bool { return s.config.Debug_checknil() }
 
 var (
 	// dummy node for the memory variable
@@ -323,18 +321,18 @@ func (s *state) endBlock() *ssa.Block {
 	s.defvars[b.ID] = s.vars
 	s.curBlock = nil
 	s.vars = nil
-	b.Line = s.peekLine()
+	b.Pos = s.peekPos()
 	return b
 }
 
 // pushLine pushes a line number on the line number stack.
-func (s *state) pushLine(line int32) {
-	if line == 0 {
+func (s *state) pushLine(line src.XPos) {
+	if !line.IsKnown() {
 		// the frontend may emit node with line number missing,
 		// use the parent line number in this case.
-		line = s.peekLine()
+		line = s.peekPos()
 		if Debug['K'] != 0 {
-			Warn("buildssa: line 0")
+			Warn("buildssa: unknown position (line 0)")
 		}
 	}
 	s.line = append(s.line, line)
@@ -345,130 +343,130 @@ func (s *state) popLine() {
 	s.line = s.line[:len(s.line)-1]
 }
 
-// peekLine peek the top of the line number stack.
-func (s *state) peekLine() int32 {
+// peekPos peeks the top of the line number stack.
+func (s *state) peekPos() src.XPos {
 	return s.line[len(s.line)-1]
 }
 
 func (s *state) Error(msg string, args ...interface{}) {
-	yyerrorl(s.peekLine(), msg, args...)
+	yyerrorl(s.peekPos(), msg, args...)
 }
 
 // newValue0 adds a new value with no arguments to the current block.
 func (s *state) newValue0(op ssa.Op, t ssa.Type) *ssa.Value {
-	return s.curBlock.NewValue0(s.peekLine(), op, t)
+	return s.curBlock.NewValue0(s.peekPos(), op, t)
 }
 
 // newValue0A adds a new value with no arguments and an aux value to the current block.
 func (s *state) newValue0A(op ssa.Op, t ssa.Type, aux interface{}) *ssa.Value {
-	return s.curBlock.NewValue0A(s.peekLine(), op, t, aux)
+	return s.curBlock.NewValue0A(s.peekPos(), op, t, aux)
 }
 
 // newValue0I adds a new value with no arguments and an auxint value to the current block.
 func (s *state) newValue0I(op ssa.Op, t ssa.Type, auxint int64) *ssa.Value {
-	return s.curBlock.NewValue0I(s.peekLine(), op, t, auxint)
+	return s.curBlock.NewValue0I(s.peekPos(), op, t, auxint)
 }
 
 // newValue1 adds a new value with one argument to the current block.
 func (s *state) newValue1(op ssa.Op, t ssa.Type, arg *ssa.Value) *ssa.Value {
-	return s.curBlock.NewValue1(s.peekLine(), op, t, arg)
+	return s.curBlock.NewValue1(s.peekPos(), op, t, arg)
 }
 
 // newValue1A adds a new value with one argument and an aux value to the current block.
 func (s *state) newValue1A(op ssa.Op, t ssa.Type, aux interface{}, arg *ssa.Value) *ssa.Value {
-	return s.curBlock.NewValue1A(s.peekLine(), op, t, aux, arg)
+	return s.curBlock.NewValue1A(s.peekPos(), op, t, aux, arg)
 }
 
 // newValue1I adds a new value with one argument and an auxint value to the current block.
 func (s *state) newValue1I(op ssa.Op, t ssa.Type, aux int64, arg *ssa.Value) *ssa.Value {
-	return s.curBlock.NewValue1I(s.peekLine(), op, t, aux, arg)
+	return s.curBlock.NewValue1I(s.peekPos(), op, t, aux, arg)
 }
 
 // newValue2 adds a new value with two arguments to the current block.
 func (s *state) newValue2(op ssa.Op, t ssa.Type, arg0, arg1 *ssa.Value) *ssa.Value {
-	return s.curBlock.NewValue2(s.peekLine(), op, t, arg0, arg1)
+	return s.curBlock.NewValue2(s.peekPos(), op, t, arg0, arg1)
 }
 
 // newValue2I adds a new value with two arguments and an auxint value to the current block.
 func (s *state) newValue2I(op ssa.Op, t ssa.Type, aux int64, arg0, arg1 *ssa.Value) *ssa.Value {
-	return s.curBlock.NewValue2I(s.peekLine(), op, t, aux, arg0, arg1)
+	return s.curBlock.NewValue2I(s.peekPos(), op, t, aux, arg0, arg1)
 }
 
 // newValue3 adds a new value with three arguments to the current block.
 func (s *state) newValue3(op ssa.Op, t ssa.Type, arg0, arg1, arg2 *ssa.Value) *ssa.Value {
-	return s.curBlock.NewValue3(s.peekLine(), op, t, arg0, arg1, arg2)
+	return s.curBlock.NewValue3(s.peekPos(), op, t, arg0, arg1, arg2)
 }
 
 // newValue3I adds a new value with three arguments and an auxint value to the current block.
 func (s *state) newValue3I(op ssa.Op, t ssa.Type, aux int64, arg0, arg1, arg2 *ssa.Value) *ssa.Value {
-	return s.curBlock.NewValue3I(s.peekLine(), op, t, aux, arg0, arg1, arg2)
+	return s.curBlock.NewValue3I(s.peekPos(), op, t, aux, arg0, arg1, arg2)
 }
 
 // newValue4 adds a new value with four arguments to the current block.
 func (s *state) newValue4(op ssa.Op, t ssa.Type, arg0, arg1, arg2, arg3 *ssa.Value) *ssa.Value {
-	return s.curBlock.NewValue4(s.peekLine(), op, t, arg0, arg1, arg2, arg3)
+	return s.curBlock.NewValue4(s.peekPos(), op, t, arg0, arg1, arg2, arg3)
 }
 
 // entryNewValue0 adds a new value with no arguments to the entry block.
 func (s *state) entryNewValue0(op ssa.Op, t ssa.Type) *ssa.Value {
-	return s.f.Entry.NewValue0(s.peekLine(), op, t)
+	return s.f.Entry.NewValue0(s.peekPos(), op, t)
 }
 
 // entryNewValue0A adds a new value with no arguments and an aux value to the entry block.
 func (s *state) entryNewValue0A(op ssa.Op, t ssa.Type, aux interface{}) *ssa.Value {
-	return s.f.Entry.NewValue0A(s.peekLine(), op, t, aux)
+	return s.f.Entry.NewValue0A(s.peekPos(), op, t, aux)
 }
 
 // entryNewValue0I adds a new value with no arguments and an auxint value to the entry block.
 func (s *state) entryNewValue0I(op ssa.Op, t ssa.Type, auxint int64) *ssa.Value {
-	return s.f.Entry.NewValue0I(s.peekLine(), op, t, auxint)
+	return s.f.Entry.NewValue0I(s.peekPos(), op, t, auxint)
 }
 
 // entryNewValue1 adds a new value with one argument to the entry block.
 func (s *state) entryNewValue1(op ssa.Op, t ssa.Type, arg *ssa.Value) *ssa.Value {
-	return s.f.Entry.NewValue1(s.peekLine(), op, t, arg)
+	return s.f.Entry.NewValue1(s.peekPos(), op, t, arg)
 }
 
 // entryNewValue1 adds a new value with one argument and an auxint value to the entry block.
 func (s *state) entryNewValue1I(op ssa.Op, t ssa.Type, auxint int64, arg *ssa.Value) *ssa.Value {
-	return s.f.Entry.NewValue1I(s.peekLine(), op, t, auxint, arg)
+	return s.f.Entry.NewValue1I(s.peekPos(), op, t, auxint, arg)
 }
 
 // entryNewValue1A adds a new value with one argument and an aux value to the entry block.
 func (s *state) entryNewValue1A(op ssa.Op, t ssa.Type, aux interface{}, arg *ssa.Value) *ssa.Value {
-	return s.f.Entry.NewValue1A(s.peekLine(), op, t, aux, arg)
+	return s.f.Entry.NewValue1A(s.peekPos(), op, t, aux, arg)
 }
 
 // entryNewValue2 adds a new value with two arguments to the entry block.
 func (s *state) entryNewValue2(op ssa.Op, t ssa.Type, arg0, arg1 *ssa.Value) *ssa.Value {
-	return s.f.Entry.NewValue2(s.peekLine(), op, t, arg0, arg1)
+	return s.f.Entry.NewValue2(s.peekPos(), op, t, arg0, arg1)
 }
 
 // const* routines add a new const value to the entry block.
-func (s *state) constSlice(t ssa.Type) *ssa.Value       { return s.f.ConstSlice(s.peekLine(), t) }
-func (s *state) constInterface(t ssa.Type) *ssa.Value   { return s.f.ConstInterface(s.peekLine(), t) }
-func (s *state) constNil(t ssa.Type) *ssa.Value         { return s.f.ConstNil(s.peekLine(), t) }
-func (s *state) constEmptyString(t ssa.Type) *ssa.Value { return s.f.ConstEmptyString(s.peekLine(), t) }
+func (s *state) constSlice(t ssa.Type) *ssa.Value       { return s.f.ConstSlice(s.peekPos(), t) }
+func (s *state) constInterface(t ssa.Type) *ssa.Value   { return s.f.ConstInterface(s.peekPos(), t) }
+func (s *state) constNil(t ssa.Type) *ssa.Value         { return s.f.ConstNil(s.peekPos(), t) }
+func (s *state) constEmptyString(t ssa.Type) *ssa.Value { return s.f.ConstEmptyString(s.peekPos(), t) }
 func (s *state) constBool(c bool) *ssa.Value {
-	return s.f.ConstBool(s.peekLine(), Types[TBOOL], c)
+	return s.f.ConstBool(s.peekPos(), Types[TBOOL], c)
 }
 func (s *state) constInt8(t ssa.Type, c int8) *ssa.Value {
-	return s.f.ConstInt8(s.peekLine(), t, c)
+	return s.f.ConstInt8(s.peekPos(), t, c)
 }
 func (s *state) constInt16(t ssa.Type, c int16) *ssa.Value {
-	return s.f.ConstInt16(s.peekLine(), t, c)
+	return s.f.ConstInt16(s.peekPos(), t, c)
 }
 func (s *state) constInt32(t ssa.Type, c int32) *ssa.Value {
-	return s.f.ConstInt32(s.peekLine(), t, c)
+	return s.f.ConstInt32(s.peekPos(), t, c)
 }
 func (s *state) constInt64(t ssa.Type, c int64) *ssa.Value {
-	return s.f.ConstInt64(s.peekLine(), t, c)
+	return s.f.ConstInt64(s.peekPos(), t, c)
 }
 func (s *state) constFloat32(t ssa.Type, c float64) *ssa.Value {
-	return s.f.ConstFloat32(s.peekLine(), t, c)
+	return s.f.ConstFloat32(s.peekPos(), t, c)
 }
 func (s *state) constFloat64(t ssa.Type, c float64) *ssa.Value {
-	return s.f.ConstFloat64(s.peekLine(), t, c)
+	return s.f.ConstFloat64(s.peekPos(), t, c)
 }
 func (s *state) constInt(t ssa.Type, c int64) *ssa.Value {
 	if s.config.IntSize == 8 {
@@ -489,7 +487,7 @@ func (s *state) stmtList(l Nodes) {
 
 // stmt converts the statement n to SSA and adds it to s.
 func (s *state) stmt(n *Node) {
-	s.pushLine(n.Lineno)
+	s.pushLine(n.Pos)
 	defer s.popLine()
 
 	// If s.curBlock is nil, then we're about to generate dead code.
@@ -555,8 +553,8 @@ func (s *state) stmt(n *Node) {
 			deref = true
 			res = res.Args[0]
 		}
-		s.assign(n.List.First(), res, needwritebarrier(n.List.First(), n.Rlist.First()), deref, n.Lineno, 0, false)
-		s.assign(n.List.Second(), resok, false, false, n.Lineno, 0, false)
+		s.assign(n.List.First(), res, needwritebarrier(n.List.First()), deref, 0, false)
+		s.assign(n.List.Second(), resok, false, false, 0, false)
 		return
 
 	case OAS2FUNC:
@@ -567,12 +565,8 @@ func (s *state) stmt(n *Node) {
 		v := s.intrinsicCall(n.Rlist.First())
 		v1 := s.newValue1(ssa.OpSelect0, n.List.First().Type, v)
 		v2 := s.newValue1(ssa.OpSelect1, n.List.Second().Type, v)
-		// Make a fake node to mimic loading return value, ONLY for write barrier test.
-		// This is future-proofing against non-scalar 2-result intrinsics.
-		// Currently we only have scalar ones, which result in no write barrier.
-		fakeret := &Node{Op: OINDREGSP}
-		s.assign(n.List.First(), v1, needwritebarrier(n.List.First(), fakeret), false, n.Lineno, 0, false)
-		s.assign(n.List.Second(), v2, needwritebarrier(n.List.Second(), fakeret), false, n.Lineno, 0, false)
+		s.assign(n.List.First(), v1, needwritebarrier(n.List.First()), false, 0, false)
+		s.assign(n.List.Second(), v2, needwritebarrier(n.List.Second()), false, 0, false)
 		return
 
 	case ODCL:
@@ -602,7 +596,7 @@ func (s *state) stmt(n *Node) {
 		if !lab.defined() {
 			lab.defNode = n
 		} else {
-			s.Error("label %v already defined at %v", sym, linestr(lab.defNode.Lineno))
+			s.Error("label %v already defined at %v", sym, linestr(lab.defNode.Pos))
 			lab.reported = true
 		}
 		// The label might already have a target block via a goto.
@@ -635,19 +629,7 @@ func (s *state) stmt(n *Node) {
 		b := s.endBlock()
 		b.AddEdgeTo(lab.target)
 
-	case OAS, OASWB:
-		// Check whether we can generate static data rather than code.
-		// If so, ignore n and defer data generation until codegen.
-		// Failure to do this causes writes to readonly symbols.
-		if gen_as_init(n, true) {
-			var data []*Node
-			if s.f.StaticData != nil {
-				data = s.f.StaticData.([]*Node)
-			}
-			s.f.StaticData = append(data, n)
-			return
-		}
-
+	case OAS:
 		if n.Left == n.Right && n.Left.Op == ONAME {
 			// An x=x assignment. No point in doing anything
 			// here. In addition, skipping this assignment
@@ -687,13 +669,13 @@ func (s *state) stmt(n *Node) {
 				if samesafeexpr(n.Left, rhs.List.First()) {
 					if !s.canSSA(n.Left) {
 						if Debug_append > 0 {
-							Warnl(n.Lineno, "append: len-only update")
+							Warnl(n.Pos, "append: len-only update")
 						}
 						s.append(rhs, true)
 						return
 					} else {
 						if Debug_append > 0 { // replicating old diagnostic message
-							Warnl(n.Lineno, "append: len-only update (in local slice)")
+							Warnl(n.Pos, "append: len-only update (in local slice)")
 						}
 					}
 				}
@@ -701,7 +683,7 @@ func (s *state) stmt(n *Node) {
 		}
 		var r *ssa.Value
 		var isVolatile bool
-		needwb := n.Op == OASWB
+		needwb := n.Right != nil && needwritebarrier(n.Left)
 		deref := !canSSAType(t)
 		if deref {
 			if rhs == nil {
@@ -716,7 +698,7 @@ func (s *state) stmt(n *Node) {
 				r = s.expr(rhs)
 			}
 		}
-		if rhs != nil && rhs.Op == OAPPEND && needwritebarrier(n.Left, rhs) {
+		if rhs != nil && rhs.Op == OAPPEND && needwritebarrier(n.Left) {
 			// The frontend gets rid of the write barrier to enable the special OAPPEND
 			// handling above, but since this is not a special case, we need it.
 			// TODO: just add a ptr graying to the end of growslice?
@@ -724,6 +706,9 @@ func (s *state) stmt(n *Node) {
 			// for ODOTTYPE and ORECV also.
 			// They get similar wb-removal treatment in walk.go:OAS.
 			needwb = true
+		}
+		if needwb && Debug_wb > 1 {
+			Warnl(n.Pos, "marking %v for barrier", n.Left)
 		}
 
 		var skip skipMask
@@ -756,7 +741,7 @@ func (s *state) stmt(n *Node) {
 			}
 		}
 
-		s.assign(n.Left, r, needwb, deref, n.Lineno, skip, isVolatile)
+		s.assign(n.Left, r, needwb, deref, skip, isVolatile)
 
 	case OIF:
 		bThen := s.f.NewBlock(ssa.BlockPlain)
@@ -791,7 +776,7 @@ func (s *state) stmt(n *Node) {
 		s.stmtList(n.List)
 		b := s.exit()
 		b.Kind = ssa.BlockRetJmp // override BlockRet
-		b.Aux = n.Left.Sym
+		b.Aux = Linksym(n.Left.Sym)
 
 	case OCONTINUE, OBREAK:
 		var op string
@@ -954,9 +939,6 @@ func (s *state) stmt(n *Node) {
 	case OCHECKNIL:
 		p := s.expr(n.Left)
 		s.nilCheck(p)
-
-	case OSQRT:
-		s.expr(n.Left)
 
 	default:
 		s.Fatalf("unhandled stmt %v", n.Op)
@@ -1202,13 +1184,6 @@ var opToSSA = map[opAndType]ssa.Op{
 	opAndType{OGE, TUINT64}:  ssa.OpGeq64U,
 	opAndType{OGE, TFLOAT64}: ssa.OpGeq64F,
 	opAndType{OGE, TFLOAT32}: ssa.OpGeq32F,
-
-	opAndType{OLROT, TUINT8}:  ssa.OpLrot8,
-	opAndType{OLROT, TUINT16}: ssa.OpLrot16,
-	opAndType{OLROT, TUINT32}: ssa.OpLrot32,
-	opAndType{OLROT, TUINT64}: ssa.OpLrot64,
-
-	opAndType{OSQRT, TFLOAT64}: ssa.OpSqrt,
 }
 
 func (s *state) concreteEtype(t *Type) EType {
@@ -1418,21 +1393,12 @@ func (s *state) ssaShiftOp(op Op, t *Type, u *Type) ssa.Op {
 	return x
 }
 
-func (s *state) ssaRotateOp(op Op, t *Type) ssa.Op {
-	etype1 := s.concreteEtype(t)
-	x, ok := opToSSA[opAndType{op, etype1}]
-	if !ok {
-		s.Fatalf("unhandled rotate op %v etype=%s", op, etype1)
-	}
-	return x
-}
-
 // expr converts the expression n to ssa, adds it to s and returns the ssa result.
 func (s *state) expr(n *Node) *ssa.Value {
 	if !(n.Op == ONAME || n.Op == OLITERAL && n.Sym != nil) {
 		// ONAMEs and named OLITERALs have the line number
 		// of the decl, not the use. See issue 14742.
-		s.pushLine(n.Lineno)
+		s.pushLine(n.Pos)
 		defer s.popLine()
 	}
 
@@ -1449,12 +1415,12 @@ func (s *state) expr(n *Node) *ssa.Value {
 		len := s.newValue1(ssa.OpStringLen, Types[TINT], str)
 		return s.newValue3(ssa.OpSliceMake, n.Type, ptr, len, len)
 	case OCFUNC:
-		aux := s.lookupSymbol(n, &ssa.ExternSymbol{Typ: n.Type, Sym: n.Left.Sym})
+		aux := s.lookupSymbol(n, &ssa.ExternSymbol{Typ: n.Type, Sym: Linksym(n.Left.Sym)})
 		return s.entryNewValue1A(ssa.OpAddr, n.Type, aux, s.sb)
 	case ONAME:
 		if n.Class == PFUNC {
 			// "value" of a function is the address of the function's closure
-			sym := funcsym(n.Sym)
+			sym := Linksym(funcsym(n.Sym))
 			aux := &ssa.ExternSymbol{Typ: n.Type, Sym: sym}
 			return s.entryNewValue1A(ssa.OpAddr, ptrto(n.Type), aux, s.sb)
 		}
@@ -1596,6 +1562,10 @@ func (s *state) expr(n *Node) *ssa.Value {
 		x := s.expr(n.Left)
 		ft := n.Left.Type // from type
 		tt := n.Type      // to type
+		if ft.IsBoolean() && tt.IsKind(TUINT8) {
+			// Bool -> uint8 is generated internally when indexing into runtime.staticbyte.
+			return s.newValue1(ssa.OpCopy, n.Type, x)
+		}
 		if ft.IsInteger() && tt.IsInteger() {
 			var op ssa.Op
 			if tt.Size() == ft.Size() {
@@ -1880,13 +1850,6 @@ func (s *state) expr(n *Node) *ssa.Value {
 		a := s.expr(n.Left)
 		b := s.expr(n.Right)
 		return s.newValue2(s.ssaShiftOp(n.Op, n.Type, n.Right.Type), a.Type, a, b)
-	case OLROT:
-		a := s.expr(n.Left)
-		i := n.Right.Int64()
-		if i <= 0 || i >= n.Type.Size()*8 {
-			s.Fatalf("Wrong rotate distance for LROT, expected 1 through %d, saw %d", n.Type.Size()*8-1, i)
-		}
-		return s.newValue1I(s.ssaRotateOp(n.Op, n.Type), a.Type, i, a)
 	case OANDAND, OOROR:
 		// To implement OANDAND (and OOROR), we introduce a
 		// new temporary variable to hold the result. The
@@ -1947,7 +1910,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 				s.newValue1(negop, tp, s.newValue1(ssa.OpComplexImag, tp, a)))
 		}
 		return s.newValue1(s.ssaOp(n.Op, n.Type), a.Type, a)
-	case ONOT, OCOM, OSQRT:
+	case ONOT, OCOM:
 		a := s.expr(n.Left)
 		return s.newValue1(s.ssaOp(n.Op, n.Type), a.Type, a)
 	case OIMAG, OREAL:
@@ -1966,7 +1929,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 		return s.newValue2(ssa.OpLoad, n.Type, addr, s.mem())
 
 	case OIND:
-		p := s.exprPtr(n.Left, false, n.Lineno)
+		p := s.exprPtr(n.Left, false, n.Pos)
 		return s.newValue2(ssa.OpLoad, n.Type, p, s.mem())
 
 	case ODOT:
@@ -1975,11 +1938,20 @@ func (s *state) expr(n *Node) *ssa.Value {
 			v := s.expr(n.Left)
 			return s.newValue1I(ssa.OpStructSelect, n.Type, int64(fieldIdx(n)), v)
 		}
+		if n.Left.Op == OSTRUCTLIT {
+			// All literals with nonzero fields have already been
+			// rewritten during walk. Any that remain are just T{}
+			// or equivalents. Use the zero value.
+			if !iszero(n.Left) {
+				Fatalf("literal with nonzero value in SSA: %v", n.Left)
+			}
+			return s.zeroVal(n.Type)
+		}
 		p, _ := s.addr(n, false)
 		return s.newValue2(ssa.OpLoad, n.Type, p, s.mem())
 
 	case ODOTPTR:
-		p := s.exprPtr(n.Left, false, n.Lineno)
+		p := s.exprPtr(n.Left, false, n.Pos)
 		p = s.newValue1I(ssa.OpOffPtr, p.Type, n.Xoffset, p)
 		return s.newValue2(ssa.OpLoad, n.Type, p, s.mem())
 
@@ -2116,6 +2088,15 @@ func (s *state) expr(n *Node) *ssa.Value {
 	case OAPPEND:
 		return s.append(n, false)
 
+	case OSTRUCTLIT, OARRAYLIT:
+		// All literals with nonzero fields have already been
+		// rewritten during walk. Any that remain are just T{}
+		// or equivalents. Use the zero value.
+		if !iszero(n) {
+			Fatalf("literal with nonzero value in SSA: %v", n)
+		}
+		return s.zeroVal(n.Type)
+
 	default:
 		s.Fatalf("unhandled expr %v", n.Op)
 		return nil
@@ -2206,7 +2187,7 @@ func (s *state) append(n *Node, inplace bool) *ssa.Value {
 
 	// Call growslice
 	s.startBlock(grow)
-	taddr := s.newValue1A(ssa.OpAddr, Types[TUINTPTR], &ssa.ExternSymbol{Typ: Types[TUINTPTR], Sym: typenamesym(n.Type.Elem())}, s.sb)
+	taddr := s.newValue1A(ssa.OpAddr, Types[TUINTPTR], &ssa.ExternSymbol{Typ: Types[TUINTPTR], Sym: Linksym(typenamesym(n.Type.Elem()))}, s.sb)
 
 	r := s.rtcall(growslice, true, []*Type{pt, Types[TINT], Types[TINT]}, taddr, p, l, c, nl)
 
@@ -2215,12 +2196,12 @@ func (s *state) append(n *Node, inplace bool) *ssa.Value {
 			// Tell liveness we're about to build a new slice
 			s.vars[&memVar] = s.newValue1A(ssa.OpVarDef, ssa.TypeMem, sn, s.mem())
 		}
-		capaddr := s.newValue1I(ssa.OpOffPtr, pt, int64(array_cap), addr)
+		capaddr := s.newValue1I(ssa.OpOffPtr, ptrto(Types[TINT]), int64(array_cap), addr)
 		s.vars[&memVar] = s.newValue3I(ssa.OpStore, ssa.TypeMem, s.config.IntSize, capaddr, r[2], s.mem())
 		if ssa.IsStackAddr(addr) {
 			s.vars[&memVar] = s.newValue3I(ssa.OpStore, ssa.TypeMem, pt.Size(), addr, r[0], s.mem())
 		} else {
-			s.insertWBstore(pt, addr, r[0], n.Lineno, 0)
+			s.insertWBstore(pt, addr, r[0], 0)
 		}
 		// load the value we just stored to avoid having to spill it
 		s.vars[&ptrVar] = s.newValue2(ssa.OpLoad, pt, addr, s.mem())
@@ -2240,7 +2221,7 @@ func (s *state) append(n *Node, inplace bool) *ssa.Value {
 	if inplace {
 		l = s.variable(&lenVar, Types[TINT]) // generates phi for len
 		nl = s.newValue2(s.ssaOp(OADD, Types[TINT]), Types[TINT], l, s.constInt(Types[TINT], nargs))
-		lenaddr := s.newValue1I(ssa.OpOffPtr, pt, int64(array_nel), addr)
+		lenaddr := s.newValue1I(ssa.OpOffPtr, ptrto(Types[TINT]), int64(array_nel), addr)
 		s.vars[&memVar] = s.newValue3I(ssa.OpStore, ssa.TypeMem, s.config.IntSize, lenaddr, nl, s.mem())
 	}
 
@@ -2275,13 +2256,13 @@ func (s *state) append(n *Node, inplace bool) *ssa.Value {
 		addr := s.newValue2(ssa.OpPtrIndex, pt, p2, s.constInt(Types[TINT], int64(i)))
 		if arg.store {
 			if haspointers(et) {
-				s.insertWBstore(et, addr, arg.v, n.Lineno, 0)
+				s.insertWBstore(et, addr, arg.v, 0)
 			} else {
 				s.vars[&memVar] = s.newValue3I(ssa.OpStore, ssa.TypeMem, et.Size(), addr, arg.v, s.mem())
 			}
 		} else {
 			if haspointers(et) {
-				s.insertWBmove(et, addr, arg.v, n.Lineno, arg.isVolatile)
+				s.insertWBmove(et, addr, arg.v, arg.isVolatile)
 			} else {
 				s.vars[&memVar] = s.newValue3I(ssa.OpMove, ssa.TypeMem, sizeAlignAuxInt(et), addr, arg.v, s.mem())
 			}
@@ -2358,7 +2339,7 @@ const (
 // If deref is true, rightIsVolatile reports whether right points to volatile (clobbered by a call) storage.
 // Include a write barrier if wb is true.
 // skip indicates assignments (at the top level) that can be avoided.
-func (s *state) assign(left *Node, right *ssa.Value, wb, deref bool, line int32, skip skipMask, rightIsVolatile bool) {
+func (s *state) assign(left *Node, right *ssa.Value, wb, deref bool, skip skipMask, rightIsVolatile bool) {
 	if left.Op == ONAME && isblank(left) {
 		return
 	}
@@ -2399,7 +2380,7 @@ func (s *state) assign(left *Node, right *ssa.Value, wb, deref bool, line int32,
 			}
 
 			// Recursively assign the new value we've made to the base of the dot op.
-			s.assign(left.Left, new, false, false, line, 0, rightIsVolatile)
+			s.assign(left.Left, new, false, false, 0, rightIsVolatile)
 			// TODO: do we need to update named values here?
 			return
 		}
@@ -2424,7 +2405,7 @@ func (s *state) assign(left *Node, right *ssa.Value, wb, deref bool, line int32,
 			i = s.extendIndex(i, panicindex)
 			s.boundsCheck(i, s.constInt(Types[TINT], 1))
 			v := s.newValue1(ssa.OpArrayMake1, t, right)
-			s.assign(left.Left, v, false, false, line, 0, rightIsVolatile)
+			s.assign(left.Left, v, false, false, 0, rightIsVolatile)
 			return
 		}
 		// Update variable assignment.
@@ -2440,7 +2421,7 @@ func (s *state) assign(left *Node, right *ssa.Value, wb, deref bool, line int32,
 	if deref {
 		// Treat as a mem->mem move.
 		if wb && !ssa.IsStackAddr(addr) {
-			s.insertWBmove(t, addr, right, line, rightIsVolatile)
+			s.insertWBmove(t, addr, right, rightIsVolatile)
 			return
 		}
 		if right == nil {
@@ -2458,7 +2439,7 @@ func (s *state) assign(left *Node, right *ssa.Value, wb, deref bool, line int32,
 			s.storeTypeScalars(t, addr, right, skip)
 			return
 		}
-		s.insertWBstore(t, addr, right, line, skip)
+		s.insertWBstore(t, addr, right, skip)
 		return
 	}
 	if skip != 0 {
@@ -2692,6 +2673,11 @@ func intrinsicInit() {
 			s.vars[&memVar] = s.newValue3(ssa.OpAtomicOr8, ssa.TypeMem, args[0], args[1], s.mem())
 			return nil
 		}, sys.AMD64, sys.ARM64, sys.MIPS),
+
+		/******** math ********/
+		intrinsicKey{"math", "Sqrt"}: enableOnArch(func(s *state, n *Node, args []*ssa.Value) *ssa.Value {
+			return s.newValue1(ssa.OpSqrt, Types[TFLOAT64], args[0])
+		}, sys.AMD64, sys.ARM, sys.ARM64, sys.MIPS, sys.PPC64, sys.S390X),
 	}
 
 	// aliases internal to runtime/internal/atomic
@@ -2852,7 +2838,7 @@ func (s *state) intrinsicCall(n *Node) *ssa.Value {
 		if x.Op == ssa.OpSelect0 || x.Op == ssa.OpSelect1 {
 			x = x.Args[0]
 		}
-		Warnl(n.Lineno, "intrinsic substitution for %v with %s", n.Left.Sym.Name, x.LongString())
+		Warnl(n.Pos, "intrinsic substitution for %v with %s", n.Left.Sym.Name, x.LongString())
 	}
 	return v
 }
@@ -2942,7 +2928,7 @@ func (s *state) call(n *Node, k callKind) *ssa.Value {
 		// We can then pass that to defer or go.
 		n2 := newname(fn.Sym)
 		n2.Class = PFUNC
-		n2.Lineno = fn.Lineno
+		n2.Pos = fn.Pos
 		n2.Type = Types[TUINT8] // dummy type for a static closure. Could use runtime.funcval if we had it.
 		closure = s.expr(n2)
 		// Note: receiver is already assigned in n.List, so we don't
@@ -3009,7 +2995,7 @@ func (s *state) call(n *Node, k callKind) *ssa.Value {
 	case codeptr != nil:
 		call = s.newValue2(ssa.OpInterCall, ssa.TypeMem, codeptr, s.mem())
 	case sym != nil:
-		call = s.newValue1A(ssa.OpStaticCall, ssa.TypeMem, sym, s.mem())
+		call = s.newValue1A(ssa.OpStaticCall, ssa.TypeMem, Linksym(sym), s.mem())
 	default:
 		Fatalf("bad call type %v %v", n.Op, n)
 	}
@@ -3085,7 +3071,7 @@ func (s *state) addr(n *Node, bounded bool) (*ssa.Value, bool) {
 		switch n.Class {
 		case PEXTERN:
 			// global variable
-			aux := s.lookupSymbol(n, &ssa.ExternSymbol{Typ: n.Type, Sym: n.Sym})
+			aux := s.lookupSymbol(n, &ssa.ExternSymbol{Typ: n.Type, Sym: Linksym(n.Sym)})
 			v := s.entryNewValue1A(ssa.OpAddr, t, aux, s.sb)
 			// TODO: Make OpAddr use AuxInt as well as Aux.
 			if n.Xoffset != 0 {
@@ -3143,12 +3129,12 @@ func (s *state) addr(n *Node, bounded bool) (*ssa.Value, bool) {
 			return s.newValue2(ssa.OpPtrIndex, ptrto(n.Left.Type.Elem()), a, i), isVolatile
 		}
 	case OIND:
-		return s.exprPtr(n.Left, bounded, n.Lineno), false
+		return s.exprPtr(n.Left, bounded, n.Pos), false
 	case ODOT:
 		p, isVolatile := s.addr(n.Left, bounded)
 		return s.newValue1I(ssa.OpOffPtr, t, n.Xoffset, p), isVolatile
 	case ODOTPTR:
-		p := s.exprPtr(n.Left, bounded, n.Lineno)
+		p := s.exprPtr(n.Left, bounded, n.Pos)
 		return s.newValue1I(ssa.OpOffPtr, t, n.Xoffset, p), false
 	case OCLOSUREVAR:
 		return s.newValue1I(ssa.OpOffPtr, t, n.Xoffset,
@@ -3202,6 +3188,8 @@ func (s *state) canSSA(n *Node) bool {
 			// TODO: handle this case?  Named return values must be
 			// in memory so that the deferred function can see them.
 			// Maybe do: if !strings.HasPrefix(n.String(), "~") { return false }
+			// Or maybe not, see issue 18860.  Even unnamed return values
+			// must be written back so if a defer recovers, the caller can see them.
 			return false
 		}
 		if s.cgoUnsafeArgs {
@@ -3257,10 +3245,10 @@ func canSSAType(t *Type) bool {
 }
 
 // exprPtr evaluates n to a pointer and nil-checks it.
-func (s *state) exprPtr(n *Node, bounded bool, lineno int32) *ssa.Value {
+func (s *state) exprPtr(n *Node, bounded bool, lineno src.XPos) *ssa.Value {
 	p := s.expr(n)
 	if bounded || n.NonNil {
-		if s.f.Config.Debug_checknil() && lineno > 1 {
+		if s.f.Config.Debug_checknil() && lineno.Line() > 1 {
 			s.f.Config.Warnl(lineno, "removed nil check")
 		}
 		return p
@@ -3306,13 +3294,13 @@ func (s *state) sliceBoundsCheck(idx, len *ssa.Value) {
 }
 
 // If cmp (a bool) is false, panic using the given function.
-func (s *state) check(cmp *ssa.Value, fn *Node) {
+func (s *state) check(cmp *ssa.Value, fn *obj.LSym) {
 	b := s.endBlock()
 	b.Kind = ssa.BlockIf
 	b.SetControl(cmp)
 	b.Likely = ssa.BranchLikely
 	bNext := s.f.NewBlock(ssa.BlockPlain)
-	line := s.peekLine()
+	line := s.peekPos()
 	bPanic := s.panics[funcLine{fn, line}]
 	if bPanic == nil {
 		bPanic = s.f.NewBlock(ssa.BlockPlain)
@@ -3347,7 +3335,7 @@ func (s *state) intDivide(n *Node, a, b *ssa.Value) *ssa.Value {
 // Returns a slice of results of the given result types.
 // The call is added to the end of the current block.
 // If returns is false, the block is marked as an exit block.
-func (s *state) rtcall(fn *Node, returns bool, results []*Type, args ...*ssa.Value) []*ssa.Value {
+func (s *state) rtcall(fn *obj.LSym, returns bool, results []*Type, args ...*ssa.Value) []*ssa.Value {
 	// Write args to the stack
 	off := Ctxt.FixedFrameSize()
 	for _, arg := range args {
@@ -3368,7 +3356,7 @@ func (s *state) rtcall(fn *Node, returns bool, results []*Type, args ...*ssa.Val
 	}
 
 	// Issue call
-	call := s.newValue1A(ssa.OpStaticCall, ssa.TypeMem, fn.Sym, s.mem())
+	call := s.newValue1A(ssa.OpStaticCall, ssa.TypeMem, fn, s.mem())
 	s.vars[&memVar] = call
 
 	if !returns {
@@ -3405,7 +3393,7 @@ func (s *state) rtcall(fn *Node, returns bool, results []*Type, args ...*ssa.Val
 // insertWBmove inserts the assignment *left = *right including a write barrier.
 // t is the type being assigned.
 // If right == nil, then we're zeroing *left.
-func (s *state) insertWBmove(t *Type, left, right *ssa.Value, line int32, rightIsVolatile bool) {
+func (s *state) insertWBmove(t *Type, left, right *ssa.Value, rightIsVolatile bool) {
 	// if writeBarrier.enabled {
 	//   typedmemmove(&t, left, right)
 	// } else {
@@ -3423,8 +3411,8 @@ func (s *state) insertWBmove(t *Type, left, right *ssa.Value, line int32, rightI
 	if s.noWB {
 		s.Error("write barrier prohibited")
 	}
-	if s.WBLineno == 0 {
-		s.WBLineno = left.Line
+	if !s.WBPos.IsKnown() {
+		s.WBPos = left.Pos
 	}
 
 	var val *ssa.Value
@@ -3439,21 +3427,13 @@ func (s *state) insertWBmove(t *Type, left, right *ssa.Value, line int32, rightI
 		}
 		val = s.newValue3I(op, ssa.TypeMem, sizeAlignAuxInt(t), left, right, s.mem())
 	}
-	val.Aux = &ssa.ExternSymbol{Typ: Types[TUINTPTR], Sym: typenamesym(t)}
+	val.Aux = &ssa.ExternSymbol{Typ: Types[TUINTPTR], Sym: Linksym(typenamesym(t))}
 	s.vars[&memVar] = val
-
-	// WB ops will be expanded to branches at writebarrier phase.
-	// To make it easy, we put WB ops at the end of a block, so
-	// that it does not need to split a block into two parts when
-	// expanding WB ops.
-	b := s.f.NewBlock(ssa.BlockPlain)
-	s.endBlock().AddEdgeTo(b)
-	s.startBlock(b)
 }
 
 // insertWBstore inserts the assignment *left = right including a write barrier.
 // t is the type being assigned.
-func (s *state) insertWBstore(t *Type, left, right *ssa.Value, line int32, skip skipMask) {
+func (s *state) insertWBstore(t *Type, left, right *ssa.Value, skip skipMask) {
 	// store scalar fields
 	// if writeBarrier.enabled {
 	//   writebarrierptr for pointer fields
@@ -3464,19 +3444,11 @@ func (s *state) insertWBstore(t *Type, left, right *ssa.Value, line int32, skip 
 	if s.noWB {
 		s.Error("write barrier prohibited")
 	}
-	if s.WBLineno == 0 {
-		s.WBLineno = left.Line
+	if !s.WBPos.IsKnown() {
+		s.WBPos = left.Pos
 	}
 	s.storeTypeScalars(t, left, right, skip)
 	s.storeTypePtrsWB(t, left, right)
-
-	// WB ops will be expanded to branches at writebarrier phase.
-	// To make it easy, we put WB ops at the end of a block, so
-	// that it does not need to split a block into two parts when
-	// expanding WB ops.
-	b := s.f.NewBlock(ssa.BlockPlain)
-	s.endBlock().AddEdgeTo(b)
-	s.startBlock(b)
 }
 
 // do *left = right for all scalar (non-pointer) parts of t.
@@ -3539,7 +3511,7 @@ func (s *state) storeTypePtrs(t *Type, left, right *ssa.Value) {
 	case t.IsInterface():
 		// itab field is treated as a scalar.
 		idata := s.newValue1(ssa.OpIData, ptrto(Types[TUINT8]), right)
-		idataAddr := s.newValue1I(ssa.OpOffPtr, ptrto(Types[TUINT8]), s.config.PtrSize, left)
+		idataAddr := s.newValue1I(ssa.OpOffPtr, ptrto(ptrto(Types[TUINT8])), s.config.PtrSize, left)
 		s.vars[&memVar] = s.newValue3I(ssa.OpStore, ssa.TypeMem, s.config.PtrSize, idataAddr, idata, s.mem())
 	case t.IsStruct():
 		n := t.NumFields()
@@ -3575,7 +3547,7 @@ func (s *state) storeTypePtrsWB(t *Type, left, right *ssa.Value) {
 	case t.IsInterface():
 		// itab field is treated as a scalar.
 		idata := s.newValue1(ssa.OpIData, ptrto(Types[TUINT8]), right)
-		idataAddr := s.newValue1I(ssa.OpOffPtr, ptrto(Types[TUINT8]), s.config.PtrSize, left)
+		idataAddr := s.newValue1I(ssa.OpOffPtr, ptrto(ptrto(Types[TUINT8])), s.config.PtrSize, left)
 		s.vars[&memVar] = s.newValue3I(ssa.OpStoreWB, ssa.TypeMem, s.config.PtrSize, idataAddr, idata, s.mem())
 	case t.IsStruct():
 		n := t.NumFields()
@@ -4004,48 +3976,6 @@ func (s *state) floatToUint(cvttab *f2uCvtTab, n *Node, x *ssa.Value, ft, tt *Ty
 	return s.variable(n, n.Type)
 }
 
-// ifaceType returns the value for the word containing the type.
-// t is the type of the interface expression.
-// v is the corresponding value.
-func (s *state) ifaceType(t *Type, v *ssa.Value) *ssa.Value {
-	byteptr := ptrto(Types[TUINT8]) // type used in runtime prototypes for runtime type (*byte)
-
-	if t.IsEmptyInterface() {
-		// Have eface. The type is the first word in the struct.
-		return s.newValue1(ssa.OpITab, byteptr, v)
-	}
-
-	// Have iface.
-	// The first word in the struct is the itab.
-	// If the itab is nil, return 0.
-	// Otherwise, the second word in the itab is the type.
-
-	tab := s.newValue1(ssa.OpITab, byteptr, v)
-	s.vars[&typVar] = tab
-	isnonnil := s.newValue2(ssa.OpNeqPtr, Types[TBOOL], tab, s.constNil(byteptr))
-	b := s.endBlock()
-	b.Kind = ssa.BlockIf
-	b.SetControl(isnonnil)
-	b.Likely = ssa.BranchLikely
-
-	bLoad := s.f.NewBlock(ssa.BlockPlain)
-	bEnd := s.f.NewBlock(ssa.BlockPlain)
-
-	b.AddEdgeTo(bLoad)
-	b.AddEdgeTo(bEnd)
-	bLoad.AddEdgeTo(bEnd)
-
-	s.startBlock(bLoad)
-	off := s.newValue1I(ssa.OpOffPtr, byteptr, int64(Widthptr), tab)
-	s.vars[&typVar] = s.newValue2(ssa.OpLoad, byteptr, off, s.mem())
-	s.endBlock()
-
-	s.startBlock(bEnd)
-	typ := s.variable(&typVar, byteptr)
-	delete(s.vars, &typVar)
-	return typ
-}
-
 // dottype generates SSA for a type assertion node.
 // commaok indicates whether to panic or return a bool.
 // If commaok is false, resok will be nil.
@@ -4059,7 +3989,7 @@ func (s *state) dottype(n *Node, commaok bool) (res, resok *ssa.Value) {
 			// Converting to an empty interface.
 			// Input could be an empty or nonempty interface.
 			if Debug_typeassert > 0 {
-				Warnl(n.Lineno, "type assertion inlined")
+				Warnl(n.Pos, "type assertion inlined")
 			}
 
 			// Get itab/type field from input.
@@ -4126,7 +4056,7 @@ func (s *state) dottype(n *Node, commaok bool) (res, resok *ssa.Value) {
 		}
 		// converting to a nonempty interface needs a runtime call.
 		if Debug_typeassert > 0 {
-			Warnl(n.Lineno, "type assertion not inlined")
+			Warnl(n.Pos, "type assertion not inlined")
 		}
 		if n.Left.Type.IsEmptyInterface() {
 			if commaok {
@@ -4143,15 +4073,22 @@ func (s *state) dottype(n *Node, commaok bool) (res, resok *ssa.Value) {
 	}
 
 	if Debug_typeassert > 0 {
-		Warnl(n.Lineno, "type assertion inlined")
+		Warnl(n.Pos, "type assertion inlined")
 	}
 
 	// Converting to a concrete type.
 	direct := isdirectiface(n.Type)
-	typ := s.ifaceType(n.Left.Type, iface) // actual concrete type of input interface
-
+	itab := s.newValue1(ssa.OpITab, byteptr, iface) // type word of interface
 	if Debug_typeassert > 0 {
-		Warnl(n.Lineno, "type assertion inlined")
+		Warnl(n.Pos, "type assertion inlined")
+	}
+	var targetITab *ssa.Value
+	if n.Left.Type.IsEmptyInterface() {
+		// Looking for pointer to target type.
+		targetITab = target
+	} else {
+		// Looking for pointer to itab for target type and source interface.
+		targetITab = s.expr(itabname(n.Type, n.Left.Type))
 	}
 
 	var tmp *Node       // temporary for use with large types
@@ -4164,9 +4101,7 @@ func (s *state) dottype(n *Node, commaok bool) (res, resok *ssa.Value) {
 		s.vars[&memVar] = s.newValue1A(ssa.OpVarDef, ssa.TypeMem, tmp, s.mem())
 	}
 
-	// TODO:  If we have a nonempty interface and its itab field is nil,
-	// then this test is redundant and ifaceType should just branch directly to bFail.
-	cond := s.newValue2(ssa.OpEqPtr, Types[TBOOL], typ, target)
+	cond := s.newValue2(ssa.OpEqPtr, Types[TBOOL], itab, targetITab)
 	b := s.endBlock()
 	b.Kind = ssa.BlockIf
 	b.SetControl(cond)
@@ -4180,8 +4115,12 @@ func (s *state) dottype(n *Node, commaok bool) (res, resok *ssa.Value) {
 	if !commaok {
 		// on failure, panic by calling panicdottype
 		s.startBlock(bFail)
-		taddr := s.newValue1A(ssa.OpAddr, byteptr, &ssa.ExternSymbol{Typ: byteptr, Sym: typenamesym(n.Left.Type)}, s.sb)
-		s.rtcall(panicdottype, false, nil, typ, target, taddr)
+		taddr := s.newValue1A(ssa.OpAddr, byteptr, &ssa.ExternSymbol{Typ: byteptr, Sym: Linksym(typenamesym(n.Left.Type))}, s.sb)
+		if n.Left.Type.IsEmptyInterface() {
+			s.rtcall(panicdottypeE, false, nil, itab, target, taddr)
+		} else {
+			s.rtcall(panicdottypeI, false, nil, itab, target, taddr)
+		}
 
 		// on success, return data from interface
 		s.startBlock(bOk)
@@ -4243,60 +4182,87 @@ func (s *state) dottype(n *Node, commaok bool) (res, resok *ssa.Value) {
 
 // checkgoto checks that a goto from from to to does not
 // jump into a block or jump over variable declarations.
-// It is a copy of checkgoto in the pre-SSA backend,
-// modified only for line number handling.
-// TODO: document how this works and why it is designed the way it is.
 func (s *state) checkgoto(from *Node, to *Node) {
+	if from.Op != OGOTO || to.Op != OLABEL {
+		Fatalf("bad from/to in checkgoto: %v -> %v", from, to)
+	}
+
+	// from and to's Sym fields record dclstack's value at their
+	// position, which implicitly encodes their block nesting
+	// level and variable declaration position within that block.
+	//
+	// For valid gotos, to.Sym will be a tail of from.Sym.
+	// Otherwise, any link in to.Sym not also in from.Sym
+	// indicates a block/declaration being jumped into/over.
+	//
+	// TODO(mdempsky): We should only complain about jumping over
+	// variable declarations, but currently we reject type and
+	// constant declarations too (#8042).
+
 	if from.Sym == to.Sym {
 		return
 	}
 
-	nf := 0
-	for fs := from.Sym; fs != nil; fs = fs.Link {
-		nf++
-	}
-	nt := 0
-	for fs := to.Sym; fs != nil; fs = fs.Link {
-		nt++
-	}
+	nf := dcldepth(from.Sym)
+	nt := dcldepth(to.Sym)
+
+	// Unwind from.Sym so it's no longer than to.Sym. It's okay to
+	// jump out of blocks or backwards past variable declarations.
 	fs := from.Sym
 	for ; nf > nt; nf-- {
 		fs = fs.Link
 	}
-	if fs != to.Sym {
-		// decide what to complain about.
-		// prefer to complain about 'into block' over declarations,
-		// so scan backward to find most recent block or else dcl.
-		var block *Sym
 
-		var dcl *Sym
-		ts := to.Sym
-		for ; nt > nf; nt-- {
-			if ts.Pkg == nil {
-				block = ts
-			} else {
-				dcl = ts
-			}
-			ts = ts.Link
-		}
-
-		for ts != fs {
-			if ts.Pkg == nil {
-				block = ts
-			} else {
-				dcl = ts
-			}
-			ts = ts.Link
-			fs = fs.Link
-		}
-
-		lno := from.Left.Lineno
-		if block != nil {
-			yyerrorl(lno, "goto %v jumps into block starting at %v", from.Left.Sym, linestr(block.Lastlineno))
-		} else {
-			yyerrorl(lno, "goto %v jumps over declaration of %v at %v", from.Left.Sym, dcl, linestr(dcl.Lastlineno))
-		}
+	if fs == to.Sym {
+		return
 	}
+
+	// Decide what to complain about. Unwind to.Sym until where it
+	// forked from from.Sym, and keep track of the innermost block
+	// and declaration we jumped into/over.
+	var block *Sym
+	var dcl *Sym
+
+	// If to.Sym is longer, unwind until it's the same length.
+	ts := to.Sym
+	for ; nt > nf; nt-- {
+		if ts.Pkg == nil {
+			block = ts
+		} else {
+			dcl = ts
+		}
+		ts = ts.Link
+	}
+
+	// Same length; unwind until we find their common ancestor.
+	for ts != fs {
+		if ts.Pkg == nil {
+			block = ts
+		} else {
+			dcl = ts
+		}
+		ts = ts.Link
+		fs = fs.Link
+	}
+
+	// Prefer to complain about 'into block' over declarations.
+	lno := from.Left.Pos
+	if block != nil {
+		yyerrorl(lno, "goto %v jumps into block starting at %v", from.Left.Sym, linestr(block.Lastlineno))
+	} else {
+		yyerrorl(lno, "goto %v jumps over declaration of %v at %v", from.Left.Sym, dcl, linestr(dcl.Lastlineno))
+	}
+}
+
+// dcldepth returns the declaration depth for a dclstack Sym; that is,
+// the sum of the block nesting level and the number of declarations
+// in scope.
+func dcldepth(s *Sym) int {
+	n := 0
+	for ; s != nil; s = s.Link {
+		n++
+	}
+	return n
 }
 
 // variable returns the value of a variable at the current location.
@@ -4377,9 +4343,9 @@ func (s *SSAGenState) Pc() *obj.Prog {
 	return pc
 }
 
-// SetLineno sets the current source line number.
-func (s *SSAGenState) SetLineno(l int32) {
-	lineno = l
+// SetPos sets the current source position.
+func (s *SSAGenState) SetPos(pos src.XPos) {
+	lineno = pos
 }
 
 // genssa appends entries to ptxt for each instruction in f.
@@ -4459,8 +4425,11 @@ func genssa(f *ssa.Func, ptxt *obj.Prog, gcargs, gclocals *Sym) {
 			f.Logf("%s\t%s\n", s, p)
 		}
 		if f.Config.HTML != nil {
-			saved := ptxt.Ctxt.LineHist.PrintFilenameOnly
-			ptxt.Ctxt.LineHist.PrintFilenameOnly = true
+			// LineHist is defunct now - this code won't do
+			// anything.
+			// TODO: fix this (ideally without a global variable)
+			// saved := ptxt.Ctxt.LineHist.PrintFilenameOnly
+			// ptxt.Ctxt.LineHist.PrintFilenameOnly = true
 			var buf bytes.Buffer
 			buf.WriteString("<code>")
 			buf.WriteString("<dl class=\"ssa-gen\">")
@@ -4480,16 +4449,7 @@ func genssa(f *ssa.Func, ptxt *obj.Prog, gcargs, gclocals *Sym) {
 			buf.WriteString("</dl>")
 			buf.WriteString("</code>")
 			f.Config.HTML.WriteColumn("genssa", buf.String())
-			ptxt.Ctxt.LineHist.PrintFilenameOnly = saved
-		}
-	}
-
-	// Emit static data
-	if f.StaticData != nil {
-		for _, n := range f.StaticData.([]*Node) {
-			if !gen_as_init(n, false) {
-				Fatalf("non-static data marked as static: %v\n\n", n)
-			}
+			// ptxt.Ctxt.LineHist.PrintFilenameOnly = saved
 		}
 	}
 
@@ -4587,14 +4547,7 @@ func AddAux2(a *obj.Addr, v *ssa.Value, offset int64) {
 	switch sym := v.Aux.(type) {
 	case *ssa.ExternSymbol:
 		a.Name = obj.NAME_EXTERN
-		switch s := sym.Sym.(type) {
-		case *Sym:
-			a.Sym = Linksym(s)
-		case *obj.LSym:
-			a.Sym = s
-		default:
-			v.Fatalf("ExternSymbol.Sym is %T", s)
-		}
+		a.Sym = sym.Sym
 	case *ssa.ArgSymbol:
 		n := sym.Node.(*Node)
 		a.Name = obj.NAME_PARAM
@@ -4619,7 +4572,7 @@ func sizeAlignAuxInt(t *Type) int64 {
 
 // extendIndex extends v to a full int width.
 // panic using the given function if v does not fit in an int (only on 32-bit archs).
-func (s *state) extendIndex(v *ssa.Value, panicfn *Node) *ssa.Value {
+func (s *state) extendIndex(v *ssa.Value, panicfn *obj.LSym) *ssa.Value {
 	size := v.Type.Size()
 	if size == s.config.IntSize {
 		return v
@@ -4955,8 +4908,8 @@ func (e *ssaExport) CanSSA(t ssa.Type) bool {
 	return canSSAType(t.(*Type))
 }
 
-func (e *ssaExport) Line(line int32) string {
-	return linestr(line)
+func (e *ssaExport) Line(pos src.XPos) string {
+	return linestr(pos)
 }
 
 // Log logs a message from the compiler.
@@ -4971,15 +4924,15 @@ func (e *ssaExport) Log() bool {
 }
 
 // Fatal reports a compiler error and exits.
-func (e *ssaExport) Fatalf(line int32, msg string, args ...interface{}) {
-	lineno = line
+func (e *ssaExport) Fatalf(pos src.XPos, msg string, args ...interface{}) {
+	lineno = pos
 	Fatalf(msg, args...)
 }
 
 // Warnl reports a "warning", which is usually flag-triggered
 // logging output for the benefit of tests.
-func (e *ssaExport) Warnl(line int32, fmt_ string, args ...interface{}) {
-	Warnl(line, fmt_, args...)
+func (e *ssaExport) Warnl(pos src.XPos, fmt_ string, args ...interface{}) {
+	Warnl(pos, fmt_, args...)
 }
 
 func (e *ssaExport) Debug_checknil() bool {
@@ -4990,8 +4943,8 @@ func (e *ssaExport) Debug_wb() bool {
 	return Debug_wb != 0
 }
 
-func (e *ssaExport) Syslook(name string) interface{} {
-	return syslook(name).Sym
+func (e *ssaExport) Syslook(name string) *obj.LSym {
+	return Linksym(syslook(name).Sym)
 }
 
 func (n *Node) Typ() ssa.Type {

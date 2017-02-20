@@ -43,7 +43,7 @@ func TestAssembly(t *testing.T) {
 		}
 		for _, r := range test.regexps {
 			if b, err := regexp.MatchString(r, asm); !b || err != nil {
-				t.Errorf("expected:%s\ngo:%s\nasm:%s\n", r, test.function, asm)
+				t.Errorf("%s/%s: expected:%s\ngo:%s\nasm:%s\n", test.os, test.arch, r, test.function, asm)
 			}
 		}
 	}
@@ -183,6 +183,14 @@ func f(b []byte, v uint64) {
 	},
 	{"amd64", "linux", `
 import "encoding/binary"
+func f(b []byte, i int, v uint64) {
+	binary.BigEndian.PutUint64(b[i:], v)
+}
+`,
+		[]string{"\tBSWAPQ\t"},
+	},
+	{"amd64", "linux", `
+import "encoding/binary"
 func f(b []byte) uint32 {
 	return binary.BigEndian.Uint32(b)
 }
@@ -205,6 +213,46 @@ func f(b []byte, v uint32) {
 `,
 		[]string{"\tBSWAPL\t"},
 	},
+	{"amd64", "linux", `
+import "encoding/binary"
+func f(b []byte, i int, v uint32) {
+	binary.BigEndian.PutUint32(b[i:], v)
+}
+`,
+		[]string{"\tBSWAPL\t"},
+	},
+	{"amd64", "linux", `
+import "encoding/binary"
+func f(b []byte) uint16 {
+	return binary.BigEndian.Uint16(b)
+}
+`,
+		[]string{"\tROLW\t\\$8,"},
+	},
+	{"amd64", "linux", `
+import "encoding/binary"
+func f(b []byte, i int) uint16 {
+	return binary.BigEndian.Uint16(b[i:])
+}
+`,
+		[]string{"\tROLW\t\\$8,"},
+	},
+	{"amd64", "linux", `
+import "encoding/binary"
+func f(b []byte, v uint16) {
+	binary.BigEndian.PutUint16(b, v)
+}
+`,
+		[]string{"\tROLW\t\\$8,"},
+	},
+	{"amd64", "linux", `
+import "encoding/binary"
+func f(b []byte, i int, v uint16) {
+	binary.BigEndian.PutUint16(b[i:], v)
+}
+`,
+		[]string{"\tROLW\t\\$8,"},
+	},
 	{"386", "linux", `
 import "encoding/binary"
 func f(b []byte) uint32 {
@@ -221,6 +269,70 @@ func f(b []byte, i int) uint32 {
 `,
 		[]string{"\tMOVL\t\\(.*\\)\\(.*\\*1\\),"},
 	},
+	{"s390x", "linux", `
+import "encoding/binary"
+func f(b []byte) uint32 {
+	return binary.LittleEndian.Uint32(b)
+}
+`,
+		[]string{"\tMOVWBR\t\\(.*\\),"},
+	},
+	{"s390x", "linux", `
+import "encoding/binary"
+func f(b []byte, i int) uint32 {
+	return binary.LittleEndian.Uint32(b[i:])
+}
+`,
+		[]string{"\tMOVWBR\t\\(.*\\)\\(.*\\*1\\),"},
+	},
+	{"s390x", "linux", `
+import "encoding/binary"
+func f(b []byte) uint64 {
+	return binary.LittleEndian.Uint64(b)
+}
+`,
+		[]string{"\tMOVDBR\t\\(.*\\),"},
+	},
+	{"s390x", "linux", `
+import "encoding/binary"
+func f(b []byte, i int) uint64 {
+	return binary.LittleEndian.Uint64(b[i:])
+}
+`,
+		[]string{"\tMOVDBR\t\\(.*\\)\\(.*\\*1\\),"},
+	},
+	{"s390x", "linux", `
+import "encoding/binary"
+func f(b []byte) uint32 {
+	return binary.BigEndian.Uint32(b)
+}
+`,
+		[]string{"\tMOVWZ\t\\(.*\\),"},
+	},
+	{"s390x", "linux", `
+import "encoding/binary"
+func f(b []byte, i int) uint32 {
+	return binary.BigEndian.Uint32(b[i:])
+}
+`,
+		[]string{"\tMOVWZ\t\\(.*\\)\\(.*\\*1\\),"},
+	},
+	{"s390x", "linux", `
+import "encoding/binary"
+func f(b []byte) uint64 {
+	return binary.BigEndian.Uint64(b)
+}
+`,
+		[]string{"\tMOVD\t\\(.*\\),"},
+	},
+	{"s390x", "linux", `
+import "encoding/binary"
+func f(b []byte, i int) uint64 {
+	return binary.BigEndian.Uint64(b[i:])
+}
+`,
+		[]string{"\tMOVD\t\\(.*\\)\\(.*\\*1\\),"},
+	},
 
 	// Structure zeroing.  See issue #18370.
 	{"amd64", "linux", `
@@ -234,6 +346,255 @@ func f(t *T) {
 		[]string{"\tMOVQ\t\\$0, \\(.*\\)", "\tMOVQ\t\\$0, 8\\(.*\\)", "\tMOVQ\t\\$0, 16\\(.*\\)"},
 	},
 	// TODO: add a test for *t = T{3,4,5} when we fix that.
+	// Also test struct containing pointers (this was special because of write barriers).
+	{"amd64", "linux", `
+type T struct {
+	a, b, c *int
+}
+func f(t *T) {
+	*t = T{}
+}
+`,
+		[]string{"\tMOVQ\t\\$0, \\(.*\\)", "\tMOVQ\t\\$0, 8\\(.*\\)", "\tMOVQ\t\\$0, 16\\(.*\\)", "\tCALL\truntime\\.writebarrierptr\\(SB\\)"},
+	},
+
+	// Rotate tests
+	{"amd64", "linux", `
+	func f(x uint64) uint64 {
+		return x<<7 | x>>57
+	}
+`,
+		[]string{"\tROLQ\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint64) uint64 {
+		return x<<7 + x>>57
+	}
+`,
+		[]string{"\tROLQ\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint64) uint64 {
+		return x<<7 ^ x>>57
+	}
+`,
+		[]string{"\tROLQ\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 + x>>25
+	}
+`,
+		[]string{"\tROLL\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 | x>>25
+	}
+`,
+		[]string{"\tROLL\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 ^ x>>25
+	}
+`,
+		[]string{"\tROLL\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint16) uint16 {
+		return x<<7 + x>>9
+	}
+`,
+		[]string{"\tROLW\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint16) uint16 {
+		return x<<7 | x>>9
+	}
+`,
+		[]string{"\tROLW\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint16) uint16 {
+		return x<<7 ^ x>>9
+	}
+`,
+		[]string{"\tROLW\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint8) uint8 {
+		return x<<7 + x>>1
+	}
+`,
+		[]string{"\tROLB\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint8) uint8 {
+		return x<<7 | x>>1
+	}
+`,
+		[]string{"\tROLB\t[$]7,"},
+	},
+	{"amd64", "linux", `
+	func f(x uint8) uint8 {
+		return x<<7 ^ x>>1
+	}
+`,
+		[]string{"\tROLB\t[$]7,"},
+	},
+
+	{"arm", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 + x>>25
+	}
+`,
+		[]string{"\tMOVW\tR[0-9]+@>25,"},
+	},
+	{"arm", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 | x>>25
+	}
+`,
+		[]string{"\tMOVW\tR[0-9]+@>25,"},
+	},
+	{"arm", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 ^ x>>25
+	}
+`,
+		[]string{"\tMOVW\tR[0-9]+@>25,"},
+	},
+
+	{"arm64", "linux", `
+	func f(x uint64) uint64 {
+		return x<<7 + x>>57
+	}
+`,
+		[]string{"\tROR\t[$]57,"},
+	},
+	{"arm64", "linux", `
+	func f(x uint64) uint64 {
+		return x<<7 | x>>57
+	}
+`,
+		[]string{"\tROR\t[$]57,"},
+	},
+	{"arm64", "linux", `
+	func f(x uint64) uint64 {
+		return x<<7 ^ x>>57
+	}
+`,
+		[]string{"\tROR\t[$]57,"},
+	},
+	{"arm64", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 + x>>25
+	}
+`,
+		[]string{"\tRORW\t[$]25,"},
+	},
+	{"arm64", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 | x>>25
+	}
+`,
+		[]string{"\tRORW\t[$]25,"},
+	},
+	{"arm64", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 ^ x>>25
+	}
+`,
+		[]string{"\tRORW\t[$]25,"},
+	},
+
+	{"s390x", "linux", `
+	func f(x uint64) uint64 {
+		return x<<7 + x>>57
+	}
+`,
+		[]string{"\tRLLG\t[$]7,"},
+	},
+	{"s390x", "linux", `
+	func f(x uint64) uint64 {
+		return x<<7 | x>>57
+	}
+`,
+		[]string{"\tRLLG\t[$]7,"},
+	},
+	{"s390x", "linux", `
+	func f(x uint64) uint64 {
+		return x<<7 ^ x>>57
+	}
+`,
+		[]string{"\tRLLG\t[$]7,"},
+	},
+	{"s390x", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 + x>>25
+	}
+`,
+		[]string{"\tRLL\t[$]7,"},
+	},
+	{"s390x", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 | x>>25
+	}
+`,
+		[]string{"\tRLL\t[$]7,"},
+	},
+	{"s390x", "linux", `
+	func f(x uint32) uint32 {
+		return x<<7 ^ x>>25
+	}
+`,
+		[]string{"\tRLL\t[$]7,"},
+	},
+
+	// Rotate after inlining (see issue 18254).
+	{"amd64", "linux", `
+	func f(x uint32, k uint) uint32 {
+		return x<<k | x>>(32-k)
+	}
+	func g(x uint32) uint32 {
+		return f(x, 7)
+	}
+`,
+		[]string{"\tROLL\t[$]7,"},
+	},
+
+	// Direct use of constants in fast map access calls. Issue 19015.
+	{"amd64", "linux", `
+	func f(m map[int]int) int {
+		return m[5]
+	}
+`,
+		[]string{"\tMOVQ\t[$]5,"},
+	},
+	{"amd64", "linux", `
+	func f(m map[int]int) bool {
+		_, ok := m[5]
+		return ok
+	}
+`,
+		[]string{"\tMOVQ\t[$]5,"},
+	},
+	{"amd64", "linux", `
+	func f(m map[string]int) int {
+		return m["abc"]
+	}
+`,
+		[]string{"\"abc\""},
+	},
+	{"amd64", "linux", `
+	func f(m map[string]int) bool {
+		_, ok := m["abc"]
+		return ok
+	}
+`,
+		[]string{"\"abc\""},
+	},
 }
 
 // mergeEnvLists merges the two environment lists such that
@@ -286,6 +647,6 @@ var issue16214src = `
 package main
 
 func Mod32(x uint32) uint32 {
-	return x % 3 // frontend rewrites it as HMUL with 2863311531, the LITERAL node has Lineno 0
+	return x % 3 // frontend rewrites it as HMUL with 2863311531, the LITERAL node has unknown Pos
 }
 `

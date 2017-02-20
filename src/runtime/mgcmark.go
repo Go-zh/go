@@ -107,21 +107,24 @@ func gcMarkRootPrepare() {
 		// termination, allglen isn't changing, so we'll scan
 		// all Gs.
 		work.nStackRoots = int(atomic.Loaduintptr(&allglen))
-		work.nRescanRoots = 0
 	} else {
 		// We've already scanned span roots and kept the scan
 		// up-to-date during concurrent mark.
 		work.nSpanRoots = 0
 
-		// On the second pass of markroot, we're just scanning
-		// dirty stacks. It's safe to access rescan since the
-		// world is stopped.
+		// The hybrid barrier ensures that stacks can't
+		// contain pointers to unmarked objects, so on the
+		// second markroot, there's no need to scan stacks.
 		work.nStackRoots = 0
-		work.nRescanRoots = len(work.rescan.list)
+
+		if debug.gcrescanstacks > 0 {
+			// Scan stacks anyway for debugging.
+			work.nStackRoots = int(atomic.Loaduintptr(&allglen))
+		}
 	}
 
 	work.markrootNext = 0
-	work.markrootJobs = uint32(fixedRootCount + work.nFlushCacheRoots + work.nDataRoots + work.nBSSRoots + work.nSpanRoots + work.nStackRoots + work.nRescanRoots)
+	work.markrootJobs = uint32(fixedRootCount + work.nFlushCacheRoots + work.nDataRoots + work.nBSSRoots + work.nSpanRoots + work.nStackRoots)
 }
 
 // gcMarkRootCheck checks that all roots have been scanned. It is
@@ -180,8 +183,7 @@ func markroot(gcw *gcWork, i uint32) {
 	baseBSS := baseData + uint32(work.nDataRoots)
 	baseSpans := baseBSS + uint32(work.nBSSRoots)
 	baseStacks := baseSpans + uint32(work.nSpanRoots)
-	baseRescan := baseStacks + uint32(work.nStackRoots)
-	end := baseRescan + uint32(work.nRescanRoots)
+	end := baseStacks + uint32(work.nStackRoots)
 
 	// Note: if you add a case here, please also update heapdump.go:dumproots.
 	switch {
@@ -220,15 +222,8 @@ func markroot(gcw *gcWork, i uint32) {
 	default:
 		// the rest is scanning goroutine stacks
 		var gp *g
-		if baseStacks <= i && i < baseRescan {
+		if baseStacks <= i && i < end {
 			gp = allgs[i-baseStacks]
-		} else if baseRescan <= i && i < end {
-			gp = work.rescan.list[i-baseRescan].ptr()
-			if gp.gcRescan != int32(i-baseRescan) {
-				// Looking for issue #17099.
-				println("runtime: gp", gp, "found at rescan index", i-baseRescan, "but should be at", gp.gcRescan)
-				throw("bad g rescan index")
-			}
 		} else {
 			throw("markroot: bad index")
 		}
@@ -415,6 +410,10 @@ func gcAssistAlloc(gp *g) {
 		return
 	}
 
+	if trace.enabled {
+		traceGCMarkAssistStart()
+	}
+
 retry:
 	// Compute the amount of scan work we need to do to make the
 	// balance positive. When the required amount of work is low,
@@ -450,6 +449,9 @@ retry:
 		if scanWork == 0 {
 			// We were able to steal all of the credit we
 			// needed.
+			if trace.enabled {
+				traceGCMarkAssistDone()
+			}
 			return
 		}
 	}
@@ -495,6 +497,9 @@ retry:
 
 		// At this point either background GC has satisfied
 		// this G's assist debt, or the GC cycle is over.
+	}
+	if trace.enabled {
+		traceGCMarkAssistDone()
 	}
 }
 
@@ -716,10 +721,6 @@ func gcFlushBgCredit(scanWork int64) {
 
 // scanstack scans gp's stack, greying all pointers found on the stack.
 //
-// During mark phase, it also installs stack barriers while traversing
-// gp's stack. During mark termination, it stops scanning when it
-// reaches an unhit stack barrier.
-//
 // scanstack is marked go:systemstack because it must not be preempted
 // while using a workbuf.
 //
@@ -762,94 +763,14 @@ func scanstack(gp *g, gcw *gcWork) {
 		shrinkstack(gp)
 	}
 
-	// Prepare for stack barrier insertion/removal.
-	var sp, barrierOffset, nextBarrier uintptr
-	if gp.syscallsp != 0 {
-		sp = gp.syscallsp
-	} else {
-		sp = gp.sched.sp
-	}
-	gcLockStackBarriers(gp) // Not necessary during mark term, but harmless.
-	switch gcphase {
-	case _GCmark:
-		// Install stack barriers during stack scan.
-		barrierOffset = uintptr(firstStackBarrierOffset)
-		nextBarrier = sp + barrierOffset
-
-		if debug.gcstackbarrieroff > 0 {
-			nextBarrier = ^uintptr(0)
-		}
-
-		// Remove any existing stack barriers before we
-		// install new ones.
-		gcRemoveStackBarriers(gp)
-
-	case _GCmarktermination:
-		if !work.markrootDone {
-			// This is a STW GC. There may be stale stack
-			// barriers from an earlier cycle since we
-			// never passed through mark phase.
-			gcRemoveStackBarriers(gp)
-		}
-
-		if int(gp.stkbarPos) == len(gp.stkbar) {
-			// gp hit all of the stack barriers (or there
-			// were none). Re-scan the whole stack.
-			nextBarrier = ^uintptr(0)
-		} else {
-			// Only re-scan up to the lowest un-hit
-			// barrier. Any frames above this have not
-			// executed since the concurrent scan of gp and
-			// any writes through up-pointers to above
-			// this barrier had write barriers.
-			nextBarrier = gp.stkbar[gp.stkbarPos].savedLRPtr
-			if debugStackBarrier {
-				print("rescan below ", hex(nextBarrier), " in [", hex(sp), ",", hex(gp.stack.hi), ") goid=", gp.goid, "\n")
-			}
-		}
-
-	default:
-		throw("scanstack in wrong phase")
-	}
-
 	// Scan the stack.
 	var cache pcvalueCache
-	n := 0
 	scanframe := func(frame *stkframe, unused unsafe.Pointer) bool {
 		scanframeworker(frame, &cache, gcw)
-
-		if frame.fp > nextBarrier {
-			// We skip installing a barrier on bottom-most
-			// frame because on LR machines this LR is not
-			// on the stack.
-			if gcphase == _GCmark && n != 0 {
-				if gcInstallStackBarrier(gp, frame) {
-					barrierOffset *= 2
-					nextBarrier = sp + barrierOffset
-				}
-			} else if gcphase == _GCmarktermination {
-				// We just scanned a frame containing
-				// a return to a stack barrier. Since
-				// this frame never returned, we can
-				// stop scanning.
-				return false
-			}
-		}
-		n++
-
 		return true
 	}
 	gentraceback(^uintptr(0), ^uintptr(0), 0, gp, 0, nil, 0x7fffffff, scanframe, nil, 0)
 	tracebackdefers(gp, scanframe, nil)
-	gcUnlockStackBarriers(gp)
-	if gcphase == _GCmark {
-		// gp may have added itself to the rescan list between
-		// when GC started and now. It's clean now, so remove
-		// it. This isn't safe during mark termination because
-		// mark termination is consuming this list, but it's
-		// also not necessary.
-		dequeueRescan(gp)
-	}
 	gp.gcscanvalid = true
 }
 
@@ -924,73 +845,6 @@ func scanframeworker(frame *stkframe, cache *pcvalueCache, gcw *gcWork) {
 		}
 		scanblock(frame.argp, uintptr(bv.n)*sys.PtrSize, bv.bytedata, gcw)
 	}
-}
-
-// queueRescan adds gp to the stack rescan list and clears
-// gp.gcscanvalid. The caller must own gp and ensure that gp isn't
-// already on the rescan list.
-func queueRescan(gp *g) {
-	if debug.gcrescanstacks == 0 {
-		// Clear gcscanvalid to keep assertions happy.
-		//
-		// TODO: Remove gcscanvalid entirely when we remove
-		// stack rescanning.
-		gp.gcscanvalid = false
-		return
-	}
-
-	if gcphase == _GCoff {
-		gp.gcscanvalid = false
-		return
-	}
-	if gp.gcRescan != -1 {
-		throw("g already on rescan list")
-	}
-
-	lock(&work.rescan.lock)
-	gp.gcscanvalid = false
-
-	// Recheck gcphase under the lock in case there was a phase change.
-	if gcphase == _GCoff {
-		unlock(&work.rescan.lock)
-		return
-	}
-	if len(work.rescan.list) == cap(work.rescan.list) {
-		throw("rescan list overflow")
-	}
-	n := len(work.rescan.list)
-	gp.gcRescan = int32(n)
-	work.rescan.list = work.rescan.list[:n+1]
-	work.rescan.list[n].set(gp)
-	unlock(&work.rescan.lock)
-}
-
-// dequeueRescan removes gp from the stack rescan list, if gp is on
-// the rescan list. The caller must own gp.
-func dequeueRescan(gp *g) {
-	if debug.gcrescanstacks == 0 {
-		return
-	}
-
-	if gp.gcRescan == -1 {
-		return
-	}
-	if gcphase == _GCoff {
-		gp.gcRescan = -1
-		return
-	}
-
-	lock(&work.rescan.lock)
-	if work.rescan.list[gp.gcRescan].ptr() != gp {
-		throw("bad dequeueRescan")
-	}
-	// Careful: gp may itself be the last G on the list.
-	last := work.rescan.list[len(work.rescan.list)-1]
-	work.rescan.list[gp.gcRescan] = last
-	last.ptr().gcRescan = gp.gcRescan
-	gp.gcRescan = -1
-	work.rescan.list = work.rescan.list[:len(work.rescan.list)-1]
-	unlock(&work.rescan.lock)
 }
 
 type gcDrainFlags int

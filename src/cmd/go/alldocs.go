@@ -17,7 +17,7 @@
 // 	clean       remove object files
 // 	doc         show documentation for package or symbol
 // 	env         print Go environment information
-// 	bug         print information for bug reports
+// 	bug         start a bug report
 // 	fix         run go tool fix on packages
 // 	fmt         run gofmt on package sources
 // 	generate    generate Go files by processing source
@@ -131,16 +131,17 @@
 // 		For example, when building with a non-standard configuration,
 // 		use -pkgdir to keep generated packages in a separate location.
 // 	-tags 'tag list'
-// 		a list of build tags to consider satisfied during the build.
-// 		For more information about build tags, see the description of
+// 		a space-separated list of build tags to consider satisfied during the
+// 		build. For more information about build tags, see the description of
 // 		build constraints in the documentation for the go/build package.
 // 	-toolexec 'cmd args'
 // 		a program to use to invoke toolchain programs like vet and asm.
 // 		For example, instead of running asm, the go command will run
 // 		'cmd args /path/to/asm <arguments for asm>'.
 //
-// The list flags accept a space-separated list of strings. To embed spaces
-// in an element in the list, surround it with either single or double quotes.
+// All the flags that take a list of arguments accept a space-separated
+// list of strings. To embed spaces in an element in the list, surround
+// it with either single or double quotes.
 //
 // For more about specifying packages, see 'go help packages'.
 // For more about where packages and binaries are installed,
@@ -324,15 +325,14 @@
 // each named variable on its own line.
 //
 //
-// Print information for bug reports
+// Start a bug report
 //
 // Usage:
 //
 // 	go bug
 //
-// Bug prints information that helps file effective bug reports.
-//
-// Bugs may be reported at https://golang.org/issue/new.
+// Bug opens the default browser and starts a new bug report.
+// The report includes useful system information.
 //
 //
 // Run go tool fix on packages
@@ -935,6 +935,8 @@
 // unless that directory holds a Go distribution.
 // Run "go env GOPATH" to see the current GOPATH.
 //
+// See https://golang.org/wiki/SettingGOPATH to set a custom GOPATH.
+//
 // Each directory listed in GOPATH must have a prescribed structure:
 //
 // The src directory holds source code.  The path below src
@@ -1474,7 +1476,7 @@
 // 	    text from Log and Logf calls even if the test succeeds.
 //
 // The following flags are also recognized by 'go test' and can be used to
-// profile the tests during execution::
+// profile the tests during execution:
 //
 // 	-benchmem
 // 	    Print memory allocation statistics for benchmarks.
@@ -1517,7 +1519,7 @@
 // 	    Writes test binary as -c would.
 //
 // 	-mutexprofilefraction n
-//  	    Sample 1 in n stack traces of goroutines holding a
+// 	    Sample 1 in n stack traces of goroutines holding a
 // 	    contended mutex.
 //
 // 	-outputdir directory

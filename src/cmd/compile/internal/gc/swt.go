@@ -162,8 +162,13 @@ func typecheckswitch(n *Node) {
 							yyerror("impossible type switch case: %L cannot have dynamic type %v"+
 								" (wrong type for %v method)\n\thave %v%S\n\twant %v%S", n.Left.Right, n1.Type, missing.Sym, have.Sym, have.Type, missing.Sym, missing.Type)
 						} else if !missing.Broke {
-							yyerror("impossible type switch case: %L cannot have dynamic type %v"+
-								" (missing %v method)", n.Left.Right, n1.Type, missing.Sym)
+							if ptr != 0 {
+								yyerror("impossible type switch case: %L cannot have dynamic type %v"+
+									" (%v method has pointer receiver)", n.Left.Right, n1.Type, missing.Sym)
+							} else {
+								yyerror("impossible type switch case: %L cannot have dynamic type %v"+
+									" (missing %v method)", n.Left.Right, n1.Type, missing.Sym)
+							}
 						}
 					}
 				}
@@ -578,7 +583,7 @@ Outer:
 		}
 		for _, n := range prev {
 			if eqtype(n.Left.Type, c.node.Left.Type) {
-				yyerrorl(c.node.Lineno, "duplicate case %v in type switch\n\tprevious case at %v", c.node.Left.Type, n.Line())
+				yyerrorl(c.node.Pos, "duplicate case %v in type switch\n\tprevious case at %v", c.node.Left.Type, n.Line())
 				// avoid double-reporting errors
 				continue Outer
 			}
@@ -724,11 +729,13 @@ func (s *typeSwitch) walk(sw *Node) {
 	// Use a similar strategy for non-empty interfaces.
 
 	// Get interface descriptor word.
-	typ := nod(OITAB, s.facename, nil)
+	// For empty interfaces this will be the type.
+	// For non-empty interfaces this will be the itab.
+	itab := nod(OITAB, s.facename, nil)
 
 	// Check for nil first.
 	i := nod(OIF, nil, nil)
-	i.Left = nod(OEQ, typ, nodnil())
+	i.Left = nod(OEQ, itab, nodnil())
 	if clauses.niljmp != nil {
 		// Do explicit nil case right here.
 		i.Nbody.Set1(clauses.niljmp)
@@ -744,16 +751,16 @@ func (s *typeSwitch) walk(sw *Node) {
 	i.Left = typecheck(i.Left, Erv)
 	cas = append(cas, i)
 
-	if !cond.Right.Type.IsEmptyInterface() {
-		// Load type from itab.
-		typ = itabType(typ)
-	}
-	// Load hash from type.
-	h := nodSym(ODOTPTR, typ, nil)
+	// Load hash from type or itab.
+	h := nodSym(ODOTPTR, itab, nil)
 	h.Type = Types[TUINT32]
 	h.Typecheck = 1
-	h.Xoffset = int64(2 * Widthptr) // offset of hash in runtime._type
-	h.Bounded = true                // guaranteed not to fault
+	if cond.Right.Type.IsEmptyInterface() {
+		h.Xoffset = int64(2 * Widthptr) // offset of hash in runtime._type
+	} else {
+		h.Xoffset = int64(3 * Widthptr) // offset of hash in runtime.itab
+	}
+	h.Bounded = true // guaranteed not to fault
 	a = nod(OAS, s.hashname, h)
 	a = typecheck(a, Etop)
 	cas = append(cas, a)

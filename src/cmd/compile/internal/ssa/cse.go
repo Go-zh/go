@@ -30,23 +30,21 @@ func cse(f *Func) {
 
 	// Make initial coarse partitions by using a subset of the conditions above.
 	a := make([]*Value, 0, f.NumValues())
-	auxIDs := auxmap{}
+	if f.auxmap == nil {
+		f.auxmap = auxmap{}
+	}
 	for _, b := range f.Blocks {
 		for _, v := range b.Values {
-			if auxIDs[v.Aux] == 0 {
-				auxIDs[v.Aux] = int32(len(auxIDs)) + 1
-			}
 			if v.Type.IsMemory() {
 				continue // memory values can never cse
 			}
-			if opcodeTable[v.Op].commutative && len(v.Args) == 2 && v.Args[1].ID < v.Args[0].ID {
-				// Order the arguments of binary commutative operations.
-				v.Args[0], v.Args[1] = v.Args[1], v.Args[0]
+			if f.auxmap[v.Aux] == 0 {
+				f.auxmap[v.Aux] = int32(len(f.auxmap)) + 1
 			}
 			a = append(a, v)
 		}
 	}
-	partition := partitionValues(a, auxIDs)
+	partition := partitionValues(a, f.auxmap)
 
 	// map from value id back to eqclass id
 	valueEqClass := make([]ID, f.NumValues())
@@ -92,6 +90,15 @@ func cse(f *Func) {
 		for i := 0; i < len(partition); i++ {
 			e := partition[i]
 
+			if opcodeTable[e[0].Op].commutative {
+				// Order the first two args before comparison.
+				for _, v := range e {
+					if valueEqClass[v.Args[0].ID] > valueEqClass[v.Args[1].ID] {
+						v.Args[0], v.Args[1] = v.Args[1], v.Args[0]
+					}
+				}
+			}
+
 			// Sort by eq class of arguments.
 			byArgClass.a = e
 			byArgClass.eqClass = valueEqClass
@@ -101,6 +108,7 @@ func cse(f *Func) {
 			splitPoints = append(splitPoints[:0], 0)
 			for j := 1; j < len(e); j++ {
 				v, w := e[j-1], e[j]
+				// Note: commutative args already correctly ordered by byArgClass.
 				eqArgs := true
 				for k, a := range v.Args {
 					b := w.Args[k]

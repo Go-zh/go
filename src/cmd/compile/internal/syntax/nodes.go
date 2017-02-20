@@ -4,32 +4,35 @@
 
 package syntax
 
+import "cmd/internal/src"
+
 // ----------------------------------------------------------------------------
 // Nodes
 
 type Node interface {
-	Line() uint32
+	// Pos() returns the position associated with the node as follows:
+	// 1) The position of a node representing a terminal syntax production
+	//    (Name, BasicLit, etc.) is the position of the respective production
+	//    in the source.
+	// 2) The position of a node representing a non-terminal production
+	//    (IndexExpr, IfStmt, etc.) is the position of a token uniquely
+	//    associated with that production; usually the left-most one
+	//    ('[' for IndexExpr, 'if' for IfStmt, etc.)
+	Pos() src.Pos
 	aNode()
-	init(p *parser)
 }
 
 type node struct {
 	// commented out for now since not yet used
 	// doc  *Comment // nil means no comment(s) attached
-	pos  uint32
-	line uint32
+	pos src.Pos
+}
+
+func (n *node) Pos() src.Pos {
+	return n.pos
 }
 
 func (*node) aNode() {}
-
-func (n *node) Line() uint32 {
-	return n.line
-}
-
-func (n *node) init(p *parser) {
-	n.pos = uint32(p.pos)
-	n.line = uint32(p.line)
-}
 
 // ----------------------------------------------------------------------------
 // Files
@@ -38,7 +41,7 @@ func (n *node) init(p *parser) {
 type File struct {
 	PkgName  *Name
 	DeclList []Decl
-	Lines    int
+	Lines    uint
 	node
 }
 
@@ -74,6 +77,7 @@ type (
 	// Name Type
 	TypeDecl struct {
 		Name   *Name
+		Alias  bool
 		Type   Expr
 		Group  *Group // nil means not part of a group
 		Pragma Pragma
@@ -102,7 +106,7 @@ type (
 		Type    *FuncType
 		Body    []Stmt // nil means no body (forward declaration)
 		Pragma  Pragma // TODO(mdempsky): Cleaner solution.
-		EndLine uint32 // TODO(mdempsky): Cleaner solution.
+		EndLine uint   // TODO(mdempsky): Cleaner solution.
 		decl
 	}
 )
@@ -142,8 +146,8 @@ type (
 	CompositeLit struct {
 		Type     Expr // nil means no literal type
 		ElemList []Expr
-		NKeys    int    // number of elements with keys
-		EndLine  uint32 // TODO(mdempsky): Cleaner solution.
+		NKeys    int  // number of elements with keys
+		EndLine  uint // TODO(mdempsky): Cleaner solution.
 		expr
 	}
 
@@ -157,7 +161,7 @@ type (
 	FuncLit struct {
 		Type    *FuncType
 		Body    []Stmt
-		EndLine uint32 // TODO(mdempsky): Cleaner solution.
+		EndLine uint // TODO(mdempsky): Cleaner solution.
 		expr
 	}
 

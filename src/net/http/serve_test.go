@@ -535,6 +535,56 @@ func TestServerTimeouts(t *testing.T) {
 	}
 }
 
+// Test that the HTTP/2 server handles Server.WriteTimeout (Issue 18437)
+func TestHTTP2WriteDeadlineExtendedOnNewRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	setParallel(t)
+	defer afterTest(t)
+	ts := httptest.NewUnstartedServer(HandlerFunc(func(res ResponseWriter, req *Request) {}))
+	ts.Config.WriteTimeout = 250 * time.Millisecond
+	ts.TLS = &tls.Config{NextProtos: []string{"h2"}}
+	ts.StartTLS()
+	defer ts.Close()
+
+	tr := newTLSTransport(t, ts)
+	defer tr.CloseIdleConnections()
+	if err := ExportHttp2ConfigureTransport(tr); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{Transport: tr}
+
+	for i := 1; i <= 3; i++ {
+		req, err := NewRequest("GET", ts.URL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// fail test if no response after 1 second
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		req = req.WithContext(ctx)
+
+		r, err := c.Do(req)
+		select {
+		case <-ctx.Done():
+			if ctx.Err() == context.DeadlineExceeded {
+				t.Fatalf("http2 Get #%d response timed out", i)
+			}
+		default:
+		}
+		if err != nil {
+			t.Fatalf("http2 Get #%d: %v", i, err)
+		}
+		r.Body.Close()
+		if r.ProtoMajor != 2 {
+			t.Fatalf("http2 Get expected HTTP/2.0, got %q", r.Proto)
+		}
+		time.Sleep(ts.Config.WriteTimeout / 2)
+	}
+}
+
 // golang.org/issue/4741 -- setting only a write timeout that triggers
 // shouldn't cause a handler to block forever on reads (next HTTP
 // request) that will never happen.
@@ -2381,6 +2431,16 @@ func TestStripPrefix(t *testing.T) {
 		t.Errorf("test 2: got status %v, want %v", g, e)
 	}
 	res.Body.Close()
+}
+
+// https://golang.org/issue/18952.
+func TestStripPrefix_notModifyRequest(t *testing.T) {
+	h := StripPrefix("/foo", NotFoundHandler())
+	req := httptest.NewRequest("GET", "/foo/bar", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if req.URL.Path != "/foo/bar" {
+		t.Errorf("StripPrefix should not modify the provided Request, but it did")
+	}
 }
 
 func TestRequestLimit_h1(t *testing.T) { testRequestLimit(t, h1Mode) }
@@ -5037,5 +5097,255 @@ func testServerKeepAlivesEnabled(t *testing.T, h2 bool) {
 	}
 	if !waitCondition(2*time.Second, 10*time.Millisecond, srv.ExportAllConnsIdle) {
 		t.Fatalf("test server has active conns")
+	}
+}
+
+// Issue 18447: test that the Server's ReadTimeout is stopped while
+// the server's doing its 1-byte background read between requests,
+// waiting for the connection to maybe close.
+func TestServerCancelsReadTimeoutWhenIdle(t *testing.T) {
+	setParallel(t)
+	defer afterTest(t)
+	const timeout = 250 * time.Millisecond
+	ts := httptest.NewUnstartedServer(HandlerFunc(func(w ResponseWriter, r *Request) {
+		select {
+		case <-time.After(2 * timeout):
+			fmt.Fprint(w, "ok")
+		case <-r.Context().Done():
+			fmt.Fprint(w, r.Context().Err())
+		}
+	}))
+	ts.Config.ReadTimeout = timeout
+	ts.Start()
+	defer ts.Close()
+
+	tr := &Transport{}
+	defer tr.CloseIdleConnections()
+	c := &Client{Transport: tr}
+
+	res, err := c.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slurp, err := ioutil.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(slurp) != "ok" {
+		t.Fatalf("Got: %q, want ok", slurp)
+	}
+}
+
+// Issue 18535: test that the Server doesn't try to do a background
+// read if it's already done one.
+func TestServerDuplicateBackgroundRead(t *testing.T) {
+	setParallel(t)
+	defer afterTest(t)
+
+	const goroutines = 5
+	const requests = 2000
+
+	hts := httptest.NewServer(HandlerFunc(NotFound))
+	defer hts.Close()
+
+	reqBytes := []byte("GET / HTTP/1.1\r\nHost: e.com\r\n\r\n")
+
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cn, err := net.Dial("tcp", hts.Listener.Addr().String())
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer cn.Close()
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				io.Copy(ioutil.Discard, cn)
+			}()
+
+			for j := 0; j < requests; j++ {
+				if t.Failed() {
+					return
+				}
+				_, err := cn.Write(reqBytes)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// Test that the bufio.Reader returned by Hijack includes any buffered
+// byte (from the Server's backgroundRead) in its buffer. We want the
+// Handler code to be able to tell that a byte is available via
+// bufio.Reader.Buffered(), without resorting to Reading it
+// (potentially blocking) to get at it.
+func TestServerHijackGetsBackgroundByte(t *testing.T) {
+	if runtime.GOOS == "plan9" {
+		t.Skip("skipping test; see https://golang.org/issue/18657")
+	}
+	setParallel(t)
+	defer afterTest(t)
+	done := make(chan struct{})
+	inHandler := make(chan bool, 1)
+	ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, r *Request) {
+		defer close(done)
+
+		// Tell the client to send more data after the GET request.
+		inHandler <- true
+
+		// Wait until the HTTP server sees the extra data
+		// after the GET request. The HTTP server fires the
+		// close notifier here, assuming it's a pipelined
+		// request, as documented.
+		select {
+		case <-w.(CloseNotifier).CloseNotify():
+		case <-time.After(5 * time.Second):
+			t.Error("timeout")
+			return
+		}
+
+		conn, buf, err := w.(Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		n := buf.Reader.Buffered()
+		if n != 1 {
+			t.Errorf("buffered data = %d; want 1", n)
+		}
+		peek, err := buf.Reader.Peek(3)
+		if string(peek) != "foo" || err != nil {
+			t.Errorf("Peek = %q, %v; want foo, nil", peek, err)
+		}
+	}))
+	defer ts.Close()
+
+	cn, err := net.Dial("tcp", ts.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cn.Close()
+	if _, err := cn.Write([]byte("GET / HTTP/1.1\r\nHost: e.com\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	<-inHandler
+	if _, err := cn.Write([]byte("foo")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cn.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("timeout")
+	}
+}
+
+// Like TestServerHijackGetsBackgroundByte above but sending a
+// immediate 1MB of data to the server to fill up the server's 4KB
+// buffer.
+func TestServerHijackGetsBackgroundByte_big(t *testing.T) {
+	if runtime.GOOS == "plan9" {
+		t.Skip("skipping test; see https://golang.org/issue/18657")
+	}
+	setParallel(t)
+	defer afterTest(t)
+	done := make(chan struct{})
+	const size = 8 << 10
+	ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, r *Request) {
+		defer close(done)
+
+		// Wait until the HTTP server sees the extra data
+		// after the GET request. The HTTP server fires the
+		// close notifier here, assuming it's a pipelined
+		// request, as documented.
+		select {
+		case <-w.(CloseNotifier).CloseNotify():
+		case <-time.After(5 * time.Second):
+			t.Error("timeout")
+			return
+		}
+
+		conn, buf, err := w.(Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		slurp, err := ioutil.ReadAll(buf.Reader)
+		if err != nil {
+			t.Errorf("Copy: %v", err)
+		}
+		allX := true
+		for _, v := range slurp {
+			if v != 'x' {
+				allX = false
+			}
+		}
+		if len(slurp) != size {
+			t.Errorf("read %d; want %d", len(slurp), size)
+		} else if !allX {
+			t.Errorf("read %q; want %d 'x'", slurp, size)
+		}
+	}))
+	defer ts.Close()
+
+	cn, err := net.Dial("tcp", ts.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cn.Close()
+	if _, err := fmt.Fprintf(cn, "GET / HTTP/1.1\r\nHost: e.com\r\n\r\n%s",
+		strings.Repeat("x", size)); err != nil {
+		t.Fatal(err)
+	}
+	if err := cn.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("timeout")
+	}
+}
+
+// Issue 18319: test that the Server validates the request method.
+func TestServerValidatesMethod(t *testing.T) {
+	tests := []struct {
+		method string
+		want   int
+	}{
+		{"GET", 200},
+		{"GE(T", 400},
+	}
+	for _, tt := range tests {
+		conn := &testConn{closec: make(chan bool, 1)}
+		io.WriteString(&conn.readBuf, tt.method+" / HTTP/1.1\r\nHost: foo.example\r\n\r\n")
+
+		ln := &oneConnListener{conn}
+		go Serve(ln, serve(200))
+		<-conn.closec
+		res, err := ReadResponse(bufio.NewReader(&conn.writeBuf), nil)
+		if err != nil {
+			t.Errorf("For %s, ReadResponse: %v", tt.method, res)
+			continue
+		}
+		if res.StatusCode != tt.want {
+			t.Errorf("For %s, Status = %d; want %d", tt.method, res.StatusCode, tt.want)
+		}
 	}
 }

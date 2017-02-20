@@ -36,6 +36,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1083,8 +1084,10 @@ func waitNumGoroutine(nmax int) int {
 func TestTransportPersistConnLeak(t *testing.T) {
 	// Not parallel: counts goroutines
 	defer afterTest(t)
-	gotReqCh := make(chan bool)
-	unblockCh := make(chan bool)
+
+	const numReq = 25
+	gotReqCh := make(chan bool, numReq)
+	unblockCh := make(chan bool, numReq)
 	ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, r *Request) {
 		gotReqCh <- true
 		<-unblockCh
@@ -1098,14 +1101,15 @@ func TestTransportPersistConnLeak(t *testing.T) {
 
 	n0 := runtime.NumGoroutine()
 
-	const numReq = 25
-	didReqCh := make(chan bool)
+	didReqCh := make(chan bool, numReq)
+	failed := make(chan bool, numReq)
 	for i := 0; i < numReq; i++ {
 		go func() {
 			res, err := c.Get(ts.URL)
 			didReqCh <- true
 			if err != nil {
 				t.Errorf("client fetch error: %v", err)
+				failed <- true
 				return
 			}
 			res.Body.Close()
@@ -1114,7 +1118,13 @@ func TestTransportPersistConnLeak(t *testing.T) {
 
 	// Wait for all goroutines to be stuck in the Handler.
 	for i := 0; i < numReq; i++ {
-		<-gotReqCh
+		select {
+		case <-gotReqCh:
+			// ok
+		case <-failed:
+			close(unblockCh)
+			return
+		}
 	}
 
 	nhigh := runtime.NumGoroutine()
@@ -2536,6 +2546,13 @@ type closerFunc func() error
 
 func (f closerFunc) Close() error { return f() }
 
+type writerFuncConn struct {
+	net.Conn
+	write func(p []byte) (n int, err error)
+}
+
+func (c writerFuncConn) Write(p []byte) (n int, err error) { return c.write(p) }
+
 // Issue 4677. If we try to reuse a connection that the server is in the
 // process of closing, we may end up successfully writing out our request (or a
 // portion of our request) only to find a connection error when we try to read
@@ -2548,66 +2565,78 @@ func (f closerFunc) Close() error { return f() }
 func TestRetryIdempotentRequestsOnError(t *testing.T) {
 	defer afterTest(t)
 
+	var (
+		mu     sync.Mutex
+		logbuf bytes.Buffer
+	)
+	logf := func(format string, args ...interface{}) {
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Fprintf(&logbuf, format, args...)
+		logbuf.WriteByte('\n')
+	}
+
 	ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, r *Request) {
+		logf("Handler")
+		w.Header().Set("X-Status", "ok")
 	}))
 	defer ts.Close()
 
-	tr := &Transport{}
+	var writeNumAtomic int32
+	tr := &Transport{
+		Dial: func(network, addr string) (net.Conn, error) {
+			logf("Dial")
+			c, err := net.Dial(network, ts.Listener.Addr().String())
+			if err != nil {
+				logf("Dial error: %v", err)
+				return nil, err
+			}
+			return &writerFuncConn{
+				Conn: c,
+				write: func(p []byte) (n int, err error) {
+					if atomic.AddInt32(&writeNumAtomic, 1) == 2 {
+						logf("intentional write failure")
+						return 0, errors.New("second write fails")
+					}
+					logf("Write(%q)", p)
+					return c.Write(p)
+				},
+			}, nil
+		},
+	}
+	defer tr.CloseIdleConnections()
 	c := &Client{Transport: tr}
 
-	const N = 2
-	retryc := make(chan struct{}, N)
 	SetRoundTripRetried(func() {
-		retryc <- struct{}{}
+		logf("Retried.")
 	})
 	defer SetRoundTripRetried(nil)
 
-	for n := 0; n < 100; n++ {
-		// open 2 conns
-		errc := make(chan error, N)
-		for i := 0; i < N; i++ {
-			// start goroutines, send on errc
-			go func() {
-				res, err := c.Get(ts.URL)
-				if err == nil {
-					res.Body.Close()
-				}
-				errc <- err
-			}()
+	for i := 0; i < 3; i++ {
+		res, err := c.Get("http://fake.golang/")
+		if err != nil {
+			t.Fatalf("i=%d: Get = %v", i, err)
 		}
-		for i := 0; i < N; i++ {
-			if err := <-errc; err != nil {
-				t.Fatal(err)
-			}
-		}
-
-		ts.CloseClientConnections()
-		for i := 0; i < N; i++ {
-			go func() {
-				res, err := c.Get(ts.URL)
-				if err == nil {
-					res.Body.Close()
-				}
-				errc <- err
-			}()
-		}
-
-		for i := 0; i < N; i++ {
-			if err := <-errc; err != nil {
-				t.Fatal(err)
-			}
-		}
-		for i := 0; i < N; i++ {
-			select {
-			case <-retryc:
-				// we triggered a retry, test was successful
-				t.Logf("finished after %d runs\n", n)
-				return
-			default:
-			}
-		}
+		res.Body.Close()
 	}
-	t.Fatal("did not trigger any retries")
+
+	mu.Lock()
+	got := logbuf.String()
+	mu.Unlock()
+	const want = `Dial
+Write("GET / HTTP/1.1\r\nHost: fake.golang\r\nUser-Agent: Go-http-client/1.1\r\nAccept-Encoding: gzip\r\n\r\n")
+Handler
+intentional write failure
+Retried.
+Dial
+Write("GET / HTTP/1.1\r\nHost: fake.golang\r\nUser-Agent: Go-http-client/1.1\r\nAccept-Encoding: gzip\r\n\r\n")
+Handler
+Write("GET / HTTP/1.1\r\nHost: fake.golang\r\nUser-Agent: Go-http-client/1.1\r\nAccept-Encoding: gzip\r\n\r\n")
+Handler
+`
+	if got != want {
+		t.Errorf("Log of events differs. Got:\n%s\nWant:\n%s", got, want)
+	}
 }
 
 // Issue 6981
@@ -3397,16 +3426,26 @@ func testTransportEventTrace(t *testing.T, h2 bool, noHooks bool) {
 	}
 }
 
-func TestTransportEventTraceRealDNS(t *testing.T) {
-	if testing.Short() && testenv.Builder() == "" {
-		// Skip this test in short mode (the default for
-		// all.bash), in case the user is using a shady/ISP
-		// DNS server hijacking queries.
-		// See issues 16732, 16716.
-		// Our builders use 8.8.8.8, though, which correctly
-		// returns NXDOMAIN, so still run this test there.
-		t.Skip("skipping in short mode")
+var (
+	isDNSHijackedOnce sync.Once
+	isDNSHijacked     bool
+)
+
+func skipIfDNSHijacked(t *testing.T) {
+	// Skip this test if the user is using a shady/ISP
+	// DNS server hijacking queries.
+	// See issues 16732, 16716.
+	isDNSHijackedOnce.Do(func() {
+		addrs, _ := net.LookupHost("dns-should-not-resolve.golang")
+		isDNSHijacked = len(addrs) != 0
+	})
+	if isDNSHijacked {
+		t.Skip("skipping; test requires non-hijacking DNS server")
 	}
+}
+
+func TestTransportEventTraceRealDNS(t *testing.T) {
+	skipIfDNSHijacked(t)
 	defer afterTest(t)
 	tr := &Transport{}
 	defer tr.CloseIdleConnections()

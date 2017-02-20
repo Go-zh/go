@@ -148,7 +148,11 @@ const (
 	_MHeapMap_TotalBits = (_64bit*sys.GoosWindows)*35 + (_64bit*(1-sys.GoosWindows)*(1-sys.GoosDarwin*sys.GoarchArm64))*39 + sys.GoosDarwin*sys.GoarchArm64*31 + (1-_64bit)*(32-(sys.GoarchMips+sys.GoarchMipsle))
 	_MHeapMap_Bits      = _MHeapMap_TotalBits - _PageShift
 
-	_MaxMem = uintptr(1<<_MHeapMap_TotalBits - 1)
+	// _MaxMem is the maximum heap arena size minus 1.
+	//
+	// On 32-bit, this is also the maximum heap pointer value,
+	// since the arena starts at address 0.
+	_MaxMem = 1<<_MHeapMap_TotalBits - 1
 
 	// Max number of threads to run garbage collection.
 	// 2, 3, and 4 are all plausible maximums depending
@@ -156,7 +160,12 @@ const (
 	// collector scales well to 32 cpus.
 	_MaxGcproc = 32
 
-	_MaxArena32 = 1<<32 - 1
+	// minLegalPointer is the smallest possible legal pointer.
+	// This is the smallest possible architectural page size,
+	// since we assume that the first page is never mapped.
+	//
+	// This should agree with minZeroPage in the compiler.
+	minLegalPointer uintptr = 4096
 )
 
 // physPageSize is the size in bytes of the OS's physical pages.
@@ -231,18 +240,21 @@ func mallocinit() {
 		throw("bad system page size")
 	}
 
-	var p, bitmapSize, spansSize, pSize, limit uintptr
+	// The auxiliary regions start at p and are laid out in the
+	// following order: spans, bitmap, arena.
+	var p, pSize uintptr
 	var reserved bool
 
-	// limit = runtime.memlimit();
-	// See https://golang.org/issue/5049
-	// TODO(rsc): Fix after 1.1.
-	limit = 0
+	// The spans array holds one *mspan per _PageSize of arena.
+	var spansSize uintptr = (_MaxMem + 1) / _PageSize * sys.PtrSize
+	spansSize = round(spansSize, _PageSize)
+	// The bitmap holds 2 bits per word of arena.
+	var bitmapSize uintptr = (_MaxMem + 1) / (sys.PtrSize * 8 / 2)
+	bitmapSize = round(bitmapSize, _PageSize)
 
 	// Set up the allocation arena, a contiguous area of memory where
-	// allocated data will be found. The arena begins with a bitmap large
-	// enough to hold 2 bits per allocated word.
-	if sys.PtrSize == 8 && (limit == 0 || limit > 1<<30) {
+	// allocated data will be found.
+	if sys.PtrSize == 8 {
 		// On a 64-bit machine, allocate from a single contiguous reservation.
 		// 512 GB (MaxMem) should be big enough for now.
 		//
@@ -273,9 +285,7 @@ func mallocinit() {
 		// translation buffers, the user address space is limited to 39 bits
 		// On darwin/arm64, the address space is even smaller.
 		arenaSize := round(_MaxMem, _PageSize)
-		bitmapSize = arenaSize / (sys.PtrSize * 8 / 2)
-		spansSize = arenaSize / _PageSize * sys.PtrSize
-		spansSize = round(spansSize, _PageSize)
+		pSize = bitmapSize + spansSize + arenaSize + _PageSize
 		for i := 0; i <= 0x7f; i++ {
 			switch {
 			case GOARCH == "arm64" && GOOS == "darwin":
@@ -285,7 +295,6 @@ func mallocinit() {
 			default:
 				p = uintptr(i)<<40 | uintptrMask&(0x00c0<<32)
 			}
-			pSize = bitmapSize + spansSize + arenaSize + _PageSize
 			p = uintptr(sysReserve(unsafe.Pointer(p), pSize, &reserved))
 			if p != 0 {
 				break
@@ -316,15 +325,6 @@ func mallocinit() {
 		}
 
 		for _, arenaSize := range arenaSizes {
-			bitmapSize = (_MaxArena32 + 1) / (sys.PtrSize * 8 / 2)
-			spansSize = (_MaxArena32 + 1) / _PageSize * sys.PtrSize
-			if limit > 0 && arenaSize+bitmapSize+spansSize > limit {
-				bitmapSize = (limit / 9) &^ ((1 << _PageShift) - 1)
-				arenaSize = bitmapSize * 8
-				spansSize = arenaSize / _PageSize * sys.PtrSize
-			}
-			spansSize = round(spansSize, _PageSize)
-
 			// SysReserve treats the address we ask for, end, as a hint,
 			// not as an absolute requirement. If we ask for the end
 			// of the data segment but the operating system requires
@@ -350,18 +350,21 @@ func mallocinit() {
 	// so SysReserve can give us a PageSize-unaligned pointer.
 	// To overcome this we ask for PageSize more and round up the pointer.
 	p1 := round(p, _PageSize)
+	pSize -= p1 - p
 
 	spansStart := p1
-	mheap_.bitmap = p1 + spansSize + bitmapSize
+	p1 += spansSize
+	mheap_.bitmap = p1 + bitmapSize
+	p1 += bitmapSize
 	if sys.PtrSize == 4 {
 		// Set arena_start such that we can accept memory
 		// reservations located anywhere in the 4GB virtual space.
 		mheap_.arena_start = 0
 	} else {
-		mheap_.arena_start = p1 + (spansSize + bitmapSize)
+		mheap_.arena_start = p1
 	}
 	mheap_.arena_end = p + pSize
-	mheap_.arena_used = p1 + (spansSize + bitmapSize)
+	mheap_.arena_used = p1
 	mheap_.arena_reserved = reserved
 
 	if mheap_.arena_start&(_PageSize-1) != 0 {
@@ -381,11 +384,11 @@ func mallocinit() {
 // There is no corresponding free function.
 func (h *mheap) sysAlloc(n uintptr) unsafe.Pointer {
 	if n > h.arena_end-h.arena_used {
-		// We are in 32-bit mode, maybe we didn't use all possible address space yet.
-		// Reserve some more space.
+		// If we haven't grown the arena to _MaxMem yet, try
+		// to reserve some more address space.
 		p_size := round(n+_PageSize, 256<<20)
 		new_end := h.arena_end + p_size // Careful: can overflow
-		if h.arena_end <= new_end && new_end-h.arena_start-1 <= _MaxArena32 {
+		if h.arena_end <= new_end && new_end-h.arena_start-1 <= _MaxMem {
 			// TODO: It would be bad if part of the arena
 			// is reserved and part is not.
 			var reserved bool
@@ -396,7 +399,7 @@ func (h *mheap) sysAlloc(n uintptr) unsafe.Pointer {
 			if p == h.arena_end {
 				h.arena_end = new_end
 				h.arena_reserved = reserved
-			} else if h.arena_start <= p && p+p_size-h.arena_start-1 <= _MaxArena32 {
+			} else if h.arena_start <= p && p+p_size-h.arena_start-1 <= _MaxMem {
 				// Keep everything page-aligned.
 				// Our pages are bigger than hardware pages.
 				h.arena_end = p + p_size
@@ -433,7 +436,7 @@ func (h *mheap) sysAlloc(n uintptr) unsafe.Pointer {
 	}
 
 	// If using 64-bit, our reservation is all we have.
-	if h.arena_end-h.arena_start > _MaxArena32 {
+	if sys.PtrSize != 4 {
 		return nil
 	}
 
@@ -445,11 +448,10 @@ func (h *mheap) sysAlloc(n uintptr) unsafe.Pointer {
 		return nil
 	}
 
-	if p < h.arena_start || p+p_size-h.arena_start > _MaxArena32 {
-		top := ^uintptr(0)
-		if top-h.arena_start-1 > _MaxArena32 {
-			top = h.arena_start + _MaxArena32 + 1
-		}
+	if p < h.arena_start || p+p_size-h.arena_start > _MaxMem {
+		// This shouldn't be possible because _MaxMem is the
+		// whole address space on 32-bit.
+		top := uint64(h.arena_start) + _MaxMem
 		print("runtime: memory allocated by OS (", hex(p), ") not in usable range [", hex(h.arena_start), ",", hex(top), ")\n")
 		sysFree(unsafe.Pointer(p), p_size, &memstats.heap_sys)
 		return nil
@@ -875,7 +877,7 @@ func nextSampleNoFP() int32 {
 		rate = 0x3fffffff
 	}
 	if rate != 0 {
-		return int32(int(fastrand()) % (2 * rate))
+		return int32(fastrand() % uint32(2*rate))
 	}
 	return 0
 }

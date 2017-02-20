@@ -114,7 +114,7 @@ func opregreg(op obj.As, dest, src int16) *obj.Prog {
 }
 
 func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
-	s.SetLineno(v.Line)
+	s.SetPos(v.Pos)
 
 	if gc.Thearch.Use387 {
 		if ssaGenValue387(s, v) {
@@ -291,6 +291,25 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(v.Op.Asm())
 		p.From.Type = obj.TYPE_REG
 		p.From.Reg = v.Args[1].Reg()
+
+	case ssa.Op386AVGLU:
+		// compute (x+y)/2 unsigned.
+		// Do a 32-bit add, the overflow goes into the carry.
+		// Shift right once and pull the carry back into the 31st bit.
+		r := v.Reg()
+		if r != v.Args[0].Reg() {
+			v.Fatalf("input[0] and output not in same register %s", v.LongString())
+		}
+		p := gc.Prog(x86.AADDL)
+		p.From.Type = obj.TYPE_REG
+		p.To.Type = obj.TYPE_REG
+		p.To.Reg = r
+		p.From.Reg = v.Args[1].Reg()
+		p = gc.Prog(x86.ARCRL)
+		p.From.Type = obj.TYPE_CONST
+		p.From.Offset = 1
+		p.To.Type = obj.TYPE_REG
+		p.To.Reg = r
 
 	case ssa.Op386ADDLconst:
 		r := v.Reg()
@@ -587,12 +606,12 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 	case ssa.Op386DUFFZERO:
 		p := gc.Prog(obj.ADUFFZERO)
 		p.To.Type = obj.TYPE_ADDR
-		p.To.Sym = gc.Linksym(gc.Pkglookup("duffzero", gc.Runtimepkg))
+		p.To.Sym = gc.Duffzero
 		p.To.Offset = v.AuxInt
 	case ssa.Op386DUFFCOPY:
 		p := gc.Prog(obj.ADUFFCOPY)
 		p.To.Type = obj.TYPE_ADDR
-		p.To.Sym = gc.Linksym(gc.Pkglookup("duffcopy", gc.Runtimepkg))
+		p.To.Sym = gc.Duffcopy
 		p.To.Offset = v.AuxInt
 
 	case ssa.OpCopy, ssa.Op386MOVLconvert: // TODO: use MOVLreg for reg->reg copies instead of OpCopy?
@@ -660,7 +679,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 			q.To.Reg = r
 		}
 	case ssa.Op386CALLstatic:
-		if v.Aux.(*gc.Sym) == gc.Deferreturn.Sym {
+		if v.Aux.(*obj.LSym) == gc.Deferreturn {
 			// Deferred calls will appear to be returning to
 			// the CALL deferreturn(SB) that we are about to emit.
 			// However, the stack trace code will show the line
@@ -674,7 +693,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(v.Aux.(*gc.Sym))
+		p.To.Sym = v.Aux.(*obj.LSym)
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -689,7 +708,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(gc.Deferproc.Sym)
+		p.To.Sym = gc.Deferproc
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -697,7 +716,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(gc.Newproc.Sym)
+		p.To.Sym = gc.Newproc
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -788,8 +807,8 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p.To.Type = obj.TYPE_MEM
 		p.To.Reg = v.Args[0].Reg()
 		gc.AddAux(&p.To, v)
-		if gc.Debug_checknil != 0 && v.Line > 1 { // v.Line==1 in generated wrappers
-			gc.Warnl(v.Line, "generated nil check")
+		if gc.Debug_checknil != 0 && v.Pos.Line() > 1 { // v.Pos.Line()==1 in generated wrappers
+			gc.Warnl(v.Pos, "generated nil check")
 		}
 	case ssa.Op386FCHS:
 		v.Fatalf("FCHS in non-387 mode")
@@ -825,7 +844,7 @@ var nefJumps = [2][2]gc.FloatingEQNEJump{
 }
 
 func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
-	s.SetLineno(b.Line)
+	s.SetPos(b.Pos)
 
 	if gc.Thearch.Use387 {
 		// Empty the 387's FP stack before the block ends.
@@ -864,7 +883,7 @@ func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
 		p := gc.Prog(obj.AJMP)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(b.Aux.(*gc.Sym))
+		p.To.Sym = b.Aux.(*obj.LSym)
 
 	case ssa.Block386EQF:
 		gc.SSAGenFPJump(s, b, next, &eqfJumps)

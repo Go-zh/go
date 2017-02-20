@@ -6,6 +6,7 @@ package gc
 
 import (
 	"cmd/internal/obj"
+	"cmd/internal/src"
 	"fmt"
 	"math"
 	"strings"
@@ -35,8 +36,11 @@ func resolve(n *Node) *Node {
 		if r != nil {
 			if r.Op != OIOTA {
 				n = r
-			} else if n.Iota() >= 0 {
-				n = nodintconst(n.Iota())
+			} else if len(typecheckdefstack) > 0 {
+				x := typecheckdefstack[len(typecheckdefstack)-1]
+				if x.Op == OLITERAL {
+					n = nodintconst(x.Iota())
+				}
 			}
 		}
 	}
@@ -96,16 +100,16 @@ func typekind(t *Type) string {
 	return fmt.Sprintf("etype=%d", et)
 }
 
-// sprint_depchain prints a dependency chain of nodes into fmt.
+// sprint_depchain prints a dependency chain of nodes into trace.
 // It is used by typecheck in the case of OLITERAL nodes
 // to print constant definition loops.
-func sprint_depchain(fmt_ *string, stack []*Node, cur *Node, first *Node) {
+func sprint_depchain(trace *string, stack []*Node, cur *Node, first *Node) {
 	for i := len(stack) - 1; i >= 0; i-- {
 		if n := stack[i]; n.Op == cur.Op {
 			if n != first {
-				sprint_depchain(fmt_, stack[:i], n, first)
+				sprint_depchain(trace, stack[:i], n, first)
 			}
-			*fmt_ += fmt.Sprintf("\n\t%v: %v uses %v", n.Line(), n, cur)
+			*trace += fmt.Sprintf("\n\t%v: %v uses %v", n.Line(), n, cur)
 			return
 		}
 	}
@@ -152,7 +156,6 @@ func typecheck(n *Node, top int) *Node {
 	if n.Typecheck == 2 {
 		// Typechecking loop. Trying printing a meaningful message,
 		// otherwise a stack trace of typechecking.
-		var fmt_ string
 		switch n.Op {
 		// We can already diagnose variables used as types.
 		case ONAME:
@@ -160,22 +163,30 @@ func typecheck(n *Node, top int) *Node {
 				yyerror("%v is not a type", n)
 			}
 
+		case OTYPE:
+			if top&Etype == Etype {
+				var trace string
+				sprint_depchain(&trace, typecheck_tcstack, n, n)
+				yyerrorl(n.Pos, "invalid recursive type alias %v%s", n, trace)
+			}
+
 		case OLITERAL:
 			if top&(Erv|Etype) == Etype {
 				yyerror("%v is not a type", n)
 				break
 			}
-			sprint_depchain(&fmt_, typecheck_tcstack, n, n)
-			yyerrorl(n.Lineno, "constant definition loop%s", fmt_)
+			var trace string
+			sprint_depchain(&trace, typecheck_tcstack, n, n)
+			yyerrorl(n.Pos, "constant definition loop%s", trace)
 		}
 
 		if nsavederrors+nerrors == 0 {
-			fmt_ = ""
+			var trace string
 			for i := len(typecheck_tcstack) - 1; i >= 0; i-- {
 				x := typecheck_tcstack[i]
-				fmt_ += fmt.Sprintf("\n\t%v %v", x.Line(), x)
+				trace += fmt.Sprintf("\n\t%v %v", x.Line(), x)
 			}
-			yyerror("typechecking loop involving %v%s", n, fmt_)
+			yyerror("typechecking loop involving %v%s", n, trace)
 		}
 
 		lineno = lno
@@ -414,7 +425,7 @@ OpSwitch:
 		if alg == ANOEQ {
 			if bad.Etype == TFORW {
 				// queue check for map until all the types are done settling.
-				mapqueue = append(mapqueue, mapqueueval{l, n.Lineno})
+				mapqueue = append(mapqueue, mapqueueval{l, n.Pos})
 			} else if bad.Etype != TANY {
 				// no need to queue, key is already bad
 				yyerror("invalid map key type %v", l.Type)
@@ -859,7 +870,7 @@ OpSwitch:
 			}
 
 			if n.Type.Etype != TFUNC || !n.IsMethod() {
-				yyerror("type %v has no method %S", n.Left.Type, n.Right.Sym)
+				yyerror("type %v has no method %S", n.Left.Type, n.Sym)
 				n.Type = nil
 				return n
 			}
@@ -1310,7 +1321,7 @@ OpSwitch:
 
 		// any side effects disappear; ignore init
 		var r Node
-		Nodconst(&r, Types[TUINTPTR], evalunsafe(n))
+		nodconst(&r, Types[TUINTPTR], evalunsafe(n))
 		r.Orig = n
 		n = &r
 
@@ -1365,7 +1376,7 @@ OpSwitch:
 		case TSTRING:
 			if Isconst(l, CTSTR) {
 				var r Node
-				Nodconst(&r, Types[TINT], int64(len(l.Val().U.(string))))
+				nodconst(&r, Types[TINT], int64(len(l.Val().U.(string))))
 				r.Orig = n
 				n = &r
 			}
@@ -1375,7 +1386,7 @@ OpSwitch:
 				break
 			}
 			var r Node
-			Nodconst(&r, Types[TINT], t.NumElem())
+			nodconst(&r, Types[TINT], t.NumElem())
 			r.Orig = n
 			n = &r
 		}
@@ -2871,10 +2882,7 @@ func typecheckcomplit(n *Node) *Node {
 	}()
 
 	if n.Right == nil {
-		if n.List.Len() != 0 {
-			setlineno(n.List.First())
-		}
-		yyerror("missing type in composite literal")
+		yyerrorl(n.Pos, "missing type in composite literal")
 		n.Type = nil
 		return n
 	}
@@ -3429,7 +3437,14 @@ func typecheckfunc(n *Node) {
 	t.SetNname(n.Func.Nname)
 	rcvr := t.Recv()
 	if rcvr != nil && n.Func.Shortname != nil {
-		addmethod(n.Func.Shortname.Sym, t, true, n.Func.Pragma&Nointerface != 0)
+		n.Func.Nname.Sym = methodname(n.Func.Shortname, rcvr.Type)
+		declare(n.Func.Nname, PFUNC)
+
+		addmethod(n.Func.Shortname, t, true, n.Func.Pragma&Nointerface != 0)
+	}
+
+	if Ctxt.Flag_dynlink && importpkg == nil && n.Func.Nname != nil {
+		makefuncsym(n.Func.Nname.Sym)
 	}
 }
 
@@ -3499,7 +3514,7 @@ func domethod(n *Node) {
 
 type mapqueueval struct {
 	n   *Node
-	lno int32
+	lno src.XPos
 }
 
 // tracks the line numbers at which forward types are first used as map keys
@@ -3547,7 +3562,7 @@ func copytype(n *Node, t *Type) {
 	// Double-check use of type as embedded type.
 	lno := lineno
 
-	if embedlineno != 0 {
+	if embedlineno.IsKnown() {
 		lineno = embedlineno
 		if t.IsPtr() || t.IsUnsafePtr() {
 			yyerror("embedded type cannot be a pointer")
@@ -3578,8 +3593,6 @@ func typecheckdeftype(n *Node) {
 
 	// copy new type and clear fields
 	// that don't come along.
-	// anything zeroed here must be zeroed in
-	// typedcl2 too.
 	copytype(n, t)
 
 ret:
@@ -3628,15 +3641,23 @@ func typecheckdef(n *Node) *Node {
 	if n.Op == ONONAME {
 		if !n.Diag {
 			n.Diag = true
-			if n.Lineno != 0 {
-				lineno = n.Lineno
+			if n.Pos.IsKnown() {
+				lineno = n.Pos
 			}
 
-			// Note: adderrorname looks for this string and
-			// adds context about the outer expression
-			yyerror("undefined: %v", n.Sym)
+			switch n.Sym.Name {
+			case "init":
+				// As per the spec at:
+				//  https://golang.org/ref/spec#Program_initialization_and_execution
+				// init cannot be referred to in usercode.
+				// See https://golang.org/issues/8481.
+				yyerror("cannot refer to init functions")
+			default:
+				// Note: adderrorname looks for this string and
+				// adds context about the outer expression
+				yyerror("undefined: %v", n.Sym)
+			}
 		}
-
 		return n
 	}
 
@@ -3683,7 +3704,7 @@ func typecheckdef(n *Node) *Node {
 		e := n.Name.Defn
 		n.Name.Defn = nil
 		if e == nil {
-			lineno = n.Lineno
+			lineno = n.Pos
 			Dump("typecheckdef nil defn", n)
 			yyerror("xxx")
 		}
@@ -3758,12 +3779,29 @@ func typecheckdef(n *Node) *Node {
 		n.Name.Defn = typecheck(n.Name.Defn, Etop) // fills in n->type
 
 	case OTYPE:
+		if p := n.Name.Param; p.Alias {
+			// Type alias declaration: Simply use the rhs type - no need
+			// to create a new type.
+			// If we have a syntax error, p.Ntype may be nil.
+			if p.Ntype != nil {
+				p.Ntype = typecheck(p.Ntype, Etype)
+				n.Type = p.Ntype.Type
+				if n.Type == nil {
+					n.Diag = true
+					goto ret
+				}
+				n.Sym.Def = p.Ntype
+			}
+			break
+		}
+
+		// regular type declaration
 		if Curfn != nil {
 			defercheckwidth()
 		}
 		n.Walkdef = 1
 		n.Type = typ(TFORW)
-		n.Type.Sym = n.Sym
+		n.Type.Sym = n.Sym // TODO(gri) this also happens in typecheckdeftype(n) - where should it happen?
 		nerrors0 := nerrors
 		typecheckdeftype(n)
 		if n.Type.Etype == TFORW && nerrors > nerrors0 {
@@ -3771,7 +3809,6 @@ func typecheckdef(n *Node) *Node {
 			// but it was reported. Silence future errors.
 			n.Type.Broke = true
 		}
-
 		if Curfn != nil {
 			resumecheckwidth()
 		}

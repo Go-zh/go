@@ -75,11 +75,24 @@ no7:
 	TESTL   $(1<<5), runtime·cpuid_ebx7(SB) // check for AVX2 bit
 	JEQ     noavx2
 	MOVB    $1, runtime·support_avx2(SB)
-	JMP     nocpuinfo
+	JMP     testbmi1
 noavx:
 	MOVB    $0, runtime·support_avx(SB)
 noavx2:
 	MOVB    $0, runtime·support_avx2(SB)
+testbmi1:
+	// Detect BMI1 and BMI2 extensions as per
+	// 5.1.16.1 Detection of VEX-encoded GPR Instructions,
+	//   LZCNT and TZCNT, PREFETCHW chapter of [1]
+	MOVB    $0, runtime·support_bmi1(SB)
+	TESTL   $(1<<3), runtime·cpuid_ebx7(SB) // check for BMI1 bit
+	JEQ     testbmi2
+	MOVB    $1, runtime·support_bmi1(SB)
+testbmi2:
+	MOVB    $0, runtime·support_bmi2(SB)
+	TESTL   $(1<<8), runtime·cpuid_ebx7(SB) // check for BMI2 bit
+	JEQ     nocpuinfo
+	MOVB    $1, runtime·support_bmi2(SB)
 nocpuinfo:	
 	
 	// if there is an _cgo_init, call it.
@@ -391,28 +404,6 @@ TEXT runtime·morestack(SB),NOSPLIT,$0-0
 TEXT runtime·morestack_noctxt(SB),NOSPLIT,$0
 	MOVL	$0, DX
 	JMP	runtime·morestack(SB)
-
-TEXT runtime·stackBarrier(SB),NOSPLIT,$0
-	// We came here via a RET to an overwritten return PC.
-	// AX may be live. Other registers are available.
-
-	// Get the original return PC, g.stkbar[g.stkbarPos].savedLRVal.
-	get_tls(CX)
-	MOVQ	g(CX), CX
-	MOVQ	(g_stkbar+slice_array)(CX), DX
-	MOVQ	g_stkbarPos(CX), BX
-	IMULQ	$stkbar__size, BX	// Too big for SIB.
-	MOVQ	stkbar_savedLRPtr(DX)(BX*1), R8
-	MOVQ	stkbar_savedLRVal(DX)(BX*1), BX
-	// Assert that we're popping the right saved LR.
-	ADDQ	$8, R8
-	CMPQ	R8, SP
-	JEQ	2(PC)
-	MOVL	$0, 0
-	// Record that this stack barrier was hit.
-	ADDQ	$1, g_stkbarPos(CX)
-	// Jump to the original return PC.
-	JMP	BX
 
 // reflectcall: call a function with the given argument list
 // func call(argtype *_type, f *FuncVal, arg *byte, argsize, retoffset uint32).
@@ -828,27 +819,13 @@ TEXT runtime·stackcheck(SB), NOSPLIT, $0-0
 TEXT runtime·getcallerpc(SB),NOSPLIT,$8-16
 	MOVQ	argp+0(FP),AX		// addr of first arg
 	MOVQ	-8(AX),AX		// get calling pc
-	CMPQ	AX, runtime·stackBarrierPC(SB)
-	JNE	nobar
-	// Get original return PC.
-	CALL	runtime·nextBarrierPC(SB)
-	MOVQ	0(SP), AX
-nobar:
 	MOVQ	AX, ret+8(FP)
 	RET
 
 TEXT runtime·setcallerpc(SB),NOSPLIT,$8-16
 	MOVQ	argp+0(FP),AX		// addr of first arg
 	MOVQ	pc+8(FP), BX
-	MOVQ	-8(AX), CX
-	CMPQ	CX, runtime·stackBarrierPC(SB)
-	JEQ	setbar
 	MOVQ	BX, -8(AX)		// set calling pc
-	RET
-setbar:
-	// Set the stack barrier return PC.
-	MOVQ	BX, 0(SP)
-	CALL	runtime·setNextBarrierPC(SB)
 	RET
 
 // func cputicks() int64
@@ -2148,19 +2125,6 @@ TEXT bytes·Equal(SB),NOSPLIT,$0-49
 	JMP	runtime·memeqbody(SB)
 eqret:
 	MOVB	$0, ret+48(FP)
-	RET
-
-TEXT runtime·fastrand(SB), NOSPLIT, $0-4
-	get_tls(CX)
-	MOVQ	g(CX), AX
-	MOVQ	g_m(AX), AX
-	MOVL	m_fastrand(AX), DX
-	ADDL	DX, DX
-	MOVL	DX, BX
-	XORL	$0x88888eef, DX
-	CMOVLMI	BX, DX
-	MOVL	DX, m_fastrand(AX)
-	MOVL	DX, ret+0(FP)
 	RET
 
 TEXT runtime·return0(SB), NOSPLIT, $0

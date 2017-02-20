@@ -30,6 +30,8 @@ type ReverseProxy struct {
 	// the request into a new request to be sent
 	// using Transport. Its response is then copied
 	// back to the original client unmodified.
+	// Director must not access the provided Request
+	// after returning.
 	Director func(*http.Request)
 
 	// The transport used to perform proxy requests.
@@ -147,12 +149,10 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}()
 	}
 
-	outreq := new(http.Request)
-	*outreq = *req // includes shallow copies of maps, but okay
+	outreq := req.WithContext(ctx) // includes shallow copies of maps, but okay
 	if req.ContentLength == 0 {
 		outreq.Body = nil // Issue 16036: nil Body for http.Transport retries
 	}
-	outreq = outreq.WithContext(ctx)
 
 	p.Director(outreq)
 	outreq.Close = false
@@ -286,7 +286,7 @@ func (p *ReverseProxy) copyBuffer(dst io.Writer, src io.Reader, buf []byte) (int
 	var written int64
 	for {
 		nr, rerr := src.Read(buf)
-		if rerr != nil && rerr != io.EOF {
+		if rerr != nil && rerr != io.EOF && rerr != context.Canceled {
 			p.logf("httputil: ReverseProxy read error during body copy: %v", rerr)
 		}
 		if nr > 0 {

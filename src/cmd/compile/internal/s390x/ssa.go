@@ -156,7 +156,7 @@ func opregregimm(op obj.As, dest, src int16, off int64) *obj.Prog {
 }
 
 func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
-	s.SetLineno(v.Line)
+	s.SetPos(v.Pos)
 	switch v.Op {
 	case ssa.OpS390XSLD, ssa.OpS390XSLW,
 		ssa.OpS390XSRD, ssa.OpS390XSRW,
@@ -424,7 +424,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p.To.Type = obj.TYPE_MEM
 		p.To.Reg = v.Args[0].Reg()
 		gc.AddAux2(&p.To, v, sc.Off())
-	case ssa.OpCopy, ssa.OpS390XMOVDconvert:
+	case ssa.OpCopy, ssa.OpS390XMOVDconvert, ssa.OpS390XMOVDreg:
 		if v.Type.IsMemory() {
 			return
 		}
@@ -433,6 +433,11 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		if x != y {
 			opregreg(moveByType(v.Type), y, x)
 		}
+	case ssa.OpS390XMOVDnop:
+		if v.Reg() != v.Args[0].Reg() {
+			v.Fatalf("input[0] and output not in same register %s", v.LongString())
+		}
+		// nothing to do
 	case ssa.OpLoadReg:
 		if v.Type.IsFlags() {
 			v.Fatalf("load flags not implemented: %v", v.LongString())
@@ -468,7 +473,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p.To.Type = obj.TYPE_REG
 		p.To.Reg = r
 	case ssa.OpS390XCALLstatic:
-		if v.Aux.(*gc.Sym) == gc.Deferreturn.Sym {
+		if v.Aux.(*obj.LSym) == gc.Deferreturn {
 			// Deferred calls will appear to be returning to
 			// the CALL deferreturn(SB) that we are about to emit.
 			// However, the stack trace code will show the line
@@ -482,7 +487,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(v.Aux.(*gc.Sym))
+		p.To.Sym = v.Aux.(*obj.LSym)
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -497,7 +502,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(gc.Deferproc.Sym)
+		p.To.Sym = gc.Deferproc
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -505,7 +510,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p := gc.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(gc.Newproc.Sym)
+		p.To.Sym = gc.Newproc
 		if gc.Maxarg < v.AuxInt {
 			gc.Maxarg = v.AuxInt
 		}
@@ -570,8 +575,8 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		gc.AddAux(&p.From, v)
 		p.To.Type = obj.TYPE_REG
 		p.To.Reg = s390x.REGTMP
-		if gc.Debug_checknil != 0 && v.Line > 1 { // v.Line==1 in generated wrappers
-			gc.Warnl(v.Line, "generated nil check")
+		if gc.Debug_checknil != 0 && v.Pos.Line() > 1 { // v.Pos.Line()==1 in generated wrappers
+			gc.Warnl(v.Pos, "generated nil check")
 		}
 	case ssa.OpS390XMVC:
 		vo := v.AuxValAndOff()
@@ -796,7 +801,7 @@ var blockJump = [...]struct {
 }
 
 func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
-	s.SetLineno(b.Line)
+	s.SetPos(b.Pos)
 
 	switch b.Kind {
 	case ssa.BlockPlain:
@@ -830,7 +835,7 @@ func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
 		p := gc.Prog(s390x.ABR)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = gc.Linksym(b.Aux.(*gc.Sym))
+		p.To.Sym = b.Aux.(*obj.LSym)
 	case ssa.BlockS390XEQ, ssa.BlockS390XNE,
 		ssa.BlockS390XLT, ssa.BlockS390XGE,
 		ssa.BlockS390XLE, ssa.BlockS390XGT,

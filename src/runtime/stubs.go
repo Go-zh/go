@@ -93,8 +93,22 @@ func reflect_memmove(to, from unsafe.Pointer, n uintptr) {
 // exported value for testing
 var hashLoad = loadFactor
 
-// in asm_*.s
-func fastrand() uint32
+//go:nosplit
+func fastrand() uint32 {
+	mp := getg().m
+	fr := mp.fastrand
+	mx := uint32(int32(fr)>>31) & 0xa8888eef
+	fr = fr<<1 ^ mx
+	mp.fastrand = fr
+	return fr
+}
+
+//go:nosplit
+func fastrandn(n uint32) uint32 {
+	// This is similar to fastrand() % n, but faster.
+	// See http://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
+	return uint32(uint64(fastrand()) * uint64(n) >> 32)
+}
 
 //go:linkname sync_fastrand sync.fastrand
 func sync_fastrand() uint32 { return fastrand() }
@@ -150,7 +164,7 @@ type neverCallThisFunction struct{}
 // This function must never be called directly. Call goexit1 instead.
 // gentraceback assumes that goexit terminates the stack. A direct
 // call on the stack will cause gentraceback to stop walking the stack
-// prematurely and if there are leftover stack barriers it may panic.
+// prematurely and if there is leftover state it may panic.
 func goexit(neverCallThisFunction)
 
 // Not all cgocallback_gofunc frames are actually cgocallback_gofunc,
@@ -227,22 +241,12 @@ func morestack()
 func morestack_noctxt()
 func rt0_go()
 
-// stackBarrier records that the stack has been unwound past a certain
-// point. It is installed over a return PC on the stack. It must
-// retrieve the original return PC from g.stkbuf, increment
-// g.stkbufPos to record that the barrier was hit, and jump to the
-// original return PC.
-func stackBarrier()
-
 // return0 is a stub used to return 0 from deferproc.
 // It is called at the very end of deferproc to signal
 // the calling Go function that it should not jump
 // to deferreturn.
 // in asm_*.s
 func return0()
-
-//go:linkname time_now time.now
-func time_now() (sec int64, nsec int32)
 
 // in asm_*.s
 // not called directly; definitions here supply type information for traceback.
@@ -279,11 +283,6 @@ func prefetcht0(addr uintptr)
 func prefetcht1(addr uintptr)
 func prefetcht2(addr uintptr)
 func prefetchnta(addr uintptr)
-
-func unixnanotime() int64 {
-	sec, nsec := time_now()
-	return sec*1e9 + int64(nsec)
-}
 
 // round n up to a multiple of a.  a must be a power of 2.
 func round(n, a uintptr) uintptr {

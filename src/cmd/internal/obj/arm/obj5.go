@@ -34,7 +34,6 @@ import (
 	"cmd/internal/obj"
 	"cmd/internal/sys"
 	"fmt"
-	"log"
 	"math"
 )
 
@@ -547,7 +546,7 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym) {
 
 			/* MOV m(g),REGTMP */
 			p.As = AMOVW
-			p.Lineno = q1.Lineno
+			p.Pos = q1.Pos
 			p.From.Type = obj.TYPE_MEM
 			p.From.Reg = REGG
 			p.From.Offset = 6 * 4 // offset of g.m
@@ -558,7 +557,7 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym) {
 			/* MOV a,m_divmod(REGTMP) */
 			p = obj.Appendp(ctxt, p)
 			p.As = AMOVW
-			p.Lineno = q1.Lineno
+			p.Pos = q1.Pos
 			p.From.Type = obj.TYPE_REG
 			p.From.Reg = q1.From.Reg
 			p.To.Type = obj.TYPE_MEM
@@ -568,7 +567,7 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym) {
 			/* MOV b, R8 */
 			p = obj.Appendp(ctxt, p)
 			p.As = AMOVW
-			p.Lineno = q1.Lineno
+			p.Pos = q1.Pos
 			p.From.Type = obj.TYPE_REG
 			p.From.Reg = q1.Reg
 			if q1.Reg == 0 {
@@ -581,7 +580,7 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym) {
 			/* CALL appropriate */
 			p = obj.Appendp(ctxt, p)
 			p.As = ABL
-			p.Lineno = q1.Lineno
+			p.Pos = q1.Pos
 			p.To.Type = obj.TYPE_BRANCH
 			switch o {
 			case ADIV:
@@ -600,7 +599,7 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym) {
 			/* MOV REGTMP, b */
 			p = obj.Appendp(ctxt, p)
 			p.As = AMOVW
-			p.Lineno = q1.Lineno
+			p.Pos = q1.Pos
 			p.From.Type = obj.TYPE_REG
 			p.From.Reg = REGTMP
 			p.From.Offset = 0
@@ -689,7 +688,7 @@ func softfloat(ctxt *obj.Link, cursym *obj.LSym) {
 			p.As = ABL
 			p.To.Type = obj.TYPE_BRANCH
 			p.To.Sym = symsfloat
-			p.Lineno = next.Lineno
+			p.Pos = next.Pos
 
 			p = next
 			wasfloat = 1
@@ -811,7 +810,7 @@ func stacksplit(ctxt *obj.Link, p *obj.Prog, framesize int32) *obj.Prog {
 	spfix.Spadj = -framesize
 
 	pcdata := obj.Appendp(ctxt, spfix)
-	pcdata.Lineno = ctxt.Cursym.Text.Lineno
+	pcdata.Pos = ctxt.Cursym.Text.Pos
 	pcdata.Mode = ctxt.Cursym.Text.Mode
 	pcdata.As = obj.APCDATA
 	pcdata.From.Type = obj.TYPE_CONST
@@ -862,183 +861,6 @@ func initdiv(ctxt *obj.Link) {
 	ctxt.Sym_modu = obj.Linklookup(ctxt, "_modu", 0)
 }
 
-func follow(ctxt *obj.Link, s *obj.LSym) {
-	ctxt.Cursym = s
-
-	firstp := ctxt.NewProg()
-	lastp := firstp
-	xfol(ctxt, s.Text, &lastp)
-	lastp.Link = nil
-	s.Text = firstp.Link
-}
-
-func relinv(a obj.As) obj.As {
-	switch a {
-	case ABEQ:
-		return ABNE
-	case ABNE:
-		return ABEQ
-	case ABCS:
-		return ABCC
-	case ABHS:
-		return ABLO
-	case ABCC:
-		return ABCS
-	case ABLO:
-		return ABHS
-	case ABMI:
-		return ABPL
-	case ABPL:
-		return ABMI
-	case ABVS:
-		return ABVC
-	case ABVC:
-		return ABVS
-	case ABHI:
-		return ABLS
-	case ABLS:
-		return ABHI
-	case ABGE:
-		return ABLT
-	case ABLT:
-		return ABGE
-	case ABGT:
-		return ABLE
-	case ABLE:
-		return ABGT
-	}
-
-	log.Fatalf("unknown relation: %s", Anames[a])
-	return 0
-}
-
-func xfol(ctxt *obj.Link, p *obj.Prog, last **obj.Prog) {
-	var q *obj.Prog
-	var r *obj.Prog
-	var i int
-
-loop:
-	if p == nil {
-		return
-	}
-	a := p.As
-	if a == AB {
-		q = p.Pcond
-		if q != nil && q.As != obj.ATEXT {
-			p.Mark |= FOLL
-			p = q
-			if p.Mark&FOLL == 0 {
-				goto loop
-			}
-		}
-	}
-
-	if p.Mark&FOLL != 0 {
-		i = 0
-		q = p
-		for ; i < 4; i, q = i+1, q.Link {
-			if q == *last || q == nil {
-				break
-			}
-			a = q.As
-			if a == obj.ANOP {
-				i--
-				continue
-			}
-
-			if a == AB || (a == obj.ARET && q.Scond == C_SCOND_NONE) || a == ARFE || a == obj.AUNDEF {
-				goto copy
-			}
-			if q.Pcond == nil || (q.Pcond.Mark&FOLL != 0) {
-				continue
-			}
-			if a != ABEQ && a != ABNE {
-				continue
-			}
-
-		copy:
-			for {
-				r = ctxt.NewProg()
-				*r = *p
-				if r.Mark&FOLL == 0 {
-					fmt.Printf("can't happen 1\n")
-				}
-				r.Mark |= FOLL
-				if p != q {
-					p = p.Link
-					(*last).Link = r
-					*last = r
-					continue
-				}
-
-				(*last).Link = r
-				*last = r
-				if a == AB || (a == obj.ARET && q.Scond == C_SCOND_NONE) || a == ARFE || a == obj.AUNDEF {
-					return
-				}
-				r.As = ABNE
-				if a == ABNE {
-					r.As = ABEQ
-				}
-				r.Pcond = p.Link
-				r.Link = p.Pcond
-				if r.Link.Mark&FOLL == 0 {
-					xfol(ctxt, r.Link, last)
-				}
-				if r.Pcond.Mark&FOLL == 0 {
-					fmt.Printf("can't happen 2\n")
-				}
-				return
-			}
-		}
-
-		a = AB
-		q = ctxt.NewProg()
-		q.As = a
-		q.Lineno = p.Lineno
-		q.To.Type = obj.TYPE_BRANCH
-		q.To.Offset = p.Pc
-		q.Pcond = p
-		p = q
-	}
-
-	p.Mark |= FOLL
-	(*last).Link = p
-	*last = p
-	if a == AB || (a == obj.ARET && p.Scond == C_SCOND_NONE) || a == ARFE || a == obj.AUNDEF {
-		return
-	}
-
-	if p.Pcond != nil {
-		if a != ABL && a != ABX && p.Link != nil {
-			q = obj.Brchain(ctxt, p.Link)
-			if a != obj.ATEXT {
-				if q != nil && (q.Mark&FOLL != 0) {
-					p.As = relinv(a)
-					p.Link = p.Pcond
-					p.Pcond = q
-				}
-			}
-
-			xfol(ctxt, p.Link, last)
-			q = obj.Brchain(ctxt, p.Pcond)
-			if q == nil {
-				q = p.Pcond
-			}
-			if q.Mark&FOLL != 0 {
-				p.Pcond = q
-				return
-			}
-
-			p = q
-			goto loop
-		}
-	}
-
-	p = p.Link
-	goto loop
-}
-
 var unaryDst = map[obj.As]bool{
 	ASWI:  true,
 	AWORD: true,
@@ -1048,7 +870,6 @@ var Linkarm = obj.LinkArch{
 	Arch:       sys.ArchARM,
 	Preprocess: preprocess,
 	Assemble:   span5,
-	Follow:     follow,
 	Progedit:   progedit,
 	UnaryDst:   unaryDst,
 }

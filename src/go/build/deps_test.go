@@ -150,7 +150,8 @@ var pkgDeps = map[string][]string{
 		"syscall",
 	},
 
-	"os":            {"L1", "os", "syscall", "time", "internal/syscall/windows"},
+	"internal/poll": {"L0", "internal/race", "syscall", "time", "unicode/utf16", "unicode/utf8"},
+	"os":            {"L1", "os", "syscall", "time", "internal/poll", "internal/syscall/windows"},
 	"path/filepath": {"L2", "os", "syscall"},
 	"io/ioutil":     {"L2", "os", "path/filepath", "time"},
 	"os/exec":       {"L2", "os", "context", "path/filepath", "syscall"},
@@ -175,7 +176,7 @@ var pkgDeps = map[string][]string{
 	"regexp/syntax":                     {"L2"},
 	"runtime/debug":                     {"L2", "fmt", "io/ioutil", "os", "time"},
 	"runtime/pprof/internal/protopprof": {"L2", "fmt", "internal/pprof/profile", "os", "time"},
-	"runtime/pprof":                     {"L2", "fmt", "internal/pprof/profile", "os", "runtime/pprof/internal/protopprof", "text/tabwriter", "time"},
+	"runtime/pprof":                     {"L2", "context", "fmt", "internal/pprof/profile", "os", "runtime/pprof/internal/protopprof", "text/tabwriter", "time"},
 	"runtime/trace":                     {"L0"},
 	"text/tabwriter":                    {"L2"},
 
@@ -300,7 +301,7 @@ var pkgDeps = map[string][]string{
 	"net": {
 		"L0", "CGO",
 		"context", "math/rand", "os", "sort", "syscall", "time",
-		"internal/nettrace",
+		"internal/nettrace", "internal/poll",
 		"internal/syscall/windows", "internal/singleflight", "internal/race",
 		"golang_org/x/net/lif", "golang_org/x/net/route",
 	},

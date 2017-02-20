@@ -7,6 +7,7 @@ package gc
 import (
 	"cmd/compile/internal/ssa"
 	"cmd/internal/obj"
+	"cmd/internal/src"
 	"cmd/internal/sys"
 	"fmt"
 	"sort"
@@ -299,11 +300,14 @@ func compile(fn *Node) {
 		Newproc = Sysfunc("newproc")
 		Deferproc = Sysfunc("deferproc")
 		Deferreturn = Sysfunc("deferreturn")
+		Duffcopy = Sysfunc("duffcopy")
+		Duffzero = Sysfunc("duffzero")
 		panicindex = Sysfunc("panicindex")
 		panicslice = Sysfunc("panicslice")
 		panicdivide = Sysfunc("panicdivide")
 		growslice = Sysfunc("growslice")
-		panicdottype = Sysfunc("panicdottype")
+		panicdottypeE = Sysfunc("panicdottypeE")
+		panicdottypeI = Sysfunc("panicdottypeI")
 		panicnildottype = Sysfunc("panicnildottype")
 		assertE2I = Sysfunc("assertE2I")
 		assertE2I2 = Sysfunc("assertE2I2")
@@ -311,7 +315,7 @@ func compile(fn *Node) {
 		assertI2I2 = Sysfunc("assertI2I2")
 	}
 
-	defer func(lno int32) {
+	defer func(lno src.XPos) {
 		lineno = lno
 	}(setlineno(fn))
 
@@ -394,6 +398,9 @@ func compile(fn *Node) {
 	}
 	if fn.Func.Pragma&Systemstack != 0 {
 		ptxt.From.Sym.Set(obj.AttrCFunc, true)
+		if fn.Func.Pragma&Nosplit != 0 {
+			yyerror("go:nosplit and go:systemstack cannot be combined")
+		}
 	}
 
 	// Clumsy but important.
@@ -419,29 +426,45 @@ func compile(fn *Node) {
 		}
 	}
 
-	for _, n := range fn.Func.Dcl {
+	gendebug(ptxt.From.Sym, fn.Func.Dcl)
+
+	genssa(ssafn, ptxt, gcargs, gclocals)
+	ssafn.Free()
+}
+
+func gendebug(fn *obj.LSym, decls []*Node) {
+	if fn == nil {
+		return
+	}
+
+	for _, n := range decls {
 		if n.Op != ONAME { // might be OTYPE or OLITERAL
 			continue
 		}
+
+		var name obj.AddrName
 		switch n.Class {
 		case PAUTO:
 			if !n.Used {
 				continue
 			}
-			fallthrough
+			name = obj.NAME_AUTO
 		case PPARAM, PPARAMOUT:
-			// The symbol is excluded later from debugging info if its name begins ".autotmp_", but the type is still necessary.
-			// See bugs #17644 and #17830 and cmd/internal/dwarf/dwarf.go
-			p := Gins(obj.ATYPE, n, nil)
-			p.From.Sym = obj.Linklookup(Ctxt, n.Sym.Name, 0)
-			p.To.Type = obj.TYPE_MEM
-			p.To.Name = obj.NAME_EXTERN
-			p.To.Sym = Linksym(ngotype(n))
+			name = obj.NAME_PARAM
+		default:
+			continue
 		}
-	}
 
-	genssa(ssafn, ptxt, gcargs, gclocals)
-	ssafn.Free()
+		a := &obj.Auto{
+			Asym:    obj.Linklookup(Ctxt, n.Sym.Name, 0),
+			Aoffset: int32(n.Xoffset),
+			Name:    name,
+			Gotype:  Linksym(ngotype(n)),
+		}
+
+		a.Link = fn.Autom
+		fn.Autom = a
+	}
 }
 
 type symByName []*Sym

@@ -511,7 +511,7 @@ func isExportedField(ft *Field) (bool, *Pkg) {
 // dnameField dumps a reflect.name for a struct field.
 func dnameField(s *Sym, ot int, spkg *Pkg, ft *Field) int {
 	var name string
-	if ft.Sym != nil && ft.Embedded == 0 {
+	if ft.Sym != nil {
 		name = ft.Sym.Name
 	}
 	isExported, fpkg := isExportedField(ft)
@@ -1345,7 +1345,14 @@ ok:
 			// ../../../../runtime/type.go:/structField
 			ot = dnameField(s, ot, pkg, f)
 			ot = dsymptr(s, ot, dtypesym(f.Type), 0)
-			ot = duintptr(s, ot, uint64(f.Offset))
+			offsetAnon := uint64(f.Offset) << 1
+			if offsetAnon>>1 != uint64(f.Offset) {
+				Fatalf("%v: bad field offset for %s", t, f.Sym.Name)
+			}
+			if f.Embedded != 0 {
+				offsetAnon |= 1
+			}
+			ot = duintptr(s, ot, offsetAnon)
 		}
 	}
 
@@ -1404,13 +1411,17 @@ func dumptypestructs() {
 		//   inter  *interfacetype
 		//   _type  *_type
 		//   link   *itab
-		//   bad    int32
-		//   unused int32
+		//   hash   uint32
+		//   bad    bool
+		//   inhash bool
+		//   unused [2]byte
 		//   fun    [1]uintptr // variable sized
 		// }
 		o := dsymptr(i.sym, 0, dtypesym(i.itype), 0)
 		o = dsymptr(i.sym, o, dtypesym(i.t), 0)
-		o += Widthptr + 8                      // skip link/bad/inhash fields
+		o += Widthptr                          // skip link field
+		o = duint32(i.sym, o, typehash(i.t))   // copy of type hash
+		o += 4                                 // skip bad/inhash/unused fields
 		o += len(imethods(i.itype)) * Widthptr // skip fun method pointers
 		// at runtime the itab will contain pointers to types, other itabs and
 		// method functions. None are allocated on heap, so we can use obj.NOPTR.
@@ -1565,14 +1576,13 @@ func dalgsym(t *Type) *Sym {
 
 // maxPtrmaskBytes is the maximum length of a GC ptrmask bitmap,
 // which holds 1-bit entries describing where pointers are in a given type.
-// 16 bytes is enough to describe 128 pointer-sized words, 512 or 1024 bytes
-// depending on the system. Above this length, the GC information is
-// recorded as a GC program, which can express repetition compactly.
-// In either form, the information is used by the runtime to initialize the
-// heap bitmap, and for large types (like 128 or more words), they are
-// roughly the same speed. GC programs are never much larger and often
-// more compact. (If large arrays are involved, they can be arbitrarily more
-// compact.)
+// Above this length, the GC information is recorded as a GC program,
+// which can express repetition compactly. In either form, the
+// information is used by the runtime to initialize the heap bitmap,
+// and for large types (like 128 or more words), they are roughly the
+// same speed. GC programs are never much larger and often more
+// compact. (If large arrays are involved, they can be arbitrarily
+// more compact.)
 //
 // The cutoff must be large enough that any allocation large enough to
 // use a GC program is large enough that it does not share heap bitmap

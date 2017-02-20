@@ -61,6 +61,11 @@ func nilcheckelim(f *Func) {
 		}
 	}
 
+	// allocate auxiliary date structures for computing store order
+	sset := f.newSparseSet(f.NumValues())
+	defer f.retSparseSet(sset)
+	storeNumber := make([]int32, f.NumValues())
+
 	// perform a depth first walk of the dominee tree
 	for len(work) > 0 {
 		node := work[len(work)-1]
@@ -82,6 +87,9 @@ func nilcheckelim(f *Func) {
 				}
 			}
 
+			// Next, order values in the current block w.r.t. stores.
+			b.Values = storeOrder(b.Values, sset, storeNumber)
+
 			// Next, process values in the block.
 			i := 0
 			for _, v := range b.Values {
@@ -101,10 +109,11 @@ func nilcheckelim(f *Func) {
 						// This is a redundant implicit nil check.
 						// Logging in the style of the former compiler -- and omit line 1,
 						// which is usually in generated code.
-						if f.Config.Debug_checknil() && v.Line > 1 {
-							f.Config.Warnl(v.Line, "removed nil check")
+						if f.Config.Debug_checknil() && v.Pos.Line() > 1 {
+							f.Config.Warnl(v.Pos, "removed nil check")
 						}
 						v.reset(OpUnknown)
+						// TODO: f.freeValue(v)
 						i--
 						continue
 					}
@@ -132,6 +141,8 @@ func nilcheckelim(f *Func) {
 }
 
 // All platforms are guaranteed to fault if we load/store to anything smaller than this address.
+//
+// This should agree with minLegalPointer in the runtime.
 const minZeroPage = 4096
 
 // nilcheckelim2 eliminates unnecessary nil checks.
@@ -147,8 +158,8 @@ func nilcheckelim2(f *Func) {
 		for i := len(b.Values) - 1; i >= 0; i-- {
 			v := b.Values[i]
 			if opcodeTable[v.Op].nilCheck && unnecessary.contains(v.Args[0].ID) {
-				if f.Config.Debug_checknil() && int(v.Line) > 1 {
-					f.Config.Warnl(v.Line, "removed nil check")
+				if f.Config.Debug_checknil() && v.Pos.Line() > 1 {
+					f.Config.Warnl(v.Pos, "removed nil check")
 				}
 				v.reset(OpUnknown)
 				continue

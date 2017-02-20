@@ -61,8 +61,12 @@ var genericOps = []opData{
 	{name: "Mul32uhilo", argLength: 2, typ: "(UInt32,UInt32)"}, // arg0 * arg1, returns (hi, lo)
 	{name: "Mul64uhilo", argLength: 2, typ: "(UInt64,UInt64)"}, // arg0 * arg1, returns (hi, lo)
 
-	// Weird special instruction for strength reduction of divides.
-	{name: "Avg64u", argLength: 2}, // (uint64(arg0) + uint64(arg1)) / 2, correct to all 64 bits.
+	// Weird special instructions for use in the strength reduction of divides.
+	// These ops compute unsigned (arg0 + arg1) / 2, correct to all
+	// 32/64 bits, even when the intermediate result of the add has 33/65 bits.
+	// These ops can assume arg0 >= arg1.
+	{name: "Avg32u", argLength: 2, typ: "UInt32"}, // 32-bit platforms only
+	{name: "Avg64u", argLength: 2, typ: "UInt64"}, // 64-bit platforms only
 
 	{name: "Div8", argLength: 2},  // arg0 / arg1, signed
 	{name: "Div8u", argLength: 2}, // arg0 / arg1, unsigned
@@ -150,31 +154,6 @@ var genericOps = []opData{
 	{name: "Rsh64Ux16", argLength: 2},
 	{name: "Rsh64Ux32", argLength: 2},
 	{name: "Rsh64Ux64", argLength: 2},
-
-	// (Left) rotates replace pattern matches in the front end
-	// of (arg0 << arg1) ^ (arg0 >> (A-arg1))
-	// where A is the bit width of arg0 and result.
-	// Note that because rotates are pattern-matched from
-	// shifts, that a rotate of arg1=A+k (k > 0) bits originated from
-	//    (arg0 << A+k) ^ (arg0 >> -k) =
-	//    0 ^ arg0>>huge_unsigned =
-	//    0 ^ 0 = 0
-	// which is not the same as a rotation by A+k
-	//
-	// However, in the specific case of k = 0, the result of
-	// the shift idiom is the same as the result for the
-	// rotate idiom, i.e., result=arg0.
-	// This is different from shifts, where
-	// arg0 << A is defined to be zero.
-	//
-	// Because of this, and also because the primary use case
-	// for rotates is hashing and crypto code with constant
-	// distance, rotate instructions are only substituted
-	// when arg1 is a constant between 1 and A-1, inclusive.
-	{name: "Lrot8", argLength: 1, aux: "Int64"},
-	{name: "Lrot16", argLength: 1, aux: "Int64"},
-	{name: "Lrot32", argLength: 1, aux: "Int64"},
-	{name: "Lrot64", argLength: 1, aux: "Int64"},
 
 	// 2-input comparisons
 	{name: "Eq8", argLength: 2, commutative: true, typ: "Bool"}, // arg0 == arg1
@@ -288,11 +267,13 @@ var genericOps = []opData{
 	{name: "Const8", aux: "Int8"},        // auxint is sign-extended 8 bits
 	{name: "Const16", aux: "Int16"},      // auxint is sign-extended 16 bits
 	{name: "Const32", aux: "Int32"},      // auxint is sign-extended 32 bits
-	{name: "Const64", aux: "Int64"},      // value is auxint
-	{name: "Const32F", aux: "Float32"},   // value is math.Float64frombits(uint64(auxint)) and is exactly prepresentable as float 32
-	{name: "Const64F", aux: "Float64"},   // value is math.Float64frombits(uint64(auxint))
-	{name: "ConstInterface"},             // nil interface
-	{name: "ConstSlice"},                 // nil slice
+	// Note: ConstX are sign-extended even when the type of the value is unsigned.
+	// For instance, uint8(0xaa) is stored as auxint=0xffffffffffffffaa.
+	{name: "Const64", aux: "Int64"},    // value is auxint
+	{name: "Const32F", aux: "Float32"}, // value is math.Float64frombits(uint64(auxint)) and is exactly prepresentable as float 32
+	{name: "Const64F", aux: "Float64"}, // value is math.Float64frombits(uint64(auxint))
+	{name: "ConstInterface"},           // nil interface
+	{name: "ConstSlice"},               // nil slice
 
 	// Constant-like things
 	{name: "InitMem"},            // memory input to the function.

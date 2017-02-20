@@ -32,6 +32,7 @@ package obj
 
 import (
 	"bufio"
+	"cmd/internal/src"
 	"cmd/internal/sys"
 	"fmt"
 )
@@ -156,7 +157,7 @@ type Addr struct {
 	Index  int16
 	Scale  int16 // Sometimes holds a register.
 	Type   AddrType
-	Name   int8
+	Name   AddrName
 	Class  int8
 	Offset int64
 	Sym    *LSym
@@ -171,10 +172,10 @@ type Addr struct {
 	Node interface{} // for use by compiler
 }
 
-type AddrType uint8
+type AddrName int8
 
 const (
-	NAME_NONE = 0 + iota
+	NAME_NONE AddrName = iota
 	NAME_EXTERN
 	NAME_STATIC
 	NAME_AUTO
@@ -184,10 +185,11 @@ const (
 	NAME_GOTREF
 )
 
-const (
-	TYPE_NONE AddrType = 0
+type AddrType uint8
 
-	TYPE_BRANCH AddrType = 5 + iota
+const (
+	TYPE_NONE AddrType = iota
+	TYPE_BRANCH
 	TYPE_TEXTSIZE
 	TYPE_MEM
 	TYPE_CONST
@@ -221,8 +223,8 @@ const (
 // The Progs for a given function are arranged in a list linked through the Link field.
 //
 // Each Prog is charged to a specific source line in the debug information,
-// specified by Lineno, an index into the line history (see LineHist).
-// Every Prog has a Ctxt field that defines various context, including the current LineHist.
+// specified by Pos.Line().
+// Every Prog has a Ctxt field that defines its context.
 // Progs should be allocated using ctxt.NewProg(), not new(Prog).
 //
 // The other fields not yet mentioned are for use by the back ends and should
@@ -238,7 +240,7 @@ type Prog struct {
 	Forwd  *Prog       // for x86 back end
 	Rel    *Prog       // for x86, arm back ends
 	Pc     int64       // for back ends or assembler: virtual or actual program counter, depending on phase
-	Lineno int32       // line number of this instruction
+	Pos    src.XPos    // source position of this instruction
 	Spadj  int32       // effect of instruction on stack pointer (increment or decrement amount)
 	As     As          // assembler opcode
 	Reg    int16       // 2nd source operand
@@ -289,7 +291,6 @@ const (
 	APCDATA
 	ARET
 	ATEXT
-	ATYPE
 	AUNDEF
 	AUSEFIELD
 	AVARDEF
@@ -691,7 +692,7 @@ type Auto struct {
 	Asym    *LSym
 	Link    *Auto
 	Aoffset int32
-	Name    int16
+	Name    AddrName
 	Gotype  *LSym
 }
 
@@ -726,7 +727,7 @@ type Link struct {
 	Bso           *bufio.Writer
 	Pathname      string
 	Hash          map[SymVer]*LSym
-	LineHist      LineHist
+	PosTable      src.PosTable
 	Imports       []string
 	Plists        []*Plist
 	Sym_div       *LSym
@@ -803,7 +804,6 @@ type LinkArch struct {
 	*sys.Arch
 	Preprocess func(*Link, *LSym)
 	Assemble   func(*Link, *LSym)
-	Follow     func(*Link, *LSym)
 	Progedit   func(*Link, *Prog)
 	UnaryDst   map[As]bool // Instruction takes one operand, a destination.
 }

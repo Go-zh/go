@@ -7,6 +7,7 @@ package gc
 import (
 	"bytes"
 	"cmd/internal/obj"
+	"cmd/internal/src"
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
@@ -20,8 +21,8 @@ import (
 )
 
 type Error struct {
-	lineno int32
-	msg    string
+	pos src.XPos
+	msg string
 }
 
 var errors []Error
@@ -39,24 +40,24 @@ func adderrorname(n *Node) {
 		return
 	}
 	old := fmt.Sprintf("%v: undefined: %v\n", n.Line(), n.Left)
-	if len(errors) > 0 && errors[len(errors)-1].lineno == n.Lineno && errors[len(errors)-1].msg == old {
+	if len(errors) > 0 && errors[len(errors)-1].pos.Line() == n.Pos.Line() && errors[len(errors)-1].msg == old {
 		errors[len(errors)-1].msg = fmt.Sprintf("%v: undefined: %v in %v\n", n.Line(), n.Left, n)
 	}
 }
 
-func adderr(line int32, format string, args ...interface{}) {
+func adderr(pos src.XPos, format string, args ...interface{}) {
 	errors = append(errors, Error{
-		lineno: line,
-		msg:    fmt.Sprintf("%v: %s\n", linestr(line), fmt.Sprintf(format, args...)),
+		pos: pos,
+		msg: fmt.Sprintf("%v: %s\n", linestr(pos), fmt.Sprintf(format, args...)),
 	})
 }
 
-// byLineno sorts errors by lineno.
-type byLineno []Error
+// byPos sorts errors by source position.
+type byPos []Error
 
-func (x byLineno) Len() int           { return len(x) }
-func (x byLineno) Less(i, j int) bool { return x[i].lineno < x[j].lineno }
-func (x byLineno) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
+func (x byPos) Len() int           { return len(x) }
+func (x byPos) Less(i, j int) bool { return x[i].pos.Before(x[j].pos) }
+func (x byPos) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
 
 // flusherrors sorts errors seen so far by line number, prints them to stdout,
 // and empties the errors array.
@@ -65,7 +66,7 @@ func flusherrors() {
 	if len(errors) == 0 {
 		return
 	}
-	sort.Stable(byLineno(errors))
+	sort.Stable(byPos(errors))
 	for i := 0; i < len(errors); i++ {
 		if i == 0 || errors[i].msg != errors[i-1].msg {
 			fmt.Printf("%s", errors[i].msg)
@@ -85,49 +86,56 @@ func hcrash() {
 	}
 }
 
-func linestr(line int32) string {
-	return Ctxt.Line(int(line))
+func linestr(pos src.XPos) string {
+	return Ctxt.PosTable.Pos(pos).String()
 }
 
 // lasterror keeps track of the most recently issued error.
 // It is used to avoid multiple error messages on the same
 // line.
 var lasterror struct {
-	syntax int32  // line of last syntax error
-	other  int32  // line of last non-syntax error
-	msg    string // error message of last non-syntax error
+	syntax src.XPos // source position of last syntax error
+	other  src.XPos // source position of last non-syntax error
+	msg    string   // error message of last non-syntax error
 }
 
-func yyerrorl(line int32, format string, args ...interface{}) {
+// sameline reports whether two positions a, b are on the same line.
+func sameline(a, b src.XPos) bool {
+	p := Ctxt.PosTable.Pos(a)
+	q := Ctxt.PosTable.Pos(b)
+	return p.Base() == q.Base() && p.Line() == q.Line()
+}
+
+func yyerrorl(pos src.XPos, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 
 	if strings.HasPrefix(msg, "syntax error") {
 		nsyntaxerrors++
 		// only one syntax error per line, no matter what error
-		if lasterror.syntax == line {
+		if sameline(lasterror.syntax, pos) {
 			return
 		}
-		lasterror.syntax = line
+		lasterror.syntax = pos
 	} else {
 		// only one of multiple equal non-syntax errors per line
 		// (flusherrors shows only one of them, so we filter them
 		// here as best as we can (they may not appear in order)
 		// so that we don't count them here and exit early, and
 		// then have nothing to show for.)
-		if lasterror.other == line && lasterror.msg == msg {
+		if sameline(lasterror.other, pos) && lasterror.msg == msg {
 			return
 		}
-		lasterror.other = line
+		lasterror.other = pos
 		lasterror.msg = msg
 	}
 
-	adderr(line, "%s", msg)
+	adderr(pos, "%s", msg)
 
 	hcrash()
 	nerrors++
 	if nsavederrors+nerrors >= 10 && Debug['e'] == 0 {
 		flusherrors()
-		fmt.Printf("%v: too many errors\n", linestr(line))
+		fmt.Printf("%v: too many errors\n", linestr(pos))
 		errorexit()
 	}
 }
@@ -142,7 +150,7 @@ func Warn(fmt_ string, args ...interface{}) {
 	hcrash()
 }
 
-func Warnl(line int32, fmt_ string, args ...interface{}) {
+func Warnl(line src.XPos, fmt_ string, args ...interface{}) {
 	adderr(line, fmt_, args...)
 	if Debug['m'] != 0 {
 		flusherrors()
@@ -172,35 +180,7 @@ func Fatalf(fmt_ string, args ...interface{}) {
 	errorexit()
 }
 
-func linehistpragma(file string) {
-	if Debug['i'] != 0 {
-		fmt.Printf("pragma %s at line %v\n", file, linestr(lexlineno))
-	}
-	Ctxt.AddImport(file)
-}
-
-func linehistpush(file string) {
-	if Debug['i'] != 0 {
-		fmt.Printf("import %s at line %v\n", file, linestr(lexlineno))
-	}
-	Ctxt.LineHist.Push(int(lexlineno), file)
-}
-
-func linehistpop() {
-	if Debug['i'] != 0 {
-		fmt.Printf("end of import at line %v\n", linestr(lexlineno))
-	}
-	Ctxt.LineHist.Pop(int(lexlineno))
-}
-
-func linehistupdate(file string, off int) {
-	if Debug['i'] != 0 {
-		fmt.Printf("line %s at line %v\n", file, linestr(lexlineno))
-	}
-	Ctxt.LineHist.Update(int(lexlineno), file, off)
-}
-
-func setlineno(n *Node) int32 {
+func setlineno(n *Node) src.XPos {
 	lno := lineno
 	if n != nil {
 		switch n.Op {
@@ -214,10 +194,10 @@ func setlineno(n *Node) int32 {
 			fallthrough
 
 		default:
-			lineno = n.Lineno
-			if lineno == 0 {
+			lineno = n.Pos
+			if !lineno.IsKnown() {
 				if Debug['K'] != 0 {
-					Warn("setlineno: line 0")
+					Warn("setlineno: unknown position (line 0)")
 				}
 				lineno = lno
 			}
@@ -348,28 +328,46 @@ func importdot(opkg *Pkg, pack *Node) {
 
 	if n == 0 {
 		// can't possibly be used - there were no symbols
-		yyerrorl(pack.Lineno, "imported and not used: %q", opkg.Path)
+		yyerrorl(pack.Pos, "imported and not used: %q", opkg.Path)
 	}
 }
 
 func nod(op Op, nleft *Node, nright *Node) *Node {
-	n := new(Node)
+	var n *Node
+	switch op {
+	case OCLOSURE, ODCLFUNC:
+		var x struct {
+			Node
+			Func
+		}
+		n = &x.Node
+		n.Func = &x.Func
+		n.Func.IsHiddenClosure = Curfn != nil
+	case ONAME:
+		var x struct {
+			Node
+			Name
+			Param
+		}
+		n = &x.Node
+		n.Name = &x.Name
+		n.Name.Param = &x.Param
+	case OLABEL, OPACK:
+		var x struct {
+			Node
+			Name
+		}
+		n = &x.Node
+		n.Name = &x.Name
+	default:
+		n = new(Node)
+	}
 	n.Op = op
 	n.Left = nleft
 	n.Right = nright
-	n.Lineno = lineno
+	n.Pos = lineno
 	n.Xoffset = BADWIDTH
 	n.Orig = n
-	switch op {
-	case OCLOSURE, ODCLFUNC:
-		n.Func = new(Func)
-		n.Func.IsHiddenClosure = Curfn != nil
-	case ONAME:
-		n.Name = new(Name)
-		n.Name.Param = new(Param)
-	case OLABEL, OPACK:
-		n.Name = new(Name)
-	}
 	if n.Name != nil {
 		n.Name.Curfn = Curfn
 	}
@@ -442,7 +440,7 @@ func nodfltconst(v *Mpflt) *Node {
 	return c
 }
 
-func Nodconst(n *Node, t *Type, v int64) {
+func nodconst(n *Node, t *Type, v int64) {
 	*n = Node{}
 	n.Op = OLITERAL
 	n.Addable = true
@@ -473,9 +471,9 @@ func nodbool(b bool) *Node {
 // treecopy recursively copies n, with the exception of
 // ONAME, OLITERAL, OTYPE, and non-iota ONONAME leaves.
 // Copies of iota ONONAME nodes are assigned the current
-// value of iota_. If lineno != 0, it sets the line number
-// of newly allocated nodes to lineno.
-func treecopy(n *Node, lineno int32) *Node {
+// value of iota_. If pos.IsKnown(), it sets the source
+// position of newly allocated nodes to pos.
+func treecopy(n *Node, pos src.XPos) *Node {
 	if n == nil {
 		return nil
 	}
@@ -484,11 +482,11 @@ func treecopy(n *Node, lineno int32) *Node {
 	default:
 		m := *n
 		m.Orig = &m
-		m.Left = treecopy(n.Left, lineno)
-		m.Right = treecopy(n.Right, lineno)
-		m.List.Set(listtreecopy(n.List.Slice(), lineno))
-		if lineno != 0 {
-			m.Lineno = lineno
+		m.Left = treecopy(n.Left, pos)
+		m.Right = treecopy(n.Right, pos)
+		m.List.Set(listtreecopy(n.List.Slice(), pos))
+		if pos.IsKnown() {
+			m.Pos = pos
 		}
 		if m.Name != nil && n.Op != ODCLFIELD {
 			Dump("treecopy", n)
@@ -496,28 +494,13 @@ func treecopy(n *Node, lineno int32) *Node {
 		}
 		return &m
 
-	case ONONAME:
-		if n.Sym == lookup("iota") {
-			// Not sure yet whether this is the real iota,
-			// but make a copy of the Node* just in case,
-			// so that all the copies of this const definition
-			// don't have the same iota value.
-			m := *n
-			if lineno != 0 {
-				m.Lineno = lineno
-			}
-			m.SetIota(iota_)
-			return &m
-		}
-		return n
-
 	case OPACK:
 		// OPACK nodes are never valid in const value declarations,
 		// but allow them like any other declared symbol to avoid
 		// crashing (golang.org/issue/11361).
 		fallthrough
 
-	case ONAME, OLITERAL, OTYPE:
+	case ONAME, ONONAME, OLITERAL, OTYPE:
 		return n
 
 	}
@@ -760,9 +743,21 @@ func assignop(src *Type, dst *Type, why *string) Op {
 	// and either src or dst is not a named type or
 	// both are empty interface types.
 	// For assignable but different non-empty interface types,
-	// we want to recompute the itab.
-	if eqtype(src.Orig, dst.Orig) && (src.Sym == nil || dst.Sym == nil || src.IsEmptyInterface()) {
-		return OCONVNOP
+	// we want to recompute the itab. Recomputing the itab ensures
+	// that itabs are unique (thus an interface with a compile-time
+	// type I has an itab with interface type I).
+	if eqtype(src.Orig, dst.Orig) {
+		if src.IsEmptyInterface() {
+			// Conversion between two empty interfaces
+			// requires no code.
+			return OCONVNOP
+		}
+		if (src.Sym == nil || dst.Sym == nil) && !src.IsInterface() {
+			// Conversion between two types, at least one unnamed,
+			// needs no conversion. The exception is nonempty interfaces
+			// which need to have their itab updated.
+			return OCONVNOP
+		}
 	}
 
 	// 3. dst is an interface type and src implements dst.
@@ -1174,7 +1169,12 @@ func ullmancalc(n *Node) {
 		}
 		goto out
 
-	case OCALL, OCALLFUNC, OCALLMETH, OCALLINTER, OASWB:
+	case OAS:
+		if !needwritebarrier(n.Left) {
+			break
+		}
+		fallthrough
+	case OCALL, OCALLFUNC, OCALLMETH, OCALLINTER:
 		ul = UINF
 		goto out
 
@@ -1706,21 +1706,12 @@ func structargs(tl *Type, mustname bool) []*Node {
 //	method - M func (t T)(), a TFIELD type struct
 //	newnam - the eventual mangled name of this function
 
-var genwrapper_linehistdone int = 0
-
 func genwrapper(rcvr *Type, method *Field, newnam *Sym, iface int) {
 	if false && Debug['r'] != 0 {
 		fmt.Printf("genwrapper rcvrtype=%v method=%v newnam=%v\n", rcvr, method, newnam)
 	}
 
-	lexlineno++
-	lineno = lexlineno
-	if genwrapper_linehistdone == 0 {
-		// All the wrappers can share the same linehist entry.
-		linehistpush("<autogenerated>")
-
-		genwrapper_linehistdone = 1
-	}
+	lineno = makePos(src.NewFileBase("<autogenerated>", "<autogenerated>"), 1, 0)
 
 	dclcontext = PEXTERN
 	markdcl()
@@ -1768,22 +1759,8 @@ func genwrapper(rcvr *Type, method *Field, newnam *Sym, iface int) {
 	if rcvr.IsPtr() && rcvr.Elem() == methodrcvr {
 		// generating wrapper from *T to T.
 		n := nod(OIF, nil, nil)
-
 		n.Left = nod(OEQ, this.Left, nodnil())
-
-		// these strings are already in the reflect tables,
-		// so no space cost to use them here.
-		var l []*Node
-
-		var v Val
-		v.U = rcvr.Elem().Sym.Pkg.Name // package name
-		l = append(l, nodlit(v))
-		v.U = rcvr.Elem().Sym.Name // type name
-		l = append(l, nodlit(v))
-		v.U = method.Sym.Name
-		l = append(l, nodlit(v)) // method name
 		call := nod(OCALL, syslook("panicwrap"), nil)
-		call.List.Set(l)
 		n.Nbody.Set1(call)
 		fn.Nbody.Append(n)
 	}
@@ -1833,7 +1810,9 @@ func genwrapper(rcvr *Type, method *Field, newnam *Sym, iface int) {
 	funcbody(fn)
 	Curfn = fn
 	popdcl()
-	testdclstack()
+	if debug_dclstack != 0 {
+		testdclstack()
+	}
 
 	// wrappers where T is anonymous (struct or interface) can be duplicated.
 	if rcvr.IsStruct() || rcvr.IsInterface() || rcvr.IsPtr() && rcvr.Elem().IsStruct() {
@@ -1968,33 +1947,10 @@ func implements(t, iface *Type, m, samename **Field, ptr *int) bool {
 	return true
 }
 
-// even simpler simtype; get rid of ptr, bool.
-// assuming that the front end has rejected
-// all the invalid conversions (like ptr -> bool)
-func Simsimtype(t *Type) EType {
-	if t == nil {
-		return 0
-	}
-
-	et := simtype[t.Etype]
-	switch et {
-	case TPTR32:
-		et = TUINT32
-
-	case TPTR64:
-		et = TUINT64
-
-	case TBOOL:
-		et = TUINT8
-	}
-
-	return et
-}
-
-func listtreecopy(l []*Node, lineno int32) []*Node {
+func listtreecopy(l []*Node, pos src.XPos) []*Node {
 	var out []*Node
 	for _, n := range l {
-		out = append(out, treecopy(n, lineno))
+		out = append(out, treecopy(n, pos))
 	}
 	return out
 }
@@ -2003,45 +1959,9 @@ func liststmt(l []*Node) *Node {
 	n := nod(OBLOCK, nil, nil)
 	n.List.Set(l)
 	if len(l) != 0 {
-		n.Lineno = l[0].Lineno
+		n.Pos = l[0].Pos
 	}
 	return n
-}
-
-// return power of 2 of the constant
-// operand. -1 if it is not a power of 2.
-// 1000+ if it is a -(power of 2)
-func powtwo(n *Node) int {
-	if n == nil || n.Op != OLITERAL || n.Type == nil {
-		return -1
-	}
-	if !n.Type.IsInteger() {
-		return -1
-	}
-
-	v := uint64(n.Int64())
-	b := uint64(1)
-	for i := 0; i < 64; i++ {
-		if b == v {
-			return i
-		}
-		b = b << 1
-	}
-
-	if !n.Type.IsSigned() {
-		return -1
-	}
-
-	v = -v
-	b = 1
-	for i := 0; i < 64; i++ {
-		if b == v {
-			return i + 1000
-		}
-		b = b << 1
-	}
-
-	return -1
 }
 
 func ngotype(n *Node) *Sym {

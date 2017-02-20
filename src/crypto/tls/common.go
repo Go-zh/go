@@ -163,8 +163,8 @@ type ConnectionState struct {
 	HandshakeComplete           bool                  // TLS handshake is complete
 	DidResume                   bool                  // connection resumes a previous TLS connection
 	CipherSuite                 uint16                // cipher suite in use (TLS_RSA_WITH_RC4_128_SHA, ...)
-	NegotiatedProtocol          string                // negotiated next protocol (from Config.NextProtos)
-	NegotiatedProtocolIsMutual  bool                  // negotiated protocol was advertised by server
+	NegotiatedProtocol          string                // negotiated next protocol (not guaranteed to be from Config.NextProtos)
+	NegotiatedProtocolIsMutual  bool                  // negotiated protocol was advertised by server (client side only)
 	ServerName                  string                // server name requested by client, if any (server side only)
 	PeerCertificates            []*x509.Certificate   // certificate chain presented by remote peer
 	VerifiedChains              [][]*x509.Certificate // verified chains built from PeerCertificates
@@ -174,9 +174,9 @@ type ConnectionState struct {
 	// TLSUnique contains the "tls-unique" channel binding value (see RFC
 	// 5929, section 3). For resumed sessions this value will be nil
 	// because resumption does not include enough context (see
-	// https://secure-resumption.com/#channelbindings). This will change in
-	// future versions of Go once the TLS master-secret fix has been
-	// standardized and implemented.
+	// https://mitls.org/pages/attacks/3SHAKE#channelbindings). This will
+	// change in future versions of Go once the TLS master-secret fix has
+	// been standardized and implemented.
 	TLSUnique []byte
 }
 
@@ -206,7 +206,8 @@ type ClientSessionState struct {
 // ClientSessionCache is a cache of ClientSessionState objects that can be used
 // by a client to resume a TLS session with a given server. ClientSessionCache
 // implementations should expect to be called concurrently from different
-// goroutines.
+// goroutines. Only ticket-based resumption is supported, not SessionID-based
+// resumption.
 type ClientSessionCache interface {
 	// Get searches for a ClientSessionState associated with the given key.
 	// On return, ok is true if one was found.
@@ -946,9 +947,7 @@ func initDefaultCipherSuites() {
 	}
 
 	varDefaultCipherSuites = make([]uint16, 0, len(cipherSuites))
-	for _, topCipher := range topCipherSuites {
-		varDefaultCipherSuites = append(varDefaultCipherSuites, topCipher)
-	}
+	varDefaultCipherSuites = append(varDefaultCipherSuites, topCipherSuites...)
 
 NextCipherSuite:
 	for _, suite := range cipherSuites {

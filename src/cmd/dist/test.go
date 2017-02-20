@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -354,7 +353,7 @@ func (t *tester) registerTests() {
 
 	// This test needs its stdout/stderr to be terminals, so we don't run it from cmd/go's tests.
 	// See issue 18153.
-	if runtime.GOOS == "linux" {
+	if t.goos == "linux" {
 		t.tests = append(t.tests, distTest{
 			name:    "cmd_go_test_terminal",
 			heading: "cmd/go terminal test",
@@ -568,7 +567,7 @@ func (t *tester) registerTests() {
 		if t.gohostos == "linux" && t.goarch == "amd64" {
 			t.registerTest("testasan", "../misc/cgo/testasan", "go", "run", "main.go")
 		}
-		if t.gohostos == "linux" && t.goarch == "amd64" {
+		if t.goos == "linux" && t.goarch == "amd64" {
 			t.registerTest("testsanitizers", "../misc/cgo/testsanitizers", "./test.bash")
 		}
 		if t.hasBash() && t.goos != "android" && !t.iOS() && t.gohostos != "windows" {
@@ -704,7 +703,7 @@ func (t *tester) extLink() bool {
 		"darwin-arm", "darwin-arm64",
 		"dragonfly-386", "dragonfly-amd64",
 		"freebsd-386", "freebsd-amd64", "freebsd-arm",
-		"linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-ppc64le", "linux-mips64", "linux-mips64le",
+		"linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-ppc64le", "linux-mips64", "linux-mips64le", "linux-mips", "linux-mipsle", "linux-s390x",
 		"netbsd-386", "netbsd-amd64",
 		"openbsd-386", "openbsd-amd64",
 		"windows-386", "windows-amd64":

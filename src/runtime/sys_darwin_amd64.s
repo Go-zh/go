@@ -117,14 +117,44 @@ TEXT runtime·madvise(SB), NOSPLIT, $0
 #define	gtod_ns_base	0x70
 #define	gtod_sec_base	0x78
 
-TEXT nanotime<>(SB), NOSPLIT, $32
+TEXT runtime·nanotime(SB),NOSPLIT,$0-8
+	MOVQ	$0x7fffffe00000, BP	/* comm page base */
+	// Loop trying to take a consistent snapshot
+	// of the time parameters.
+timeloop:
+	MOVL	nt_generation(BP), R9
+	TESTL	R9, R9
+	JZ	timeloop
+	RDTSC
+	MOVQ	nt_tsc_base(BP), R10
+	MOVL	nt_scale(BP), R11
+	MOVQ	nt_ns_base(BP), R12
+	CMPL	nt_generation(BP), R9
+	JNE	timeloop
+
+	// Gathered all the data we need. Compute monotonic time:
+	//	((tsc - nt_tsc_base) * nt_scale) >> 32 + nt_ns_base
+	// The multiply and shift extracts the top 64 bits of the 96-bit product.
+	SHLQ	$32, DX
+	ADDQ	DX, AX
+	SUBQ	R10, AX
+	MULQ	R11
+	SHRQ	$32, AX:DX
+	ADDQ	R12, AX
+	MOVQ	runtime·startNano(SB), CX
+	SUBQ	CX, AX
+	MOVQ	AX, ret+0(FP)
+	RET
+
+TEXT time·now(SB), NOSPLIT, $32-24
+	// Note: The 32 bytes of stack frame requested on the TEXT line
+	// are used in the systime fallback, as the timeval address
+	// filled in by the system call.
 	MOVQ	$0x7fffffe00000, BP	/* comm page base */
 	// Loop trying to take a consistent snapshot
 	// of the time parameters.
 timeloop:
 	MOVL	gtod_generation(BP), R8
-	TESTL	R8, R8
-	JZ	systime
 	MOVL	nt_generation(BP), R9
 	TESTL	R9, R9
 	JZ	timeloop
@@ -139,8 +169,8 @@ timeloop:
 	CMPL	gtod_generation(BP), R8
 	JNE	timeloop
 
-	// Gathered all the data we need. Compute time.
-	//	((tsc - nt_tsc_base) * nt_scale) >> 32 + nt_ns_base - gtod_ns_base + gtod_sec_base*1e9
+	// Gathered all the data we need. Compute:
+	//	monotonic_time = ((tsc - nt_tsc_base) * nt_scale) >> 32 + nt_ns_base
 	// The multiply and shift extracts the top 64 bits of the 96-bit product.
 	SHLQ	$32, DX
 	ADDQ	DX, AX
@@ -148,9 +178,33 @@ timeloop:
 	MULQ	R11
 	SHRQ	$32, AX:DX
 	ADDQ	R12, AX
+	MOVQ	AX, BX
+	MOVQ	runtime·startNano(SB), CX
+	SUBQ	CX, BX
+	MOVQ	BX, monotonic+16(FP)
+
+	// Compute:
+	//	wall_time = monotonic time - gtod_ns_base + gtod_sec_base*1e9
+	// or, if gtod_generation==0, invoke the system call.
+	TESTL	R8, R8
+	JZ	systime
 	SUBQ	R13, AX
 	IMULQ	$1000000000, R14
 	ADDQ	R14, AX
+
+	// Split wall time into sec, nsec.
+	// generated code for
+	//	func f(x uint64) (uint64, uint64) { return x/1e9, x%1e9 }
+	// adapted to reduce duplication
+	MOVQ	AX, CX
+	SHRQ	$9, AX
+	MOVQ	$19342813113834067, DX
+	MULQ	DX
+	SHRQ	$11, DX
+	MOVQ	DX, sec+0(FP)
+	IMULQ	$1000000000, DX
+	SUBQ	DX, CX
+	MOVL	CX, nsec+8(FP)
 	RET
 
 systime:
@@ -166,34 +220,9 @@ systime:
 	MOVL	8(SP), DX
 inreg:
 	// sec is in AX, usec in DX
-	// return nsec in AX
-	IMULQ	$1000000000, AX
 	IMULQ	$1000, DX
-	ADDQ	DX, AX
-	RET
-
-TEXT runtime·nanotime(SB),NOSPLIT,$0-8
-	CALL	nanotime<>(SB)
-	MOVQ	AX, ret+0(FP)
-	RET
-
-// func now() (sec int64, nsec int32)
-TEXT time·now(SB),NOSPLIT,$0-12
-	CALL	nanotime<>(SB)
-
-	// generated code for
-	//	func f(x uint64) (uint64, uint64) { return x/1000000000, x%100000000 }
-	// adapted to reduce duplication
-	MOVQ	AX, CX
-	MOVQ	$1360296554856532783, AX
-	MULQ	CX
-	ADDQ	CX, DX
-	RCRQ	$1, DX
-	SHRQ	$29, DX
-	MOVQ	DX, sec+0(FP)
-	IMULQ	$1000000000, DX
-	SUBQ	DX, CX
-	MOVL	CX, nsec+8(FP)
+	MOVQ	AX, sec+0(FP)
+	MOVL	DX, nsec+8(FP)
 	RET
 
 TEXT runtime·sigprocmask(SB),NOSPLIT,$0
@@ -231,14 +260,15 @@ TEXT runtime·sigfwd(SB),NOSPLIT,$0-32
 	POPQ	BP
 	RET
 
-TEXT runtime·sigtramp(SB),NOSPLIT,$32
+TEXT runtime·sigtramp(SB),NOSPLIT,$40
 	MOVL SI, 24(SP) // save infostyle for sigreturn below
+	MOVQ R8, 32(SP) // save ctx
 	MOVL DX, 0(SP)  // sig
 	MOVQ CX, 8(SP)  // info
 	MOVQ R8, 16(SP) // ctx
 	MOVQ $runtime·sigtrampgo(SB), AX
 	CALL AX
-	MOVQ 16(SP), DI // ctx
+	MOVQ 32(SP), DI // ctx
 	MOVL 24(SP), SI // infostyle
 	MOVL $(0x2000000+184), AX
 	SYSCALL

@@ -723,6 +723,10 @@ func (c *Certificate) Equal(other *Certificate) bool {
 	return bytes.Equal(c.Raw, other.Raw)
 }
 
+func (c *Certificate) hasSANExtension() bool {
+	return oidInExtensions(oidExtensionSubjectAltName, c.Extensions)
+}
+
 // Entrust have a broken root certificate (CN=Entrust.net Certification
 // Authority (2048)) which isn't marked as a CA certificate and is thus invalid
 // according to PKIX.
@@ -1451,7 +1455,7 @@ func marshalSANs(dnsNames, emailAddresses []string, ipAddresses []net.IP) (derBy
 	return asn1.Marshal(rawValues)
 }
 
-func buildExtensions(template *Certificate) (ret []pkix.Extension, err error) {
+func buildExtensions(template *Certificate, authorityKeyId []byte) (ret []pkix.Extension, err error) {
 	ret = make([]pkix.Extension, 10 /* maximum number of elements. */)
 	n := 0
 
@@ -1525,9 +1529,9 @@ func buildExtensions(template *Certificate) (ret []pkix.Extension, err error) {
 		n++
 	}
 
-	if len(template.AuthorityKeyId) > 0 && !oidInExtensions(oidExtensionAuthorityKeyId, template.ExtraExtensions) {
+	if len(authorityKeyId) > 0 && !oidInExtensions(oidExtensionAuthorityKeyId, template.ExtraExtensions) {
 		ret[n].Id = oidExtensionAuthorityKeyId
-		ret[n].Value, err = asn1.Marshal(authKeyId{template.AuthorityKeyId})
+		ret[n].Value, err = asn1.Marshal(authKeyId{authorityKeyId})
 		if err != nil {
 			return
 		}
@@ -1707,10 +1711,11 @@ func signingParamsForPublicKey(pub interface{}, requestedSigAlgo SignatureAlgori
 }
 
 // CreateCertificate creates a new certificate based on a template. The
-// following members of template are used: SerialNumber, Subject, NotBefore,
-// NotAfter, KeyUsage, ExtKeyUsage, UnknownExtKeyUsage, BasicConstraintsValid,
-// IsCA, MaxPathLen, SubjectKeyId, DNSNames, PermittedDNSDomainsCritical,
-// PermittedDNSDomains, SignatureAlgorithm.
+// following members of template are used: AuthorityKeyId,
+// BasicConstraintsValid, DNSNames, ExtKeyUsage, IsCA, KeyUsage, MaxPathLen,
+// NotAfter, NotBefore, PermittedDNSDomains, PermittedDNSDomainsCritical,
+// SerialNumber, SignatureAlgorithm, Subject, SubjectKeyId, and
+// UnknownExtKeyUsage.
 //
 // The certificate is signed by parent. If parent is equal to template then the
 // certificate is self-signed. The parameter pub is the public key of the
@@ -1720,6 +1725,10 @@ func signingParamsForPublicKey(pub interface{}, requestedSigAlgo SignatureAlgori
 //
 // All keys types that are implemented via crypto.Signer are supported (This
 // includes *rsa.PublicKey and *ecdsa.PublicKey.)
+//
+// The AuthorityKeyId will be taken from the SubjectKeyId of parent, if any,
+// unless the resulting certificate is self-signed. Otherwise the value from
+// template will be used.
 func CreateCertificate(rand io.Reader, template, parent *Certificate, pub, priv interface{}) (cert []byte, err error) {
 	key, ok := priv.(crypto.Signer)
 	if !ok {
@@ -1750,11 +1759,12 @@ func CreateCertificate(rand io.Reader, template, parent *Certificate, pub, priv 
 		return
 	}
 
+	authorityKeyId := template.AuthorityKeyId
 	if !bytes.Equal(asn1Issuer, asn1Subject) && len(parent.SubjectKeyId) > 0 {
-		template.AuthorityKeyId = parent.SubjectKeyId
+		authorityKeyId = parent.SubjectKeyId
 	}
 
-	extensions, err := buildExtensions(template)
+	extensions, err := buildExtensions(template, authorityKeyId)
 	if err != nil {
 		return
 	}
@@ -2025,10 +2035,10 @@ func parseCSRExtensions(rawAttributes []asn1.RawValue) ([]pkix.Extension, error)
 	return ret, nil
 }
 
-// CreateCertificateRequest creates a new certificate request based on a template.
-// The following members of template are used: Subject, Attributes,
-// SignatureAlgorithm, Extensions, DNSNames, EmailAddresses, and IPAddresses.
-// The private key is the private key of the signer.
+// CreateCertificateRequest creates a new certificate request based on a
+// template. The following members of template are used: Attributes, DNSNames,
+// EmailAddresses, ExtraExtensions, IPAddresses, SignatureAlgorithm, and
+// Subject. The private key is the private key of the signer.
 //
 // The returned slice is the certificate request in DER encoding.
 //

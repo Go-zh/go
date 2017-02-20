@@ -41,7 +41,7 @@ func anyinit(n []*Node) bool {
 		case ODCLFUNC, ODCLCONST, ODCLTYPE, OEMPTY:
 			break
 
-		case OAS, OASWB:
+		case OAS:
 			if isblank(ln.Left) && candiscard(ln.Right) {
 				break
 			}
@@ -75,6 +75,9 @@ func anyinit(n []*Node) bool {
 }
 
 func fninit(n []*Node) {
+	// This code is using the last value of lineno for position information
+	// (see comment in noder.go, noder.file method, for details).
+
 	nf := initfix(n)
 	if !anyinit(nf) {
 		return

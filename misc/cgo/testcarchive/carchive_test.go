@@ -265,6 +265,25 @@ func TestSignalForwarding(t *testing.T) {
 		t.Logf("%s", out)
 		t.Errorf("got %v; expected SIGSEGV", ee)
 	}
+
+	// Test SIGPIPE forwarding
+	cmd = exec.Command(bin[0], append(bin[1:], "3")...)
+
+	out, err = cmd.CombinedOutput()
+
+	if err == nil {
+		t.Logf("%s", out)
+		t.Error("test program succeeded unexpectedly")
+	} else if ee, ok := err.(*exec.ExitError); !ok {
+		t.Logf("%s", out)
+		t.Errorf("error (%v) has type %T; expected exec.ExitError", err, err)
+	} else if ws, ok := ee.Sys().(syscall.WaitStatus); !ok {
+		t.Logf("%s", out)
+		t.Errorf("error.Sys (%v) has type %T; expected syscall.WaitStatus", ee.Sys(), ee.Sys())
+	} else if !ws.Signaled() || ws.Signal() != syscall.SIGPIPE {
+		t.Logf("%s", out)
+		t.Errorf("got %v; expected SIGPIPE", ee)
+	}
 }
 
 func TestSignalForwardingExternal(t *testing.T) {
@@ -537,4 +556,39 @@ func hasDynTag(t *testing.T, f *elf.File, tag elf.DynTag) bool {
 		}
 	}
 	return false
+}
+
+func TestSIGPROF(t *testing.T) {
+	switch GOOS {
+	case "windows", "plan9":
+		t.Skipf("skipping SIGPROF test on %s", GOOS)
+	}
+
+	t.Parallel()
+
+	defer func() {
+		os.Remove("testp6" + exeSuffix)
+		os.Remove("libgo6.a")
+		os.Remove("libgo6.h")
+	}()
+
+	cmd := exec.Command("go", "build", "-buildmode=c-archive", "-o", "libgo6.a", "libgo6")
+	cmd.Env = gopathEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("%s", out)
+		t.Fatal(err)
+	}
+
+	ccArgs := append(cc, "-o", "testp6"+exeSuffix, "main6.c", "libgo6.a")
+	if out, err := exec.Command(ccArgs[0], ccArgs[1:]...).CombinedOutput(); err != nil {
+		t.Logf("%s", out)
+		t.Fatal(err)
+	}
+
+	argv := cmdToRun("./testp6")
+	cmd = exec.Command(argv[0], argv[1:]...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("%s", out)
+		t.Fatal(err)
+	}
 }

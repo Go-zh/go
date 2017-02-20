@@ -197,7 +197,7 @@ TEXT runtime·mincore(SB),NOSPLIT,$0
 	MOVW	R0, ret+12(FP)
 	RET
 
-TEXT time·now(SB), NOSPLIT, $32
+TEXT runtime·walltime(SB), NOSPLIT, $32
 	MOVW	$0, R0  // CLOCK_REALTIME
 	MOVW	$8(R13), R1  // timespec
 	MOVW	$SYS_clock_gettime, R7
@@ -206,9 +206,9 @@ TEXT time·now(SB), NOSPLIT, $32
 	MOVW	8(R13), R0  // sec
 	MOVW	12(R13), R2  // nsec
 	
-	MOVW	R0, sec+0(FP)
+	MOVW	R0, sec_lo+0(FP)
 	MOVW	$0, R1
-	MOVW	R1, loc+4(FP)
+	MOVW	R1, sec_hi+4(FP)
 	MOVW	R2, nsec+8(FP)
 	RET	
 

@@ -2,9 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// TODO(rsc): The code having to do with the heap bitmap needs very serious cleanup.
-// It has gotten completely out of control.
-
 // Garbage collector (GC).
 //
 // The GC runs concurrently with mutator threads, is type accurate (aka precise), allows multiple
@@ -24,67 +21,73 @@
 // Hudson, R., and Moss, J.E.B. Copying Garbage Collection without stopping the world.
 // Concurrency and Computation: Practice and Experience 15(3-5), 2003.
 //
-// TODO(austin): The rest of this comment is woefully out of date and
-// needs to be rewritten. There is no distinct scan phase any more and
-// we allocate black during GC.
+// 1. GC performs sweep termination.
 //
-//  0. Set phase = GCscan from GCoff.
-//  1. Wait for all P's to acknowledge phase change.
-//         At this point all goroutines have passed through a GC safepoint and
-//         know we are in the GCscan phase.
-//  2. GC scans all goroutine stacks, mark and enqueues all encountered pointers
-//       (marking avoids most duplicate enqueuing but races may produce benign duplication).
-//       Preempted goroutines are scanned before P schedules next goroutine.
-//  3. Set phase = GCmark.
-//  4. Wait for all P's to acknowledge phase change.
-//  5. Now write barrier marks and enqueues black, grey, or white to white pointers.
-//       Malloc still allocates white (non-marked) objects.
-//  6. Meanwhile GC transitively walks the heap marking reachable objects.
-//  7. When GC finishes marking heap, it preempts P's one-by-one and
-//       retakes partial wbufs (filled by write barrier or during a stack scan of the goroutine
-//       currently scheduled on the P).
-//  8. Once the GC has exhausted all available marking work it sets phase = marktermination.
-//  9. Wait for all P's to acknowledge phase change.
-// 10. Malloc now allocates black objects, so number of unmarked reachable objects
-//        monotonically decreases.
-// 11. GC preempts P's one-by-one taking partial wbufs and marks all unmarked yet
-//        reachable objects.
-// 12. When GC completes a full cycle over P's and discovers no new grey
-//         objects, (which means all reachable objects are marked) set phase = GCoff.
-// 13. Wait for all P's to acknowledge phase change.
-// 14. Now malloc allocates white (but sweeps spans before use).
-//         Write barrier becomes nop.
-// 15. GC does background sweeping, see description below.
-// 16. When sufficient allocation has taken place replay the sequence starting at 0 above,
-//         see discussion of GC rate below.
-
-// Changing phases.
-// Phases are changed by setting the gcphase to the next phase and possibly calling ackgcphase.
-// All phase action must be benign in the presence of a change.
-// Starting with GCoff
-// GCoff to GCscan
-//     GSscan scans stacks and globals greying them and never marks an object black.
-//     Once all the P's are aware of the new phase they will scan gs on preemption.
-//     This means that the scanning of preempted gs can't start until all the Ps
-//     have acknowledged.
-//     When a stack is scanned, this phase also installs stack barriers to
-//     track how much of the stack has been active.
-//     This transition enables write barriers because stack barriers
-//     assume that writes to higher frames will be tracked by write
-//     barriers. Technically this only needs write barriers for writes
-//     to stack slots, but we enable write barriers in general.
-// GCscan to GCmark
-//     In GCmark, work buffers are drained until there are no more
-//     pointers to scan.
-//     No scanning of objects (making them black) can happen until all
-//     Ps have enabled the write barrier, but that already happened in
-//     the transition to GCscan.
-// GCmark to GCmarktermination
-//     The only change here is that we start allocating black so the Ps must acknowledge
-//     the change before we begin the termination algorithm
-// GCmarktermination to GSsweep
-//     Object currently on the freelist must be marked black for this to work.
-//     Are things on the free lists black or white? How does the sweep phase work?
+//    a. Stop the world. This causes all Ps to reach a GC safe-point.
+//
+//    b. Sweep any unswept spans. There will only be unswept spans if
+//    this GC cycle was forced before the expected time.
+//
+// 2. GC performs the "mark 1" sub-phase. In this sub-phase, Ps are
+// allowed to locally cache parts of the work queue.
+//
+//    a. Prepare for the mark phase by setting gcphase to _GCmark
+//    (from _GCoff), enabling the write barrier, enabling mutator
+//    assists, and enqueueing root mark jobs. No objects may be
+//    scanned until all Ps have enabled the write barrier, which is
+//    accomplished using STW.
+//
+//    b. Start the world. From this point, GC work is done by mark
+//    workers started by the scheduler and by assists performed as
+//    part of allocation. The write barrier shades both the
+//    overwritten pointer and the new pointer value for any pointer
+//    writes (see mbarrier.go for details). Newly allocated objects
+//    are immediately marked black.
+//
+//    c. GC performs root marking jobs. This includes scanning all
+//    stacks, shading all globals, and shading any heap pointers in
+//    off-heap runtime data structures. Scanning a stack stops a
+//    goroutine, shades any pointers found on its stack, and then
+//    resumes the goroutine.
+//
+//    d. GC drains the work queue of grey objects, scanning each grey
+//    object to black and shading all pointers found in the object
+//    (which in turn may add those pointers to the work queue).
+//
+// 3. Once the global work queue is empty (but local work queue caches
+// may still contain work), GC performs the "mark 2" sub-phase.
+//
+//    a. GC stops all workers, disables local work queue caches,
+//    flushes each P's local work queue cache to the global work queue
+//    cache, and reenables workers.
+//
+//    b. GC again drains the work queue, as in 2d above.
+//
+// 4. Once the work queue is empty, GC performs mark termination.
+//
+//    a. Stop the world.
+//
+//    b. Set gcphase to _GCmarktermination, and disable workers and
+//    assists.
+//
+//    c. Drain any remaining work from the work queue (typically there
+//    will be none).
+//
+//    d. Perform other housekeeping like flushing mcaches.
+//
+// 5. GC performs the sweep phase.
+//
+//    a. Prepare for the sweep phase by setting gcphase to _GCoff,
+//    setting up sweep state and disabling the write barrier.
+//
+//    b. Start the world. From this point on, newly allocated objects
+//    are white, and allocating sweeps spans before use if necessary.
+//
+//    c. GC does concurrent sweeping in the background and in response
+//    to allocation. See description below.
+//
+// 6. When sufficient allocation has taken place, replay the sequence
+// starting with 1 above. See discussion of GC rate below.
 
 // Concurrent sweep.
 //
@@ -625,10 +628,12 @@ func (c *gcControllerState) endCycle() {
 //go:nowritebarrier
 func (c *gcControllerState) enlistWorker() {
 	// If there are idle Ps, wake one so it will run an idle worker.
-	if atomic.Load(&sched.npidle) != 0 && atomic.Load(&sched.nmspinning) == 0 {
-		wakep()
-		return
-	}
+	// NOTE: This is suspected of causing deadlocks. See golang.org/issue/19112.
+	//
+	//	if atomic.Load(&sched.npidle) != 0 && atomic.Load(&sched.nmspinning) == 0 {
+	//		wakep()
+	//		return
+	//	}
 
 	// There are no idle Ps. If we need more dedicated workers,
 	// try to preempt a running P so it will switch to a worker.
@@ -645,7 +650,7 @@ func (c *gcControllerState) enlistWorker() {
 	}
 	myID := gp.m.p.ptr().id
 	for tries := 0; tries < 5; tries++ {
-		id := int32(fastrand() % uint32(gomaxprocs-1))
+		id := int32(fastrandn(uint32(gomaxprocs - 1)))
 		if id >= myID {
 			id++
 		}
@@ -810,15 +815,13 @@ var work struct {
 	// should pass gcDrainBlock to gcDrain to block in the
 	// getfull() barrier. Otherwise, they should pass gcDrainNoBlock.
 	//
-	// TODO: This is a temporary fallback to support
-	// debug.gcrescanstacks > 0 and to work around some known
-	// races. Remove this when we remove the debug option and fix
-	// the races.
+	// TODO: This is a temporary fallback to work around races
+	// that cause early mark termination.
 	helperDrainBlock bool
 
 	// Number of roots of various root types. Set by gcMarkRootPrepare.
-	nFlushCacheRoots                                             int
-	nDataRoots, nBSSRoots, nSpanRoots, nStackRoots, nRescanRoots int
+	nFlushCacheRoots                               int
+	nDataRoots, nBSSRoots, nSpanRoots, nStackRoots int
 
 	// markrootDone indicates that roots have been marked at least
 	// once during the current GC cycle. This is checked by root
@@ -868,14 +871,6 @@ var work struct {
 	assistQueue struct {
 		lock       mutex
 		head, tail guintptr
-	}
-
-	// rescan is a list of G's that need to be rescanned during
-	// mark termination. A G adds itself to this list when it
-	// first invalidates its stack scan.
-	rescan struct {
-		lock mutex
-		list []guintptr
 	}
 
 	// Timing/utilization stats for this cycle.
@@ -958,7 +953,7 @@ func gcStart(mode gcMode, forceTrigger bool) {
 	// another thread.
 	useStartSema := mode == gcBackgroundMode
 	if useStartSema {
-		semacquire(&work.startSema, 0)
+		semacquire(&work.startSema)
 		// Re-check transition condition under transition lock.
 		if !gcShouldStart(forceTrigger) {
 			semrelease(&work.startSema)
@@ -982,7 +977,7 @@ func gcStart(mode gcMode, forceTrigger bool) {
 	}
 
 	// Ok, we're doing it!  Stop everybody else
-	semacquire(&worldsema, 0)
+	semacquire(&worldsema)
 
 	if trace.enabled {
 		traceGCStart()
@@ -1023,18 +1018,7 @@ func gcStart(mode gcMode, forceTrigger bool) {
 		// the time we start the world and begin
 		// scanning.
 		//
-		// It's necessary to enable write barriers
-		// during the scan phase for several reasons:
-		//
-		// They must be enabled for writes to higher
-		// stack frames before we scan stacks and
-		// install stack barriers because this is how
-		// we track writes to inactive stack frames.
-		// (Alternatively, we could not install stack
-		// barriers over frame boundaries with
-		// up-pointers).
-		//
-		// They must be enabled before assists are
+		// Write barriers must be enabled before assists are
 		// enabled because they must be enabled before
 		// any non-leaf heap objects are marked. Since
 		// allocations are blocked until assists can
@@ -1103,7 +1087,7 @@ func gcStart(mode gcMode, forceTrigger bool) {
 // by mark termination.
 func gcMarkDone() {
 top:
-	semacquire(&work.markDoneSema, 0)
+	semacquire(&work.markDoneSema)
 
 	// Re-check transition condition under transition lock.
 	if !(gcphase == _GCmark && work.nwait == work.nproc && !gcMarkWorkAvailable(nil)) {
@@ -1126,8 +1110,6 @@ top:
 		// sitting in the per-P work caches.
 		// Flush and disable work caches.
 
-		gcMarkRootCheck()
-
 		// Disallow caching workbufs and indicate that we're in mark 2.
 		gcBlackenPromptly = true
 
@@ -1149,6 +1131,16 @@ top:
 				_p_.gcw.dispose()
 			})
 		})
+
+		// Check that roots are marked. We should be able to
+		// do this before the forEachP, but based on issue
+		// #16083 there may be a (harmless) race where we can
+		// enter mark 2 while some workers are still scanning
+		// stacks. The forEachP ensures these scans are done.
+		//
+		// TODO(austin): Figure out the race and fix this
+		// properly.
+		gcMarkRootCheck()
 
 		// Now we can start up mark 2 workers.
 		atomic.Xaddint64(&gcController.dedicatedMarkWorkersNeeded, 0xffffffff)
@@ -1280,10 +1272,13 @@ func gcMarkTermination() {
 	}
 
 	// Update timing memstats
-	now, unixNow := nanotime(), unixnanotime()
+	now := nanotime()
+	sec, nsec, _ := time_now()
+	unixNow := sec*1e9 + int64(nsec)
 	work.pauseNS += now - work.pauseStart
 	work.tEnd = now
-	atomic.Store64(&memstats.last_gc, uint64(unixNow)) // must be Unix time to make sense to user
+	atomic.Store64(&memstats.last_gc_unix, uint64(unixNow)) // must be Unix time to make sense to user
+	atomic.Store64(&memstats.last_gc_nanotime, uint64(now)) // monotonic time for us
 	memstats.pause_ns[memstats.numgc%uint32(len(memstats.pause_ns))] = uint64(work.pauseNS)
 	memstats.pause_end[memstats.numgc%uint32(len(memstats.pause_end))] = uint64(unixNow)
 	memstats.pause_total_ns += uint64(work.pauseNS)
@@ -1323,13 +1318,6 @@ func gcMarkTermination() {
 
 	// Free stack spans. This must be done between GC cycles.
 	systemstack(freeStackSpans)
-
-	// Best-effort remove stack barriers so they don't get in the
-	// way of things like GDB and perf.
-	lock(&allglock)
-	myallgs := allgs
-	unlock(&allglock)
-	gcTryRemoveAllStackBarriers(myallgs)
 
 	// Print gctrace before dropping worldsema. As soon as we drop
 	// worldsema another cycle could start and smash the stats
@@ -1616,24 +1604,22 @@ func gcMark(start_time int64) {
 	work.ndone = 0
 	work.nproc = uint32(gcprocs())
 
-	if debug.gcrescanstacks == 0 && work.full == 0 && work.nDataRoots+work.nBSSRoots+work.nSpanRoots+work.nStackRoots+work.nRescanRoots == 0 {
+	if work.full == 0 && work.nDataRoots+work.nBSSRoots+work.nSpanRoots+work.nStackRoots == 0 {
 		// There's no work on the work queue and no root jobs
 		// that can produce work, so don't bother entering the
 		// getfull() barrier.
 		//
-		// With the hybrid barrier enabled, this will be the
-		// situation the vast majority of the time after
-		// concurrent mark. However, we still need a fallback
-		// for STW GC and because there are some known races
-		// that occasionally leave work around for mark
-		// termination.
+		// This will be the situation the vast majority of the
+		// time after concurrent mark. However, we still need
+		// a fallback for STW GC and because there are some
+		// known races that occasionally leave work around for
+		// mark termination.
 		//
 		// We're still hedging our bets here: if we do
 		// accidentally produce some work, we'll still process
 		// it, just not necessarily in parallel.
 		//
-		// TODO(austin): When we eliminate
-		// debug.gcrescanstacks: fix the races, and remove
+		// TODO(austin): Fix the races and and remove
 		// work draining from mark termination so we don't
 		// need the fallback path.
 		work.helperDrainBlock = false
@@ -1813,21 +1799,13 @@ func gcSweep(mode gcMode) {
 func gcResetMarkState() {
 	// This may be called during a concurrent phase, so make sure
 	// allgs doesn't change.
-	if !(gcphase == _GCoff || gcphase == _GCmarktermination) {
-		// Accessing gcRescan is unsafe.
-		throw("bad GC phase")
-	}
 	lock(&allglock)
 	for _, gp := range allgs {
 		gp.gcscandone = false  // set to true in gcphasework
 		gp.gcscanvalid = false // stack has not been scanned
-		gp.gcRescan = -1
 		gp.gcAssistBytes = 0
 	}
 	unlock(&allglock)
-
-	// Clear rescan list.
-	work.rescan.list = work.rescan.list[:0]
 
 	work.bytesMarked = 0
 	work.initialHeapLive = memstats.heap_live

@@ -17,10 +17,11 @@ func panicindex()
 func panicslice()
 func panicdivide()
 func throwinit()
-func panicwrap(string, string, string)
+func panicwrap()
 
 func gopanic(interface{})
 func gorecover(*int32) interface{}
+func goschedguarded()
 
 func printbool(bool)
 func printfloat(float64)
@@ -66,7 +67,8 @@ func assertE2I(typ *byte, iface any) (ret any)
 func assertE2I2(typ *byte, iface any) (ret any, b bool)
 func assertI2I(typ *byte, iface any) (ret any)
 func assertI2I2(typ *byte, iface any) (ret any, b bool)
-func panicdottype(have, want, iface *byte)
+func panicdottypeE(have, want, iface *byte)
+func panicdottypeI(have, want, iface *byte)
 func panicnildottype(want *byte)
 
 func ifaceeq(i1 any, i2 any) (ret bool)
