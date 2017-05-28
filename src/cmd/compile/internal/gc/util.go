@@ -10,6 +10,8 @@ import (
 	"runtime/pprof"
 )
 
+// Line returns n's position as a string. If n has been inlined,
+// it uses the outermost position where n has been inlined.
 func (n *Node) Line() string {
 	return linestr(n.Pos)
 }
@@ -30,11 +32,13 @@ func Exit(code int) {
 }
 
 var (
+	blockprofile   string
 	cpuprofile     string
 	memprofile     string
 	memprofilerate int64
 	traceprofile   string
 	traceHandler   func(string)
+	mutexprofile   string
 )
 
 func startProfile() {
@@ -70,6 +74,28 @@ func startProfile() {
 	} else {
 		// Not doing memory profiling; disable it entirely.
 		runtime.MemProfileRate = 0
+	}
+	if blockprofile != "" {
+		f, err := os.Create(blockprofile)
+		if err != nil {
+			Fatalf("%v", err)
+		}
+		runtime.SetBlockProfileRate(1)
+		atExit(func() {
+			pprof.Lookup("block").WriteTo(f, 0)
+			f.Close()
+		})
+	}
+	if mutexprofile != "" {
+		f, err := os.Create(mutexprofile)
+		if err != nil {
+			Fatalf("%v", err)
+		}
+		startMutexProfiling()
+		atExit(func() {
+			pprof.Lookup("mutex").WriteTo(f, 0)
+			f.Close()
+		})
 	}
 	if traceprofile != "" && traceHandler != nil {
 		traceHandler(traceprofile)

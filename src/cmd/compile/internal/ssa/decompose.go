@@ -4,6 +4,8 @@
 
 package ssa
 
+import "cmd/compile/internal/types"
+
 // decompose converts phi ops on compound builtin types into phi
 // ops on simple types.
 // (The remaining compound ops are decomposed with rewrite rules.)
@@ -25,30 +27,30 @@ func decomposeBuiltIn(f *Func) {
 	for _, name := range f.Names {
 		t := name.Type
 		switch {
-		case t.IsInteger() && t.Size() == 8 && f.Config.IntSize == 4:
-			var elemType Type
+		case t.IsInteger() && t.Size() > f.Config.RegSize:
+			var elemType *types.Type
 			if t.IsSigned() {
-				elemType = f.Config.fe.TypeInt32()
+				elemType = f.Config.Types.Int32
 			} else {
-				elemType = f.Config.fe.TypeUInt32()
+				elemType = f.Config.Types.UInt32
 			}
-			hiName, loName := f.Config.fe.SplitInt64(name)
+			hiName, loName := f.fe.SplitInt64(name)
 			newNames = append(newNames, hiName, loName)
 			for _, v := range f.NamedValues[name] {
 				hi := v.Block.NewValue1(v.Pos, OpInt64Hi, elemType, v)
-				lo := v.Block.NewValue1(v.Pos, OpInt64Lo, f.Config.fe.TypeUInt32(), v)
+				lo := v.Block.NewValue1(v.Pos, OpInt64Lo, f.Config.Types.UInt32, v)
 				f.NamedValues[hiName] = append(f.NamedValues[hiName], hi)
 				f.NamedValues[loName] = append(f.NamedValues[loName], lo)
 			}
 			delete(f.NamedValues, name)
 		case t.IsComplex():
-			var elemType Type
+			var elemType *types.Type
 			if t.Size() == 16 {
-				elemType = f.Config.fe.TypeFloat64()
+				elemType = f.Config.Types.Float64
 			} else {
-				elemType = f.Config.fe.TypeFloat32()
+				elemType = f.Config.Types.Float32
 			}
-			rName, iName := f.Config.fe.SplitComplex(name)
+			rName, iName := f.fe.SplitComplex(name)
 			newNames = append(newNames, rName, iName)
 			for _, v := range f.NamedValues[name] {
 				r := v.Block.NewValue1(v.Pos, OpComplexReal, elemType, v)
@@ -58,9 +60,9 @@ func decomposeBuiltIn(f *Func) {
 			}
 			delete(f.NamedValues, name)
 		case t.IsString():
-			ptrType := f.Config.fe.TypeBytePtr()
-			lenType := f.Config.fe.TypeInt()
-			ptrName, lenName := f.Config.fe.SplitString(name)
+			ptrType := f.Config.Types.BytePtr
+			lenType := f.Config.Types.Int
+			ptrName, lenName := f.fe.SplitString(name)
 			newNames = append(newNames, ptrName, lenName)
 			for _, v := range f.NamedValues[name] {
 				ptr := v.Block.NewValue1(v.Pos, OpStringPtr, ptrType, v)
@@ -70,9 +72,9 @@ func decomposeBuiltIn(f *Func) {
 			}
 			delete(f.NamedValues, name)
 		case t.IsSlice():
-			ptrType := f.Config.fe.TypeBytePtr()
-			lenType := f.Config.fe.TypeInt()
-			ptrName, lenName, capName := f.Config.fe.SplitSlice(name)
+			ptrType := f.Config.Types.BytePtr
+			lenType := f.Config.Types.Int
+			ptrName, lenName, capName := f.fe.SplitSlice(name)
 			newNames = append(newNames, ptrName, lenName, capName)
 			for _, v := range f.NamedValues[name] {
 				ptr := v.Block.NewValue1(v.Pos, OpSlicePtr, ptrType, v)
@@ -84,8 +86,8 @@ func decomposeBuiltIn(f *Func) {
 			}
 			delete(f.NamedValues, name)
 		case t.IsInterface():
-			ptrType := f.Config.fe.TypeBytePtr()
-			typeName, dataName := f.Config.fe.SplitInterface(name)
+			ptrType := f.Config.Types.BytePtr
+			typeName, dataName := f.fe.SplitInterface(name)
 			newNames = append(newNames, typeName, dataName)
 			for _, v := range f.NamedValues[name] {
 				typ := v.Block.NewValue1(v.Pos, OpITab, ptrType, v)
@@ -95,8 +97,8 @@ func decomposeBuiltIn(f *Func) {
 			}
 			delete(f.NamedValues, name)
 		case t.IsFloat():
-			// floats are never decomposed, even ones bigger than IntSize
-		case t.Size() > f.Config.IntSize:
+			// floats are never decomposed, even ones bigger than RegSize
+		case t.Size() > f.Config.RegSize:
 			f.Fatalf("undecomposed named type %v %v", name, t)
 		default:
 			newNames = append(newNames, name)
@@ -107,11 +109,7 @@ func decomposeBuiltIn(f *Func) {
 
 func decomposeBuiltInPhi(v *Value) {
 	switch {
-	case v.Type.IsInteger() && v.Type.Size() == 8 && v.Block.Func.Config.IntSize == 4:
-		if v.Block.Func.Config.arch == "amd64p32" {
-			// Even though ints are 32 bits, we have 64-bit ops.
-			break
-		}
+	case v.Type.IsInteger() && v.Type.Size() > v.Block.Func.Config.RegSize:
 		decomposeInt64Phi(v)
 	case v.Type.IsComplex():
 		decomposeComplexPhi(v)
@@ -122,16 +120,16 @@ func decomposeBuiltInPhi(v *Value) {
 	case v.Type.IsInterface():
 		decomposeInterfacePhi(v)
 	case v.Type.IsFloat():
-		// floats are never decomposed, even ones bigger than IntSize
-	case v.Type.Size() > v.Block.Func.Config.IntSize:
+		// floats are never decomposed, even ones bigger than RegSize
+	case v.Type.Size() > v.Block.Func.Config.RegSize:
 		v.Fatalf("undecomposed type %s", v.Type)
 	}
 }
 
 func decomposeStringPhi(v *Value) {
-	fe := v.Block.Func.Config.fe
-	ptrType := fe.TypeBytePtr()
-	lenType := fe.TypeInt()
+	types := &v.Block.Func.Config.Types
+	ptrType := types.BytePtr
+	lenType := types.Int
 
 	ptr := v.Block.NewValue0(v.Pos, OpPhi, ptrType)
 	len := v.Block.NewValue0(v.Pos, OpPhi, lenType)
@@ -145,9 +143,9 @@ func decomposeStringPhi(v *Value) {
 }
 
 func decomposeSlicePhi(v *Value) {
-	fe := v.Block.Func.Config.fe
-	ptrType := fe.TypeBytePtr()
-	lenType := fe.TypeInt()
+	types := &v.Block.Func.Config.Types
+	ptrType := types.BytePtr
+	lenType := types.Int
 
 	ptr := v.Block.NewValue0(v.Pos, OpPhi, ptrType)
 	len := v.Block.NewValue0(v.Pos, OpPhi, lenType)
@@ -164,19 +162,19 @@ func decomposeSlicePhi(v *Value) {
 }
 
 func decomposeInt64Phi(v *Value) {
-	fe := v.Block.Func.Config.fe
-	var partType Type
+	cfgtypes := &v.Block.Func.Config.Types
+	var partType *types.Type
 	if v.Type.IsSigned() {
-		partType = fe.TypeInt32()
+		partType = cfgtypes.Int32
 	} else {
-		partType = fe.TypeUInt32()
+		partType = cfgtypes.UInt32
 	}
 
 	hi := v.Block.NewValue0(v.Pos, OpPhi, partType)
-	lo := v.Block.NewValue0(v.Pos, OpPhi, fe.TypeUInt32())
+	lo := v.Block.NewValue0(v.Pos, OpPhi, cfgtypes.UInt32)
 	for _, a := range v.Args {
 		hi.AddArg(a.Block.NewValue1(v.Pos, OpInt64Hi, partType, a))
-		lo.AddArg(a.Block.NewValue1(v.Pos, OpInt64Lo, fe.TypeUInt32(), a))
+		lo.AddArg(a.Block.NewValue1(v.Pos, OpInt64Lo, cfgtypes.UInt32, a))
 	}
 	v.reset(OpInt64Make)
 	v.AddArg(hi)
@@ -184,13 +182,13 @@ func decomposeInt64Phi(v *Value) {
 }
 
 func decomposeComplexPhi(v *Value) {
-	fe := v.Block.Func.Config.fe
-	var partType Type
+	cfgtypes := &v.Block.Func.Config.Types
+	var partType *types.Type
 	switch z := v.Type.Size(); z {
 	case 8:
-		partType = fe.TypeFloat32()
+		partType = cfgtypes.Float32
 	case 16:
-		partType = fe.TypeFloat64()
+		partType = cfgtypes.Float64
 	default:
 		v.Fatalf("decomposeComplexPhi: bad complex size %d", z)
 	}
@@ -207,7 +205,7 @@ func decomposeComplexPhi(v *Value) {
 }
 
 func decomposeInterfacePhi(v *Value) {
-	ptrType := v.Block.Func.Config.fe.TypeBytePtr()
+	ptrType := v.Block.Func.Config.Types.BytePtr
 
 	itab := v.Block.NewValue0(v.Pos, OpPhi, ptrType)
 	data := v.Block.NewValue0(v.Pos, OpPhi, ptrType)
@@ -243,7 +241,7 @@ func decomposeUser(f *Func) {
 			n := t.NumFields()
 			fnames = fnames[:0]
 			for i := 0; i < n; i++ {
-				fnames = append(fnames, f.Config.fe.SplitStruct(name, i))
+				fnames = append(fnames, f.fe.SplitStruct(name, i))
 			}
 			for _, v := range f.NamedValues[name] {
 				for i := 0; i < n; i++ {
@@ -262,7 +260,7 @@ func decomposeUser(f *Func) {
 			if t.NumElem() != 1 {
 				f.Fatalf("array not of size 1")
 			}
-			elemName := f.Config.fe.SplitArray(name)
+			elemName := f.fe.SplitArray(name)
 			for _, v := range f.NamedValues[name] {
 				e := v.Block.NewValue1I(v.Pos, OpArraySelect, t.ElemType(), 0, v)
 				f.NamedValues[elemName] = append(f.NamedValues[elemName], e)

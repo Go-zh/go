@@ -7,6 +7,7 @@
 package ssa
 
 import (
+	"cmd/compile/internal/types"
 	"cmd/internal/src"
 	"fmt"
 )
@@ -35,12 +36,12 @@ type stackAllocState struct {
 }
 
 func newStackAllocState(f *Func) *stackAllocState {
-	s := f.Config.stackAllocState
+	s := f.Cache.stackAllocState
 	if s == nil {
 		return new(stackAllocState)
 	}
 	if s.f != nil {
-		f.Config.Fatalf(src.NoXPos, "newStackAllocState called without previous free")
+		f.fe.Fatalf(src.NoXPos, "newStackAllocState called without previous free")
 	}
 	return s
 }
@@ -61,14 +62,14 @@ func putStackAllocState(s *stackAllocState) {
 	for i := range s.used {
 		s.used[i] = false
 	}
-	s.f.Config.stackAllocState = s
+	s.f.Cache.stackAllocState = s
 	s.f = nil
 	s.live = nil
 	s.nArgSlot, s.nNotNeed, s.nNamedSlot, s.nReuse, s.nAuto, s.nSelfInterfere = 0, 0, 0, 0, 0, 0
 }
 
 type stackValState struct {
-	typ      Type
+	typ      *types.Type
 	spill    *Value
 	needSlot bool
 }
@@ -162,7 +163,7 @@ func (s *stackAllocState) stackalloc() {
 	// TODO: share slots among equivalent types. We would need to
 	// only share among types with the same GC signature. See the
 	// type.Equal calls below for where this matters.
-	locations := map[Type][]LocalSlot{}
+	locations := map[*types.Type][]LocalSlot{}
 
 	// Each time we assign a stack slot to a value v, we remember
 	// the slot we used via an index into locations[v.Type].
@@ -204,7 +205,7 @@ func (s *stackAllocState) stackalloc() {
 			} else {
 				name = names[v.ID]
 			}
-			if name.N != nil && v.Type.Compare(name.Type) == CMPeq {
+			if name.N != nil && v.Type.Compare(name.Type) == types.CMPeq {
 				for _, id := range s.interfere[v.ID] {
 					h := f.getHome(id)
 					if h != nil && h.(LocalSlot).N == name.N && h.(LocalSlot).Off == name.Off {
@@ -246,7 +247,7 @@ func (s *stackAllocState) stackalloc() {
 			// If there is no unused stack slot, allocate a new one.
 			if i == len(locs) {
 				s.nAuto++
-				locs = append(locs, LocalSlot{N: f.Config.fe.Auto(v.Type), Type: v.Type, Off: 0})
+				locs = append(locs, LocalSlot{N: f.fe.Auto(v.Pos, v.Type), Type: v.Type, Off: 0})
 				locations[v.Type] = locs
 			}
 			// Use the stack variable at that index for v.
@@ -376,7 +377,7 @@ func (s *stackAllocState) buildInterferenceGraph() {
 			if s.values[v.ID].needSlot {
 				live.remove(v.ID)
 				for _, id := range live.contents() {
-					if s.values[v.ID].typ.Compare(s.values[id].typ) == CMPeq {
+					if s.values[v.ID].typ.Compare(s.values[id].typ) == types.CMPeq {
 						s.interfere[v.ID] = append(s.interfere[v.ID], id)
 						s.interfere[id] = append(s.interfere[id], v.ID)
 					}

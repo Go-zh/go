@@ -9,7 +9,7 @@ package ld
 import (
 	"bytes"
 	"cmd/internal/bio"
-	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"fmt"
 	"io"
 	"os"
@@ -174,7 +174,7 @@ func loadcgo(ctxt *Link, file string, pkg string, p string) {
 				// to force a link of foo.so.
 				havedynamic = 1
 
-				if Headtype == obj.Hdarwin {
+				if Headtype == objabi.Hdarwin {
 					Machoadddynlib(lib)
 				} else {
 					dynlib = append(dynlib, lib)
@@ -190,12 +190,12 @@ func loadcgo(ctxt *Link, file string, pkg string, p string) {
 			s = ctxt.Syms.Lookup(local, 0)
 			if local != f[1] {
 			}
-			if s.Type == 0 || s.Type == obj.SXREF || s.Type == obj.SHOSTOBJ {
+			if s.Type == 0 || s.Type == SXREF || s.Type == SHOSTOBJ {
 				s.Dynimplib = lib
 				s.Extname = remote
 				s.Dynimpvers = q
-				if s.Type != obj.SHOSTOBJ {
-					s.Type = obj.SDYNIMPORT
+				if s.Type != SHOSTOBJ {
+					s.Type = SDYNIMPORT
 				}
 				havedynamic = 1
 			}
@@ -209,7 +209,7 @@ func loadcgo(ctxt *Link, file string, pkg string, p string) {
 			}
 			local = f[1]
 			s = ctxt.Syms.Lookup(local, 0)
-			s.Type = obj.SHOSTOBJ
+			s.Type = SHOSTOBJ
 			s.Size = 0
 			continue
 		}
@@ -322,9 +322,9 @@ func Adddynsym(ctxt *Link, s *Symbol) {
 
 	if Iself {
 		Elfadddynsym(ctxt, s)
-	} else if Headtype == obj.Hdarwin {
+	} else if Headtype == objabi.Hdarwin {
 		Errorf(s, "adddynsym: missed symbol (Extname=%s)", s.Extname)
-	} else if Headtype == obj.Hwindows {
+	} else if Headtype == objabi.Hwindows {
 		// already taken care of
 	} else {
 		Errorf(s, "adddynsym: unsupported binary format")
@@ -337,7 +337,7 @@ func fieldtrack(ctxt *Link) {
 	for _, s := range ctxt.Syms.Allsym {
 		if strings.HasPrefix(s.Name, "go.track.") {
 			s.Attr |= AttrSpecial // do not lay out in data segment
-			s.Attr |= AttrHidden
+			s.Attr |= AttrNotInSymbolTable
 			if s.Attr.Reachable() {
 				buf.WriteString(s.Name[9:])
 				for p := s.Reachparent; p != nil; p = p.Reachparent {
@@ -347,7 +347,7 @@ func fieldtrack(ctxt *Link) {
 				buf.WriteString("\n")
 			}
 
-			s.Type = obj.SCONST
+			s.Type = SCONST
 			s.Value = 0
 		}
 	}
@@ -360,10 +360,11 @@ func fieldtrack(ctxt *Link) {
 		return
 	}
 	addstrdata(ctxt, *flagFieldTrack, buf.String())
+	s.Type = SDATA
 }
 
 func (ctxt *Link) addexport() {
-	if Headtype == obj.Hdarwin {
+	if Headtype == objabi.Hdarwin {
 		return
 	}
 

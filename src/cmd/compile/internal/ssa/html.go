@@ -15,7 +15,7 @@ import (
 
 type HTMLWriter struct {
 	Logger
-	*os.File
+	w io.WriteCloser
 }
 
 func NewHTMLWriter(path string, logger Logger, funcname string) *HTMLWriter {
@@ -23,7 +23,7 @@ func NewHTMLWriter(path string, logger Logger, funcname string) *HTMLWriter {
 	if err != nil {
 		logger.Fatalf(src.NoXPos, "%v", err)
 	}
-	html := HTMLWriter{File: out, Logger: logger}
+	html := HTMLWriter{w: out, Logger: logger}
 	html.start(funcname)
 	return &html
 }
@@ -142,13 +142,13 @@ dd.ssa-prog {
 <script type="text/javascript">
 // ordered list of all available highlight colors
 var highlights = [
-    "highlight-yellow",
     "highlight-aquamarine",
     "highlight-coral",
     "highlight-lightpink",
     "highlight-lightsteelblue",
     "highlight-palegreen",
-    "highlight-lightgray"
+    "highlight-lightgray",
+    "highlight-yellow"
 ];
 
 // state: which value is highlighted this color?
@@ -264,8 +264,6 @@ function toggle_visibility(id) {
 </script>
 
 </head>`)
-	// TODO: Add javascript click handlers for blocks
-	// to outline that block across all phases
 	w.WriteString("<body>")
 	w.WriteString("<h1>")
 	w.WriteString(html.EscapeString(name))
@@ -299,11 +297,11 @@ func (w *HTMLWriter) Close() {
 	if w == nil {
 		return
 	}
-	w.WriteString("</tr>")
-	w.WriteString("</table>")
-	w.WriteString("</body>")
-	w.WriteString("</html>")
-	w.File.Close()
+	io.WriteString(w.w, "</tr>")
+	io.WriteString(w.w, "</table>")
+	io.WriteString(w.w, "</body>")
+	io.WriteString(w.w, "</html>")
+	w.w.Close()
 }
 
 // WriteFunc writes f in a column headed by title.
@@ -328,13 +326,13 @@ func (w *HTMLWriter) WriteColumn(title string, html string) {
 }
 
 func (w *HTMLWriter) Printf(msg string, v ...interface{}) {
-	if _, err := fmt.Fprintf(w.File, msg, v...); err != nil {
+	if _, err := fmt.Fprintf(w.w, msg, v...); err != nil {
 		w.Fatalf(src.NoXPos, "%v", err)
 	}
 }
 
 func (w *HTMLWriter) WriteString(s string) {
-	if _, err := w.File.WriteString(s); err != nil {
+	if _, err := io.WriteString(w.w, s); err != nil {
 		w.Fatalf(src.NoXPos, "%v", err)
 	}
 }

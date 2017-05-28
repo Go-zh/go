@@ -114,6 +114,19 @@ func HasExec() bool {
 	return true
 }
 
+// HasSrc reports whether the entire source tree is available under GOROOT.
+func HasSrc() bool {
+	switch runtime.GOOS {
+	case "nacl":
+		return false
+	case "darwin":
+		if strings.HasPrefix(runtime.GOARCH, "arm") {
+			return false
+		}
+	}
+	return true
+}
+
 // MustHaveExec checks that the current system can start new processes
 // using os.StartProcess or (more commonly) exec.Command.
 // If not, MustHaveExec calls t.Skip with an explanation.
@@ -135,6 +148,15 @@ func HasExternalNetwork() bool {
 func MustHaveExternalNetwork(t *testing.T) {
 	if testing.Short() {
 		t.Skipf("skipping test: no external network in -short mode")
+	}
+}
+
+var haveCGO bool
+
+// MustHaveCGO calls t.Skip if cgo is not available.
+func MustHaveCGO(t *testing.T) {
+	if !haveCGO {
+		t.Skipf("skipping test: no cgo")
 	}
 }
 

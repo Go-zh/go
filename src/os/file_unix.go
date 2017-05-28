@@ -20,11 +20,22 @@ func fixLongPath(path string) string {
 func rename(oldname, newname string) error {
 	fi, err := Lstat(newname)
 	if err == nil && fi.IsDir() {
+		// There are two independent errors this function can return:
+		// one for a bad oldname, and one for a bad newname.
+		// At this point we've determined the newname is bad.
+		// But just in case oldname is also bad, prioritize returning
+		// the oldname error because that's what we did historically.
+		if _, err := Lstat(oldname); err != nil {
+			if pe, ok := err.(*PathError); ok {
+				err = pe.Err
+			}
+			return &LinkError{"rename", oldname, newname, err}
+		}
 		return &LinkError{"rename", oldname, newname, syscall.EEXIST}
 	}
-	e := syscall.Rename(oldname, newname)
-	if e != nil {
-		return &LinkError{"rename", oldname, newname, e}
+	err = syscall.Rename(oldname, newname)
+	if err != nil {
+		return &LinkError{"rename", oldname, newname, err}
 	}
 	return nil
 }
@@ -59,7 +70,9 @@ func (f *File) Fd() uintptr {
 	return uintptr(f.pfd.Sysfd)
 }
 
-// NewFile returns a new File with the given file descriptor and name.
+// NewFile returns a new File with the given file descriptor and
+// name. The returned value will be nil if fd is not a valid file
+// descriptor.
 func NewFile(fd uintptr, name string) *File {
 	return newFile(fd, name, false)
 }
@@ -87,20 +100,18 @@ func newFile(fd uintptr, name string, pollable bool) *File {
 		pollable = false
 	}
 
-	if pollable {
-		if err := f.pfd.Init(); err != nil {
-			// An error here indicates a failure to register
-			// with the netpoll system. That can happen for
-			// a file descriptor that is not supported by
-			// epoll/kqueue; for example, disk files on
-			// GNU/Linux systems. We assume that any real error
-			// will show up in later I/O.
-		} else {
-			// We successfully registered with netpoll, so put
-			// the file into nonblocking mode.
-			if err := syscall.SetNonblock(fdi, true); err == nil {
-				f.nonblock = true
-			}
+	if err := f.pfd.Init("file", pollable); err != nil {
+		// An error here indicates a failure to register
+		// with the netpoll system. That can happen for
+		// a file descriptor that is not supported by
+		// epoll/kqueue; for example, disk files on
+		// GNU/Linux systems. We assume that any real error
+		// will show up in later I/O.
+	} else if pollable {
+		// We successfully registered with netpoll, so put
+		// the file into nonblocking mode.
+		if err := syscall.SetNonblock(fdi, true); err == nil {
+			f.nonblock = true
 		}
 	}
 
@@ -183,14 +194,16 @@ func (f *File) Close() error {
 }
 
 func (file *file) close() error {
-	if file == nil || file.pfd.Sysfd == badFd {
+	if file == nil {
 		return syscall.EINVAL
 	}
 	var err error
 	if e := file.pfd.Close(); e != nil {
+		if e == poll.ErrFileClosing {
+			e = ErrClosed
+		}
 		err = &PathError{"close", file.name, e}
 	}
-	file.pfd.Sysfd = badFd // so it can't be closed again
 
 	// no need for a finalizer anymore
 	runtime.SetFinalizer(file, nil)

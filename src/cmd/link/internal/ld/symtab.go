@@ -31,7 +31,7 @@
 package ld
 
 import (
-	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"cmd/internal/sys"
 	"fmt"
 	"path/filepath"
@@ -109,7 +109,7 @@ func putelfsym(ctxt *Link, x *Symbol, s string, t SymbolType, addr int64, go_ *S
 	}
 
 	var elfshnum int
-	if xo.Type == obj.SDYNIMPORT || xo.Type == obj.SHOSTOBJ {
+	if xo.Type == SDYNIMPORT || xo.Type == SHOSTOBJ {
 		elfshnum = SHN_UNDEF
 	} else {
 		if xo.Sect == nil {
@@ -127,7 +127,7 @@ func putelfsym(ctxt *Link, x *Symbol, s string, t SymbolType, addr int64, go_ *S
 	// maybe one day STB_WEAK.
 	bind := STB_GLOBAL
 
-	if x.Version != 0 || (x.Type&obj.SHIDDEN != 0) || x.Attr.Local() {
+	if x.Version != 0 || (x.Type&SHIDDEN != 0) || x.Attr.Local() {
 		bind = STB_LOCAL
 	}
 
@@ -144,13 +144,16 @@ func putelfsym(ctxt *Link, x *Symbol, s string, t SymbolType, addr int64, go_ *S
 		addr -= int64(xo.Sect.Vaddr)
 	}
 	other := STV_DEFAULT
-	if x.Type&obj.SHIDDEN != 0 {
+	if x.Type&SHIDDEN != 0 {
 		other = STV_HIDDEN
 	}
-	if (Buildmode == BuildmodeCArchive || Buildmode == BuildmodePIE || ctxt.DynlinkingGo()) && SysArch.Family == sys.PPC64 && typ == STT_FUNC && x.Name != "runtime.duffzero" && x.Name != "runtime.duffcopy" {
+	if SysArch.Family == sys.PPC64 && typ == STT_FUNC && x.Attr.Shared() && x.Name != "runtime.duffzero" && x.Name != "runtime.duffcopy" {
 		// On ppc64 the top three bits of the st_other field indicate how
 		// many instructions separate the global and local entry points. In
 		// our case it is two instructions, indicated by the value 3.
+		// The conditions here match those in preprocess in
+		// cmd/internal/obj/ppc64/obj9.go, which is where the
+		// instructions are inserted.
 		other |= 3 << 5
 	}
 
@@ -162,7 +165,7 @@ func putelfsym(ctxt *Link, x *Symbol, s string, t SymbolType, addr int64, go_ *S
 		s = strings.Replace(s, "·", ".", -1)
 	}
 
-	if ctxt.DynlinkingGo() && bind == STB_GLOBAL && elfbind == STB_LOCAL && x.Type == obj.STEXT {
+	if ctxt.DynlinkingGo() && bind == STB_GLOBAL && elfbind == STB_LOCAL && x.Type == STEXT {
 		// When dynamically linking, we want references to functions defined
 		// in this module to always be to the function object, not to the
 		// PLT. We force this by writing an additional local symbol for every
@@ -222,7 +225,7 @@ func putplan9sym(ctxt *Link, x *Symbol, s string, typ SymbolType, addr int64, go
 
 	case AutoSym, ParamSym, FileSym, FrameSym:
 		l := 4
-		if Headtype == obj.Hplan9 && SysArch.Family == sys.AMD64 && !Flag8 {
+		if Headtype == objabi.Hplan9 && SysArch.Family == sys.AMD64 && !Flag8 {
 			Lputb(uint32(addr >> 32))
 			l = 8
 		}
@@ -307,18 +310,18 @@ func (libs byPkg) Swap(a, b int) {
 func textsectionmap(ctxt *Link) uint32 {
 
 	t := ctxt.Syms.Lookup("runtime.textsectionmap", 0)
-	t.Type = obj.SRODATA
+	t.Type = SRODATA
 	t.Attr |= AttrReachable
 	nsections := int64(0)
 
-	for sect := Segtext.Sect; sect != nil; sect = sect.Next {
+	for _, sect := range Segtext.Sections {
 		if sect.Name == ".text" {
 			nsections++
 		} else {
 			break
 		}
 	}
-	Symgrow(t, nsections*(2*int64(SysArch.IntSize)+int64(SysArch.PtrSize)))
+	Symgrow(t, 3*nsections*int64(SysArch.PtrSize))
 
 	off := int64(0)
 	n := 0
@@ -332,13 +335,13 @@ func textsectionmap(ctxt *Link) uint32 {
 	// order of creation starting with 1. These symbols provide the section's
 	// address after relocation by the linker.
 
-	textbase := Segtext.Sect.Vaddr
-	for sect := Segtext.Sect; sect != nil; sect = sect.Next {
+	textbase := Segtext.Sections[0].Vaddr
+	for _, sect := range Segtext.Sections {
 		if sect.Name != ".text" {
 			break
 		}
-		off = setuintxx(ctxt, t, off, sect.Vaddr-textbase, int64(SysArch.IntSize))
-		off = setuintxx(ctxt, t, off, sect.Length, int64(SysArch.IntSize))
+		off = setuint(ctxt, t, off, sect.Vaddr-textbase)
+		off = setuint(ctxt, t, off, sect.Length)
 		if n == 0 {
 			s := ctxt.Syms.ROLookup("runtime.text", 0)
 			if s == nil {
@@ -363,40 +366,40 @@ func (ctxt *Link) symtab() {
 
 	// Define these so that they'll get put into the symbol table.
 	// data.c:/^address will provide the actual values.
-	ctxt.xdefine("runtime.text", obj.STEXT, 0)
+	ctxt.xdefine("runtime.text", STEXT, 0)
 
-	ctxt.xdefine("runtime.etext", obj.STEXT, 0)
-	ctxt.xdefine("runtime.itablink", obj.SRODATA, 0)
-	ctxt.xdefine("runtime.eitablink", obj.SRODATA, 0)
-	ctxt.xdefine("runtime.rodata", obj.SRODATA, 0)
-	ctxt.xdefine("runtime.erodata", obj.SRODATA, 0)
-	ctxt.xdefine("runtime.types", obj.SRODATA, 0)
-	ctxt.xdefine("runtime.etypes", obj.SRODATA, 0)
-	ctxt.xdefine("runtime.noptrdata", obj.SNOPTRDATA, 0)
-	ctxt.xdefine("runtime.enoptrdata", obj.SNOPTRDATA, 0)
-	ctxt.xdefine("runtime.data", obj.SDATA, 0)
-	ctxt.xdefine("runtime.edata", obj.SDATA, 0)
-	ctxt.xdefine("runtime.bss", obj.SBSS, 0)
-	ctxt.xdefine("runtime.ebss", obj.SBSS, 0)
-	ctxt.xdefine("runtime.noptrbss", obj.SNOPTRBSS, 0)
-	ctxt.xdefine("runtime.enoptrbss", obj.SNOPTRBSS, 0)
-	ctxt.xdefine("runtime.end", obj.SBSS, 0)
-	ctxt.xdefine("runtime.epclntab", obj.SRODATA, 0)
-	ctxt.xdefine("runtime.esymtab", obj.SRODATA, 0)
+	ctxt.xdefine("runtime.etext", STEXT, 0)
+	ctxt.xdefine("runtime.itablink", SRODATA, 0)
+	ctxt.xdefine("runtime.eitablink", SRODATA, 0)
+	ctxt.xdefine("runtime.rodata", SRODATA, 0)
+	ctxt.xdefine("runtime.erodata", SRODATA, 0)
+	ctxt.xdefine("runtime.types", SRODATA, 0)
+	ctxt.xdefine("runtime.etypes", SRODATA, 0)
+	ctxt.xdefine("runtime.noptrdata", SNOPTRDATA, 0)
+	ctxt.xdefine("runtime.enoptrdata", SNOPTRDATA, 0)
+	ctxt.xdefine("runtime.data", SDATA, 0)
+	ctxt.xdefine("runtime.edata", SDATA, 0)
+	ctxt.xdefine("runtime.bss", SBSS, 0)
+	ctxt.xdefine("runtime.ebss", SBSS, 0)
+	ctxt.xdefine("runtime.noptrbss", SNOPTRBSS, 0)
+	ctxt.xdefine("runtime.enoptrbss", SNOPTRBSS, 0)
+	ctxt.xdefine("runtime.end", SBSS, 0)
+	ctxt.xdefine("runtime.epclntab", SRODATA, 0)
+	ctxt.xdefine("runtime.esymtab", SRODATA, 0)
 
 	// garbage collection symbols
 	s := ctxt.Syms.Lookup("runtime.gcdata", 0)
 
-	s.Type = obj.SRODATA
+	s.Type = SRODATA
 	s.Size = 0
 	s.Attr |= AttrReachable
-	ctxt.xdefine("runtime.egcdata", obj.SRODATA, 0)
+	ctxt.xdefine("runtime.egcdata", SRODATA, 0)
 
 	s = ctxt.Syms.Lookup("runtime.gcbss", 0)
-	s.Type = obj.SRODATA
+	s.Type = SRODATA
 	s.Size = 0
 	s.Attr |= AttrReachable
-	ctxt.xdefine("runtime.egcbss", obj.SRODATA, 0)
+	ctxt.xdefine("runtime.egcbss", SRODATA, 0)
 
 	// pseudo-symbols to mark locations of type, string, and go string data.
 	var symtype *Symbol
@@ -404,28 +407,28 @@ func (ctxt *Link) symtab() {
 	if UseRelro() && (Buildmode == BuildmodeCArchive || Buildmode == BuildmodeCShared || Buildmode == BuildmodePIE) {
 		s = ctxt.Syms.Lookup("type.*", 0)
 
-		s.Type = obj.STYPE
+		s.Type = STYPE
 		s.Size = 0
 		s.Attr |= AttrReachable
 		symtype = s
 
 		s = ctxt.Syms.Lookup("typerel.*", 0)
 
-		s.Type = obj.STYPERELRO
+		s.Type = STYPERELRO
 		s.Size = 0
 		s.Attr |= AttrReachable
 		symtyperel = s
 	} else if !ctxt.DynlinkingGo() {
 		s = ctxt.Syms.Lookup("type.*", 0)
 
-		s.Type = obj.STYPE
+		s.Type = STYPE
 		s.Size = 0
 		s.Attr |= AttrReachable
 		symtype = s
 		symtyperel = s
 	}
 
-	groupSym := func(name string, t obj.SymKind) *Symbol {
+	groupSym := func(name string, t SymKind) *Symbol {
 		s := ctxt.Syms.Lookup(name, 0)
 		s.Type = t
 		s.Size = 0
@@ -433,26 +436,26 @@ func (ctxt *Link) symtab() {
 		return s
 	}
 	var (
-		symgostring = groupSym("go.string.*", obj.SGOSTRING)
-		symgofunc   = groupSym("go.func.*", obj.SGOFUNC)
-		symgcbits   = groupSym("runtime.gcbits.*", obj.SGCBITS)
+		symgostring = groupSym("go.string.*", SGOSTRING)
+		symgofunc   = groupSym("go.func.*", SGOFUNC)
+		symgcbits   = groupSym("runtime.gcbits.*", SGCBITS)
 	)
 
 	var symgofuncrel *Symbol
 	if !ctxt.DynlinkingGo() {
 		if UseRelro() {
-			symgofuncrel = groupSym("go.funcrel.*", obj.SGOFUNCRELRO)
+			symgofuncrel = groupSym("go.funcrel.*", SGOFUNCRELRO)
 		} else {
 			symgofuncrel = symgofunc
 		}
 	}
 
 	symitablink := ctxt.Syms.Lookup("runtime.itablink", 0)
-	symitablink.Type = obj.SITABLINK
+	symitablink.Type = SITABLINK
 
 	symt = ctxt.Syms.Lookup("runtime.symtab", 0)
 	symt.Attr |= AttrLocal
-	symt.Type = obj.SSYMTAB
+	symt.Type = SSYMTAB
 	symt.Size = 0
 	symt.Attr |= AttrReachable
 
@@ -463,59 +466,62 @@ func (ctxt *Link) symtab() {
 	// just defined above will be first.
 	// hide the specific symbols.
 	for _, s := range ctxt.Syms.Allsym {
-		if !s.Attr.Reachable() || s.Attr.Special() || s.Type != obj.SRODATA {
+		if !s.Attr.Reachable() || s.Attr.Special() || s.Type != SRODATA {
 			continue
 		}
 
 		switch {
 		case strings.HasPrefix(s.Name, "type."):
 			if !ctxt.DynlinkingGo() {
-				s.Attr |= AttrHidden
+				s.Attr |= AttrNotInSymbolTable
 			}
 			if UseRelro() {
-				s.Type = obj.STYPERELRO
+				s.Type = STYPERELRO
 				s.Outer = symtyperel
 			} else {
-				s.Type = obj.STYPE
+				s.Type = STYPE
 				s.Outer = symtype
 			}
 
 		case strings.HasPrefix(s.Name, "go.importpath.") && UseRelro():
 			// Keep go.importpath symbols in the same section as types and
 			// names, as they can be referred to by a section offset.
-			s.Type = obj.STYPERELRO
+			s.Type = STYPERELRO
 
 		case strings.HasPrefix(s.Name, "go.itablink."):
 			nitablinks++
-			s.Type = obj.SITABLINK
-			s.Attr |= AttrHidden
+			s.Type = SITABLINK
+			s.Attr |= AttrNotInSymbolTable
 			s.Outer = symitablink
 
 		case strings.HasPrefix(s.Name, "go.string."):
-			s.Type = obj.SGOSTRING
-			s.Attr |= AttrHidden
+			s.Type = SGOSTRING
+			s.Attr |= AttrNotInSymbolTable
 			s.Outer = symgostring
 
 		case strings.HasPrefix(s.Name, "runtime.gcbits."):
-			s.Type = obj.SGCBITS
-			s.Attr |= AttrHidden
+			s.Type = SGCBITS
+			s.Attr |= AttrNotInSymbolTable
 			s.Outer = symgcbits
 
 		case strings.HasSuffix(s.Name, "·f"):
 			if !ctxt.DynlinkingGo() {
-				s.Attr |= AttrHidden
+				s.Attr |= AttrNotInSymbolTable
 			}
 			if UseRelro() {
-				s.Type = obj.SGOFUNCRELRO
+				s.Type = SGOFUNCRELRO
 				s.Outer = symgofuncrel
 			} else {
-				s.Type = obj.SGOFUNC
+				s.Type = SGOFUNC
 				s.Outer = symgofunc
 			}
 
-		case strings.HasPrefix(s.Name, "gcargs."), strings.HasPrefix(s.Name, "gclocals."), strings.HasPrefix(s.Name, "gclocals·"):
-			s.Type = obj.SGOFUNC
-			s.Attr |= AttrHidden
+		case strings.HasPrefix(s.Name, "gcargs."),
+			strings.HasPrefix(s.Name, "gclocals."),
+			strings.HasPrefix(s.Name, "gclocals·"),
+			strings.HasPrefix(s.Name, "inltree."):
+			s.Type = SGOFUNC
+			s.Attr |= AttrNotInSymbolTable
 			s.Outer = symgofunc
 			s.Align = 4
 			liveness += (s.Size + int64(s.Align) - 1) &^ (int64(s.Align) - 1)
@@ -525,7 +531,7 @@ func (ctxt *Link) symtab() {
 	if Buildmode == BuildmodeShared {
 		abihashgostr := ctxt.Syms.Lookup("go.link.abihash."+filepath.Base(*flagOutfile), 0)
 		abihashgostr.Attr |= AttrReachable
-		abihashgostr.Type = obj.SRODATA
+		abihashgostr.Type = SRODATA
 		hashsym := ctxt.Syms.Lookup("go.link.abihashbytes", 0)
 		Addaddr(ctxt, abihashgostr, hashsym)
 		adduint(ctxt, abihashgostr, uint64(hashsym.Size))
@@ -534,12 +540,12 @@ func (ctxt *Link) symtab() {
 		for _, l := range ctxt.Library {
 			s := ctxt.Syms.Lookup("go.link.pkghashbytes."+l.Pkg, 0)
 			s.Attr |= AttrReachable
-			s.Type = obj.SRODATA
+			s.Type = SRODATA
 			s.Size = int64(len(l.hash))
 			s.P = []byte(l.hash)
 			str := ctxt.Syms.Lookup("go.link.pkghash."+l.Pkg, 0)
 			str.Attr |= AttrReachable
-			str.Type = obj.SRODATA
+			str.Type = SRODATA
 			Addaddr(ctxt, str, s)
 			adduint(ctxt, str, uint64(len(l.hash)))
 		}
@@ -604,7 +610,7 @@ func (ctxt *Link) symtab() {
 	// The ptab slice
 	if ptab := ctxt.Syms.ROLookup("go.plugin.tabs", 0); ptab != nil && ptab.Attr.Reachable() {
 		ptab.Attr |= AttrLocal
-		ptab.Type = obj.SRODATA
+		ptab.Type = SRODATA
 
 		nentries := uint64(len(ptab.P) / 8) // sizeof(nameOff) + sizeof(typeOff)
 		Addaddr(ctxt, moduledata, ptab)
@@ -621,7 +627,7 @@ func (ctxt *Link) symtab() {
 		pkghashes := ctxt.Syms.Lookup("go.link.pkghashes", 0)
 		pkghashes.Attr |= AttrReachable
 		pkghashes.Attr |= AttrLocal
-		pkghashes.Type = obj.SRODATA
+		pkghashes.Type = SRODATA
 
 		for i, l := range ctxt.Library {
 			// pkghashes[i].name
@@ -655,7 +661,7 @@ func (ctxt *Link) symtab() {
 		modulehashes := ctxt.Syms.Lookup("go.link.abihashes", 0)
 		modulehashes.Attr |= AttrReachable
 		modulehashes.Attr |= AttrLocal
-		modulehashes.Type = obj.SRODATA
+		modulehashes.Type = SRODATA
 
 		for i, shlib := range ctxt.Shlibs {
 			// modulehashes[i].modulename
@@ -685,8 +691,8 @@ func (ctxt *Link) symtab() {
 	Symgrow(moduledata, moduledata.Size)
 
 	lastmoduledatap := ctxt.Syms.Lookup("runtime.lastmoduledatap", 0)
-	if lastmoduledatap.Type != obj.SDYNIMPORT {
-		lastmoduledatap.Type = obj.SNOPTRDATA
+	if lastmoduledatap.Type != SDYNIMPORT {
+		lastmoduledatap.Type = SNOPTRDATA
 		lastmoduledatap.Size = 0 // overwrite existing value
 		Addaddr(ctxt, lastmoduledatap, moduledata)
 	}

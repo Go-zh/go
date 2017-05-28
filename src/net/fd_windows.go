@@ -13,9 +13,6 @@ import (
 	"unsafe"
 )
 
-func sysInit() {
-}
-
 // canUseConnectEx reports whether we can use the ConnectEx Windows API call
 // for the given network type.
 func canUseConnectEx(net string) bool {
@@ -156,7 +153,7 @@ func (fd *netFD) Read(buf []byte) (int, error) {
 }
 
 func (fd *netFD) readFrom(buf []byte) (int, syscall.Sockaddr, error) {
-	n, sa, err := fd.pfd.RecvFrom(buf)
+	n, sa, err := fd.pfd.ReadFrom(buf)
 	runtime.KeepAlive(fd)
 	return n, sa, wrapSyscallError("wsarecvfrom", err)
 }
@@ -173,7 +170,7 @@ func (c *conn) writeBuffers(v *Buffers) (int64, error) {
 	}
 	n, err := c.fd.writeBuffers(v)
 	if err != nil {
-		return n, &OpError{Op: "WSASend", Net: c.fd.net, Source: c.fd.laddr, Addr: c.fd.raddr, Err: err}
+		return n, &OpError{Op: "wsasend", Net: c.fd.net, Source: c.fd.laddr, Addr: c.fd.raddr, Err: err}
 	}
 	return n, nil
 }

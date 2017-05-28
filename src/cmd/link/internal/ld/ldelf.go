@@ -3,7 +3,7 @@ package ld
 import (
 	"bytes"
 	"cmd/internal/bio"
-	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"cmd/internal/sys"
 	"encoding/binary"
 	"fmt"
@@ -444,7 +444,7 @@ func parseArmAttributes(ctxt *Link, e binary.ByteOrder, data []byte) {
 
 func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 	if ctxt.Debugvlog != 0 {
-		ctxt.Logf("%5.2f ldelf %s\n", obj.Cputime(), pn)
+		ctxt.Logf("%5.2f ldelf %s\n", Cputime(), pn)
 	}
 
 	localSymVersion := ctxt.Syms.IncVersion()
@@ -453,7 +453,6 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 	var add uint64
 	var e binary.ByteOrder
 	var elfobj *ElfObj
-	var err error
 	var flag int
 	var hdr *ElfHdrBytes
 	var hdrbuf [64]uint8
@@ -472,12 +471,14 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 	var sym ElfSym
 	var symbols []*Symbol
 	if _, err := io.ReadFull(f, hdrbuf[:]); err != nil {
-		goto bad
+		Errorf(nil, "%s: malformed elf file: %v", pn, err)
+		return
 	}
 	hdr = new(ElfHdrBytes)
 	binary.Read(bytes.NewReader(hdrbuf[:]), binary.BigEndian, hdr) // only byte arrays; byte order doesn't matter
 	if string(hdr.Ident[:4]) != "\x7FELF" {
-		goto bad
+		Errorf(nil, "%s: malformed elf file", pn)
+		return
 	}
 	switch hdr.Ident[5] {
 	case ElfDataLsb:
@@ -487,7 +488,8 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 		e = binary.BigEndian
 
 	default:
-		goto bad
+		Errorf(nil, "%s: malformed elf file", pn)
+		return
 	}
 
 	// read header
@@ -534,8 +536,9 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 
 	elfobj.is64 = is64
 
-	if uint32(hdr.Ident[6]) != elfobj.version {
-		goto bad
+	if v := uint32(hdr.Ident[6]); v != elfobj.version {
+		Errorf(nil, "%s: malformed elf version: got %d, want %d", pn, v, elfobj.version)
+		return
 	}
 
 	if e.Uint16(hdr.Type[:]) != ElfTypeRelocatable {
@@ -603,14 +606,16 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 	elfobj.nsect = uint(elfobj.shnum)
 	for i := 0; uint(i) < elfobj.nsect; i++ {
 		if f.Seek(int64(uint64(base)+elfobj.shoff+uint64(int64(i)*int64(elfobj.shentsize))), 0) < 0 {
-			goto bad
+			Errorf(nil, "%s: malformed elf file", pn)
+			return
 		}
 		sect = &elfobj.sect[i]
 		if is64 != 0 {
 			var b ElfSectBytes64
 
-			if err = binary.Read(f, e, &b); err != nil {
-				goto bad
+			if err := binary.Read(f, e, &b); err != nil {
+				Errorf(nil, "%s: malformed elf file: %v", pn, err)
+				return
 			}
 
 			sect.nameoff = e.Uint32(b.Name[:])
@@ -626,8 +631,9 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 		} else {
 			var b ElfSectBytes
 
-			if err = binary.Read(f, e, &b); err != nil {
-				goto bad
+			if err := binary.Read(f, e, &b); err != nil {
+				Errorf(nil, "%s: malformed elf file: %v", pn, err)
+				return
 			}
 
 			sect.nameoff = e.Uint32(b.Name[:])
@@ -645,13 +651,14 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 
 	// read section string table and translate names
 	if elfobj.shstrndx >= uint32(elfobj.nsect) {
-		err = fmt.Errorf("shstrndx out of range %d >= %d", elfobj.shstrndx, elfobj.nsect)
-		goto bad
+		Errorf(nil, "%s: malformed elf file: shstrndx out of range %d >= %d", pn, elfobj.shstrndx, elfobj.nsect)
+		return
 	}
 
 	sect = &elfobj.sect[elfobj.shstrndx]
-	if err = elfmap(elfobj, sect); err != nil {
-		goto bad
+	if err := elfmap(elfobj, sect); err != nil {
+		Errorf(nil, "%s: malformed elf file: %v", pn, err)
+		return
 	}
 	for i := 0; uint(i) < elfobj.nsect; i++ {
 		if elfobj.sect[i].nameoff != 0 {
@@ -679,11 +686,13 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 		elfobj.nsymtab = int(elfobj.symtab.size / ELF32SYMSIZE)
 	}
 
-	if err = elfmap(elfobj, elfobj.symtab); err != nil {
-		goto bad
+	if err := elfmap(elfobj, elfobj.symtab); err != nil {
+		Errorf(nil, "%s: malformed elf file: %v", pn, err)
+		return
 	}
-	if err = elfmap(elfobj, elfobj.symstr); err != nil {
-		goto bad
+	if err := elfmap(elfobj, elfobj.symstr); err != nil {
+		Errorf(nil, "%s: malformed elf file: %v", pn, err)
+		return
 	}
 
 	// load text and data segments into memory.
@@ -695,8 +704,9 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 	for i := 0; uint(i) < elfobj.nsect; i++ {
 		sect = &elfobj.sect[i]
 		if sect.type_ == SHT_ARM_ATTRIBUTES && sect.name == ".ARM.attributes" {
-			if err = elfmap(elfobj, sect); err != nil {
-				goto bad
+			if err := elfmap(elfobj, sect); err != nil {
+				Errorf(nil, "%s: malformed elf file: %v", pn, err)
+				return
 			}
 			parseArmAttributes(ctxt, e, sect.base[:sect.size])
 		}
@@ -704,8 +714,9 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 			continue
 		}
 		if sect.type_ != ElfSectNobits {
-			if err = elfmap(elfobj, sect); err != nil {
-				goto bad
+			if err := elfmap(elfobj, sect); err != nil {
+				Errorf(nil, "%s: malformed elf file: %v", pn, err)
+				return
 			}
 		}
 
@@ -714,25 +725,25 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 
 		switch int(sect.flags) & (ElfSectFlagAlloc | ElfSectFlagWrite | ElfSectFlagExec) {
 		default:
-			err = fmt.Errorf("unexpected flags for ELF section %s", sect.name)
-			goto bad
+			Errorf(nil, "%s: unexpected flags for ELF section %s", pn, sect.name)
+			return
 
 		case ElfSectFlagAlloc:
-			s.Type = obj.SRODATA
+			s.Type = SRODATA
 
 		case ElfSectFlagAlloc + ElfSectFlagWrite:
 			if sect.type_ == ElfSectNobits {
-				s.Type = obj.SNOPTRBSS
+				s.Type = SNOPTRBSS
 			} else {
-				s.Type = obj.SNOPTRDATA
+				s.Type = SNOPTRDATA
 			}
 
 		case ElfSectFlagAlloc + ElfSectFlagExec:
-			s.Type = obj.STEXT
+			s.Type = STEXT
 		}
 
 		if sect.name == ".got" || sect.name == ".toc" {
-			s.Type = obj.SELFGOT
+			s.Type = SELFGOT
 		}
 		if sect.type_ == ElfSectProgbits {
 			s.P = sect.base
@@ -749,8 +760,9 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 	symbols = make([]*Symbol, elfobj.nsymtab)
 
 	for i := 1; i < elfobj.nsymtab; i++ {
-		if err = readelfsym(ctxt, elfobj, i, &sym, 1, localSymVersion); err != nil {
-			goto bad
+		if err := readelfsym(ctxt, elfobj, i, &sym, 1, localSymVersion); err != nil {
+			Errorf(nil, "%s: malformed elf file: %v", pn, err)
+			return
 		}
 		symbols[i] = sym.sym
 		if sym.type_ != ElfSymTypeFunc && sym.type_ != ElfSymTypeObject && sym.type_ != ElfSymTypeNone && sym.type_ != ElfSymTypeCommon {
@@ -761,8 +773,8 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 			if uint64(s.Size) < sym.size {
 				s.Size = int64(sym.size)
 			}
-			if s.Type == 0 || s.Type == obj.SXREF {
-				s.Type = obj.SNOPTRBSS
+			if s.Type == 0 || s.Type == SXREF {
+				s.Type = SNOPTRBSS
 			}
 			continue
 		}
@@ -804,14 +816,14 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 
 		s.Sub = sect.sym.Sub
 		sect.sym.Sub = s
-		s.Type = sect.sym.Type | s.Type&^obj.SMASK | obj.SSUB
+		s.Type = sect.sym.Type | s.Type&^SMASK | SSUB
 		if !s.Attr.CgoExportDynamic() {
 			s.Dynimplib = "" // satisfy dynimport
 		}
 		s.Value = int64(sym.value)
 		s.Size = int64(sym.size)
 		s.Outer = sect.sym
-		if sect.sym.Type == obj.STEXT {
+		if sect.sym.Type == STEXT {
 			if s.Attr.External() && !s.Attr.DuplicateOK() {
 				Errorf(s, "%s: duplicate symbol definition", pn)
 			}
@@ -838,7 +850,7 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 		if s.Sub != nil {
 			s.Sub = listsort(s.Sub)
 		}
-		if s.Type == obj.STEXT {
+		if s.Type == STEXT {
 			if s.Attr.OnList() {
 				log.Fatalf("symbol %s listed multiple times", s.Name)
 			}
@@ -864,8 +876,9 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 			continue
 		}
 		sect = &elfobj.sect[rsect.info]
-		if err = elfmap(elfobj, rsect); err != nil {
-			goto bad
+		if err := elfmap(elfobj, rsect); err != nil {
+			Errorf(nil, "%s: malformed elf file: %v", pn, err)
+			return
 		}
 		rela = 0
 		if rsect.type_ == ElfSectRela {
@@ -911,19 +924,20 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 			if info>>32 == 0 { // absolute relocation, don't bother reading the null symbol
 				rp.Sym = nil
 			} else {
-				if err = readelfsym(ctxt, elfobj, int(info>>32), &sym, 0, 0); err != nil {
-					goto bad
+				if err := readelfsym(ctxt, elfobj, int(info>>32), &sym, 0, 0); err != nil {
+					Errorf(nil, "%s: malformed elf file: %v", pn, err)
+					return
 				}
 				sym.sym = symbols[info>>32]
 				if sym.sym == nil {
-					err = fmt.Errorf("%s#%d: reloc of invalid sym #%d %s shndx=%d type=%d", sect.sym.Name, j, int(info>>32), sym.name, sym.shndx, sym.type_)
-					goto bad
+					Errorf(nil, "%s: malformed elf file: %s#%d: reloc of invalid sym #%d %s shndx=%d type=%d", pn, sect.sym.Name, j, int(info>>32), sym.name, sym.shndx, sym.type_)
+					return
 				}
 
 				rp.Sym = sym.sym
 			}
 
-			rp.Type = 256 + obj.RelocType(info)
+			rp.Type = 256 + objabi.RelocType(info)
 			rp.Siz = relSize(ctxt, pn, uint32(info))
 			if rela != 0 {
 				rp.Add = int64(add)
@@ -954,11 +968,6 @@ func ldelf(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
 		s.R = r
 		s.R = s.R[:n]
 	}
-
-	return
-
-bad:
-	Errorf(nil, "%s: malformed elf file: %v", pn, err)
 }
 
 func section(elfobj *ElfObj, name string) *ElfSect {
@@ -1051,7 +1060,7 @@ func readelfsym(ctxt *Link, elfobj *ElfObj, i int, sym *ElfSym, needSym int, loc
 				// set dupok generally. See http://codereview.appspot.com/5823055/
 				// comment #5 for details.
 				if s != nil && sym.other == 2 {
-					s.Type |= obj.SHIDDEN
+					s.Type |= SHIDDEN
 					s.Attr |= AttrDuplicateOK
 				}
 			}
@@ -1068,7 +1077,7 @@ func readelfsym(ctxt *Link, elfobj *ElfObj, i int, sym *ElfSym, needSym int, loc
 				// so put it in the hash table.
 				if needSym != 0 {
 					s = ctxt.Syms.Lookup(sym.name, localSymVersion)
-					s.Type |= obj.SHIDDEN
+					s.Type |= SHIDDEN
 				}
 
 				break
@@ -1080,14 +1089,14 @@ func readelfsym(ctxt *Link, elfobj *ElfObj, i int, sym *ElfSym, needSym int, loc
 				// don't bother to add them into the hash table
 				s = ctxt.Syms.newsym(sym.name, localSymVersion)
 
-				s.Type |= obj.SHIDDEN
+				s.Type |= SHIDDEN
 			}
 
 		case ElfSymBindWeak:
 			if needSym != 0 {
 				s = ctxt.Syms.Lookup(sym.name, 0)
 				if sym.other == 2 {
-					s.Type |= obj.SHIDDEN
+					s.Type |= SHIDDEN
 				}
 			}
 
@@ -1098,7 +1107,7 @@ func readelfsym(ctxt *Link, elfobj *ElfObj, i int, sym *ElfSym, needSym int, loc
 	}
 
 	if s != nil && s.Type == 0 && sym.type_ != ElfSymTypeSection {
-		s.Type = obj.SXREF
+		s.Type = SXREF
 	}
 	sym.sym = s
 

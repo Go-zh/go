@@ -162,6 +162,9 @@ const testFlag2 = `
 	-cover
 	    Enable coverage analysis.
 
+	    BUG: If a compilation or test fails with coverage enabled,
+	    the reported line numbers may be incorrect.
+
 	-covermode set,count,atomic
 	    Set the mode for coverage analysis for the package[s]
 	    being tested. The default is "set" unless -race is enabled,
@@ -183,6 +186,11 @@ const testFlag2 = `
 	    Specify a list of GOMAXPROCS values for which the tests or
 	    benchmarks should be executed.  The default is the current value
 	    of GOMAXPROCS.
+
+	-list regexp
+	    List tests, benchmarks, or examples matching the regular expression.
+	    No tests, benchmarks or examples will be run. This will only
+	    list top-level tests. No subtest or subbenchmarks will be shown.
 
 	-parallel n
 	    Allow parallel execution of test functions that call t.Parallel.
@@ -388,9 +396,9 @@ See the documentation of the testing package for more information.
 }
 
 var (
-	testC     bool // -c flag
-	testCover bool // -cover flag
-	// Note: testCoverMode is cfg.TestCoverMode (-covermode)
+	testC            bool            // -c flag
+	testCover        bool            // -cover flag
+	testCoverMode    string          // -covermode flag
 	testCoverPaths   []string        // -coverpkg flag
 	testCoverPkgs    []*load.Package // -coverpkg flag
 	testO            string          // -o flag
@@ -400,6 +408,7 @@ var (
 	testTimeout      string          // -timeout flag
 	testArgs         []string
 	testBench        bool
+	testList         bool
 	testStreamOutput bool // show output as it is generated
 	testShowPass     bool // show passing output
 
@@ -447,7 +456,7 @@ func runTest(cmd *base.Command, args []string) {
 	// show passing test output (after buffering) with -v flag.
 	// must buffer because tests are running in parallel, and
 	// otherwise the output will get mixed.
-	testShowPass = testV
+	testShowPass = testV || testList
 
 	// stream test output (no buffering) when no package has
 	// been given on the command line (implicit current directory)
@@ -548,7 +557,7 @@ func runTest(cmd *base.Command, args []string) {
 			p.Stale = true // rebuild
 			p.StaleReason = "rebuild for coverage"
 			p.Internal.Fake = true // do not warn about rebuild
-			p.Internal.CoverMode = cfg.TestCoverMode
+			p.Internal.CoverMode = testCoverMode
 			var coverFiles []string
 			coverFiles = append(coverFiles, p.GoFiles...)
 			coverFiles = append(coverFiles, p.CgoFiles...)
@@ -559,6 +568,11 @@ func runTest(cmd *base.Command, args []string) {
 
 	// Prepare build + run + print actions for all packages being tested.
 	for _, p := range pkgs {
+		// sync/atomic import is inserted by the cover tool. See #18486
+		if testCover && testCoverMode == "atomic" {
+			ensureImport(p, "sync/atomic")
+		}
+
 		buildTest, runTest, printTest, err := builderTest(&b, p)
 		if err != nil {
 			str := err.Error()
@@ -648,6 +662,23 @@ func runTest(cmd *base.Command, args []string) {
 	}
 
 	b.Do(root)
+}
+
+// ensures that package p imports the named package
+func ensureImport(p *load.Package, pkg string) {
+	for _, d := range p.Internal.Deps {
+		if d.Name == pkg {
+			return
+		}
+	}
+
+	a := load.LoadPackage(pkg, &load.ImportStack{})
+	if a.Error != nil {
+		base.Fatalf("load %s: %v", pkg, a.Error)
+	}
+	load.ComputeStale(a)
+
+	p.Internal.Imports = append(p.Internal.Imports, a)
 }
 
 var windowsBadWords = []string{
@@ -788,7 +819,7 @@ func builderTest(b *work.Builder, p *load.Package) (buildAction, runAction, prin
 		ptest.Internal.Build.ImportPos = m
 
 		if localCover {
-			ptest.Internal.CoverMode = cfg.TestCoverMode
+			ptest.Internal.CoverMode = testCoverMode
 			var coverFiles []string
 			coverFiles = append(coverFiles, ptest.GoFiles...)
 			coverFiles = append(coverFiles, ptest.CgoFiles...)
@@ -840,7 +871,7 @@ func builderTest(b *work.Builder, p *load.Package) (buildAction, runAction, prin
 			Build:     &build.Package{Name: "main"},
 			Pkgdir:    testDir,
 			Fake:      true,
-			OmitDWARF: !testC && !testNeedBinary,
+			OmitDebug: !testC && !testNeedBinary,
 		},
 	}
 
@@ -907,12 +938,8 @@ func builderTest(b *work.Builder, p *load.Package) (buildAction, runAction, prin
 
 	if cfg.BuildContext.GOOS == "darwin" {
 		if cfg.BuildContext.GOARCH == "arm" || cfg.BuildContext.GOARCH == "arm64" {
-			t.IsIOS = true
-			t.NeedOS = true
+			t.NeedCgo = true
 		}
-	}
-	if t.TestMain == nil {
-		t.NeedOS = true
 	}
 
 	for _, cp := range pmain.Internal.Imports {
@@ -1360,13 +1387,12 @@ type testFuncs struct {
 	NeedTest    bool
 	ImportXtest bool
 	NeedXtest   bool
-	NeedOS      bool
-	IsIOS       bool
+	NeedCgo     bool
 	Cover       []coverInfo
 }
 
 func (t *testFuncs) CoverMode() string {
-	return cfg.TestCoverMode
+	return testCoverMode
 }
 
 func (t *testFuncs) CoverEnabled() bool {
@@ -1475,7 +1501,7 @@ var testmainTmpl = template.Must(template.New("main").Parse(`
 package main
 
 import (
-{{if .NeedOS}}
+{{if not .TestMain}}
 	"os"
 {{end}}
 	"testing"
@@ -1491,10 +1517,8 @@ import (
 	_cover{{$i}} {{$p.Package.ImportPath | printf "%q"}}
 {{end}}
 
-{{if .IsIOS}}
-	"os/signal"
+{{if .NeedCgo}}
 	_ "runtime/cgo"
-	"syscall"
 {{end}}
 )
 
@@ -1560,32 +1584,6 @@ func coverRegisterFile(fileName string, counter []uint32, pos []uint32, numStmts
 {{end}}
 
 func main() {
-{{if .IsIOS}}
-	// Send a SIGUSR2, which will be intercepted by LLDB to
-	// tell the test harness that installation was successful.
-	// See misc/ios/go_darwin_arm_exec.go.
-	signal.Notify(make(chan os.Signal), syscall.SIGUSR2)
-	syscall.Kill(0, syscall.SIGUSR2)
-	signal.Reset(syscall.SIGUSR2)
-
-	// The first argument supplied to an iOS test is an offset
-	// suffix for the current working directory.
-	// Process it here, and remove it from os.Args.
-	const hdr = "cwdSuffix="
-	if len(os.Args) < 2 || len(os.Args[1]) <= len(hdr) || os.Args[1][:len(hdr)] != hdr {
-		panic("iOS test not passed a working directory suffix")
-	}
-	suffix := os.Args[1][len(hdr):]
-	dir, err := os.Getwd()
-	if err != nil {
-		panic(err)
-	}
-	if err := os.Chdir(dir + "/" + suffix); err != nil {
-		panic(err)
-	}
-	os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
-{{end}}
-
 {{if .CoverEnabled}}
 	testing.RegisterCover(testing.Cover{
 		Mode: {{printf "%q" .CoverMode}},

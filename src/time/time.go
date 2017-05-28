@@ -37,13 +37,12 @@
 // to use this package.
 //
 // The Time returned by time.Now contains a monotonic clock reading.
-// If Time t has a monotonic clock reading, t.Add, t.Round, and
-// t.Truncate add the same duration to both the wall clock and
-// monotonic clock readings to compute the result. Similarly, t.In,
-// t.Local, and t.UTC, which are defined to change only the Time's
+// If Time t has a monotonic clock reading, t.Add adds the same duration to
+// both the wall clock and monotonic clock readings to compute the result.
+// Similarly, t.In, t.Local, and t.UTC, which are defined to change only the Time's
 // Location, pass any monotonic clock reading through unmodified.
-// Because t.AddDate(y, m, d) is a wall time computation, it always
-// strips any monotonic clock reading from its result.
+// Because t.AddDate(y, m, d), t.Round(d), and t.Truncate(d) are wall time
+// computations, they always strip any monotonic clock reading from their results.
 //
 // If Times t and u both contain monotonic clock readings, the operations
 // t.After(u), t.Before(u), t.Equal(u), and t.Sub(u) are carried out
@@ -82,8 +81,11 @@ import "errors"
 //
 // Programs using times should typically store and pass them as values,
 // not pointers. That is, time variables and struct fields should be of
-// type time.Time, not *time.Time. A Time value can be used by
-// multiple goroutines simultaneously.
+// type time.Time, not *time.Time.
+//
+// A Time value can be used by multiple goroutines simultaneously except
+// that the methods GobDecode, UnmarshalBinary, UnmarshalJSON and
+// UnmarshalText are not concurrency-safe.
 //
 // Time instants can be compared using the Before, After, and Equal methods.
 // The Sub method subtracts two instants, producing a Duration.
@@ -172,8 +174,7 @@ func (t *Time) addSec(d int64) {
 		}
 		// Wall second now out of range for packed field.
 		// Move to ext.
-		t.ext = t.sec()
-		t.wall &= nsecMask
+		t.stripMono()
 	}
 
 	// TODO: Check for overflow.
@@ -186,6 +187,14 @@ func (t *Time) setLoc(loc *Location) {
 		loc = nil
 	}
 	t.loc = loc
+}
+
+// stripMono strips the monotonic clock reading in t.
+func (t *Time) stripMono() {
+	if t.wall&hasMonotonic != 0 {
+		t.ext = t.sec()
+		t.wall &= nsecMask
+	}
 }
 
 // setMono sets the monotonic clock reading in t.
@@ -792,6 +801,12 @@ func (d Duration) Truncate(m Duration) Duration {
 	return d - d%m
 }
 
+// lessThanHalf reports whether x+x < y but avoids overflow,
+// assuming x and y are both positive (Duration is signed).
+func lessThanHalf(x, y Duration) bool {
+	return uint64(x)+uint64(x) < uint64(y)
+}
+
 // Round returns the result of rounding d to the nearest multiple of m.
 // The rounding behavior for halfway values is to round away from zero.
 // If the result exceeds the maximum (or minimum)
@@ -805,7 +820,7 @@ func (d Duration) Round(m Duration) Duration {
 	r := d % m
 	if d < 0 {
 		r = -r
-		if r+r < m {
+		if lessThanHalf(r, m) {
 			return d + r
 		}
 		if d1 := d - m + r; d1 < d {
@@ -813,7 +828,7 @@ func (d Duration) Round(m Duration) Duration {
 		}
 		return minDuration // overflow
 	}
-	if r+r < m {
+	if lessThanHalf(r, m) {
 		return d - r
 	}
 	if d1 := d + m - r; d1 > d {
@@ -839,8 +854,7 @@ func (t Time) Add(d Duration) Time {
 		te := t.ext + int64(d)
 		if d < 0 && te > int64(t.ext) || d > 0 && te < int64(t.ext) {
 			// Monotonic clock reading now out of range; degrade to wall-only.
-			t.ext = t.sec()
-			t.wall &= nsecMask
+			t.stripMono()
 		} else {
 			t.ext = te
 		}
@@ -1373,6 +1387,7 @@ func Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) T
 // time. Thus, Truncate(Hour) may return a time with a non-zero
 // minute, depending on the time's Location.
 func (t Time) Truncate(d Duration) Time {
+	t.stripMono()
 	if d <= 0 {
 		return t
 	}
@@ -1389,11 +1404,12 @@ func (t Time) Truncate(d Duration) Time {
 // time. Thus, Round(Hour) may return a time with a non-zero
 // minute, depending on the time's Location.
 func (t Time) Round(d Duration) Time {
+	t.stripMono()
 	if d <= 0 {
 		return t
 	}
 	_, r := div(t, d)
-	if r+r < d {
+	if lessThanHalf(r, d) {
 		return t.Add(-r)
 	}
 	return t.Add(d - r)

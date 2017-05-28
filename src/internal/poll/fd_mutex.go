@@ -56,7 +56,7 @@ func (mu *fdMutex) incref() bool {
 		}
 		new := old + mutexRef
 		if new&mutexRefMask == 0 {
-			panic("net: inconsistent fdMutex")
+			panic("inconsistent poll.fdMutex")
 		}
 		if atomic.CompareAndSwapUint64(&mu.state, old, new) {
 			return true
@@ -75,7 +75,7 @@ func (mu *fdMutex) increfAndClose() bool {
 		// Mark as closed and acquire a reference.
 		new := (old | mutexClosed) + mutexRef
 		if new&mutexRefMask == 0 {
-			panic("net: inconsistent fdMutex")
+			panic("inconsistent poll.fdMutex")
 		}
 		// Remove all read and write waiters.
 		new &^= mutexRMask | mutexWMask
@@ -101,7 +101,7 @@ func (mu *fdMutex) decref() bool {
 	for {
 		old := atomic.LoadUint64(&mu.state)
 		if old&mutexRefMask == 0 {
-			panic("net: inconsistent fdMutex")
+			panic("inconsistent poll.fdMutex")
 		}
 		new := old - mutexRef
 		if atomic.CompareAndSwapUint64(&mu.state, old, new) {
@@ -136,13 +136,13 @@ func (mu *fdMutex) rwlock(read bool) bool {
 			// Lock is free, acquire it.
 			new = (old | mutexBit) + mutexRef
 			if new&mutexRefMask == 0 {
-				panic("net: inconsistent fdMutex")
+				panic("inconsistent poll.fdMutex")
 			}
 		} else {
 			// Wait for lock.
 			new = old + mutexWait
 			if new&mutexMask == 0 {
-				panic("net: inconsistent fdMutex")
+				panic("inconsistent poll.fdMutex")
 			}
 		}
 		if atomic.CompareAndSwapUint64(&mu.state, old, new) {
@@ -174,7 +174,7 @@ func (mu *fdMutex) rwunlock(read bool) bool {
 	for {
 		old := atomic.LoadUint64(&mu.state)
 		if old&mutexBit == 0 || old&mutexRefMask == 0 {
-			panic("net: inconsistent fdMutex")
+			panic("inconsistent poll.fdMutex")
 		}
 		// Drop lock, drop reference and wake read waiter if present.
 		new := (old &^ mutexBit) - mutexRef
@@ -198,7 +198,7 @@ func runtime_Semrelease(sema *uint32)
 // It returns an error when fd cannot be used.
 func (fd *FD) incref() error {
 	if !fd.fdmu.incref() {
-		return ErrClosing
+		return errClosing(fd.isFile)
 	}
 	return nil
 }
@@ -217,7 +217,7 @@ func (fd *FD) decref() error {
 // It returns an error when fd cannot be used for reading.
 func (fd *FD) readLock() error {
 	if !fd.fdmu.rwlock(true) {
-		return ErrClosing
+		return errClosing(fd.isFile)
 	}
 	return nil
 }
@@ -235,7 +235,7 @@ func (fd *FD) readUnlock() {
 // It returns an error when fd cannot be used for writing.
 func (fd *FD) writeLock() error {
 	if !fd.fdmu.rwlock(false) {
-		return ErrClosing
+		return errClosing(fd.isFile)
 	}
 	return nil
 }

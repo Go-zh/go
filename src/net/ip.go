@@ -340,7 +340,8 @@ func ipEmptyString(ip IP) string {
 }
 
 // MarshalText implements the encoding.TextMarshaler interface.
-// The encoding is the same as returned by String.
+// The encoding is the same as returned by String, with one exception:
+// When len(ip) is zero, it returns an empty slice.
 func (ip IP) MarshalText() ([]byte, error) {
 	if len(ip) == 0 {
 		return []byte(""), nil
@@ -661,7 +662,7 @@ func ParseIP(s string) IP {
 // It returns the IP address and the network implied by the IP and
 // prefix length.
 // For example, ParseCIDR("192.0.2.1/24") returns the IP address
-// 198.0.2.1 and the network 198.0.2.0/24.
+// 192.0.2.1 and the network 192.0.2.0/24.
 func ParseCIDR(s string) (IP, *IPNet, error) {
 	i := byteIndex(s, '/')
 	if i < 0 {

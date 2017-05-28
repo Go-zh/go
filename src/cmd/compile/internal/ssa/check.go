@@ -145,11 +145,9 @@ func checkFunc(f *Func) {
 				if !isExactFloat32(v) {
 					f.Fatalf("value %v has an AuxInt value that is not an exact float32", v)
 				}
-			case auxSizeAndAlign:
-				canHaveAuxInt = true
-			case auxString, auxSym:
+			case auxString, auxSym, auxTyp:
 				canHaveAux = true
-			case auxSymOff, auxSymValAndOff, auxSymSizeAndAlign:
+			case auxSymOff, auxSymValAndOff, auxTypSize:
 				canHaveAuxInt = true
 				canHaveAux = true
 			case auxSymInt32:
@@ -275,6 +273,23 @@ func checkFunc(f *Func) {
 		}
 	}
 
+	// Check loop construction
+	if f.RegAlloc == nil && f.pass != nil { // non-nil pass allows better-targeted debug printing
+		ln := f.loopnest()
+		po := f.postorder() // use po to avoid unreachable blocks.
+		for _, b := range po {
+			for _, s := range b.Succs {
+				bb := s.Block()
+				if ln.b2l[b.ID] == nil && ln.b2l[bb.ID] != nil && bb != ln.b2l[bb.ID].header {
+					f.Fatalf("block %s not in loop branches to non-header block %s in loop", b.String(), bb.String())
+				}
+				if ln.b2l[b.ID] != nil && ln.b2l[bb.ID] != nil && bb != ln.b2l[bb.ID].header && !ln.b2l[b.ID].isWithinOrEq(ln.b2l[bb.ID]) {
+					f.Fatalf("block %s in loop branches to non-header block %s in non-containing loop", b.String(), bb.String())
+				}
+			}
+		}
+	}
+
 	// Check use counts
 	uses := make([]int32, f.NumValues())
 	for _, b := range f.Blocks {
@@ -291,6 +306,141 @@ func checkFunc(f *Func) {
 		for _, v := range b.Values {
 			if v.Uses != uses[v.ID] {
 				f.Fatalf("%s has %d uses, but has Uses=%d", v, uses[v.ID], v.Uses)
+			}
+		}
+	}
+
+	memCheck(f)
+}
+
+func memCheck(f *Func) {
+	// Check that if a tuple has a memory type, it is second.
+	for _, b := range f.Blocks {
+		for _, v := range b.Values {
+			if v.Type.IsTuple() && v.Type.FieldType(0).IsMemory() {
+				f.Fatalf("memory is first in a tuple: %s\n", v.LongString())
+			}
+		}
+	}
+
+	// Single live memory checks.
+	// These checks only work if there are no memory copies.
+	// (Memory copies introduce ambiguity about which mem value is really live.
+	// probably fixable, but it's easier to avoid the problem.)
+	// For the same reason, disable this check if some memory ops are unused.
+	for _, b := range f.Blocks {
+		for _, v := range b.Values {
+			if (v.Op == OpCopy || v.Uses == 0) && v.Type.IsMemory() {
+				return
+			}
+		}
+		if b != f.Entry && len(b.Preds) == 0 {
+			return
+		}
+	}
+
+	// Compute live memory at the end of each block.
+	lastmem := make([]*Value, f.NumBlocks())
+	ss := newSparseSet(f.NumValues())
+	for _, b := range f.Blocks {
+		// Mark overwritten memory values. Those are args of other
+		// ops that generate memory values.
+		ss.clear()
+		for _, v := range b.Values {
+			if v.Op == OpPhi || !v.Type.IsMemory() {
+				continue
+			}
+			if m := v.MemoryArg(); m != nil {
+				ss.add(m.ID)
+			}
+		}
+		// There should be at most one remaining unoverwritten memory value.
+		for _, v := range b.Values {
+			if !v.Type.IsMemory() {
+				continue
+			}
+			if ss.contains(v.ID) {
+				continue
+			}
+			if lastmem[b.ID] != nil {
+				f.Fatalf("two live memory values in %s: %s and %s", b, lastmem[b.ID], v)
+			}
+			lastmem[b.ID] = v
+		}
+		// If there is no remaining memory value, that means there was no memory update.
+		// Take any memory arg.
+		if lastmem[b.ID] == nil {
+			for _, v := range b.Values {
+				if v.Op == OpPhi {
+					continue
+				}
+				m := v.MemoryArg()
+				if m == nil {
+					continue
+				}
+				if lastmem[b.ID] != nil && lastmem[b.ID] != m {
+					f.Fatalf("two live memory values in %s: %s and %s", b, lastmem[b.ID], m)
+				}
+				lastmem[b.ID] = m
+			}
+		}
+	}
+	// Propagate last live memory through storeless blocks.
+	for {
+		changed := false
+		for _, b := range f.Blocks {
+			if lastmem[b.ID] != nil {
+				continue
+			}
+			for _, e := range b.Preds {
+				p := e.b
+				if lastmem[p.ID] != nil {
+					lastmem[b.ID] = lastmem[p.ID]
+					changed = true
+					break
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	// Check merge points.
+	for _, b := range f.Blocks {
+		for _, v := range b.Values {
+			if v.Op == OpPhi && v.Type.IsMemory() {
+				for i, a := range v.Args {
+					if a != lastmem[b.Preds[i].b.ID] {
+						f.Fatalf("inconsistent memory phi %s %d %s %s", v.LongString(), i, a, lastmem[b.Preds[i].b.ID])
+					}
+				}
+			}
+		}
+	}
+
+	// Check that only one memory is live at any point.
+	if f.scheduled {
+		for _, b := range f.Blocks {
+			var mem *Value // the current live memory in the block
+			for _, v := range b.Values {
+				if v.Op == OpPhi {
+					if v.Type.IsMemory() {
+						mem = v
+					}
+					continue
+				}
+				if mem == nil && len(b.Preds) > 0 {
+					// If no mem phi, take mem of any predecessor.
+					mem = lastmem[b.Preds[0].b.ID]
+				}
+				for _, a := range v.Args {
+					if a.Type.IsMemory() && a != mem {
+						f.Fatalf("two live mems @ %s: %s and %s", v, mem, a)
+					}
+				}
+				if v.Type.IsMemory() {
+					mem = v
+				}
 			}
 		}
 	}

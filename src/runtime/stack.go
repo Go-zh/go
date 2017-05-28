@@ -102,15 +102,6 @@ const (
 	_StackLimit = _StackGuard - _StackSystem - _StackSmall
 )
 
-// Goroutine preemption request.
-// Stored into g->stackguard0 to cause split stack check failure.
-// Must be greater than any real sp.
-// 0xfffffade in hex.
-const (
-	_StackPreempt = uintptrMask & -1314
-	_StackFork    = uintptrMask & -1234
-)
-
 const (
 	// stackDebug == 0: no logging
 	//            == 1: logging of per-stack operations
@@ -121,8 +112,7 @@ const (
 	stackFromSystem  = 0 // allocate stacks from system memory instead of the heap
 	stackFaultOnFree = 0 // old stacks are mapped noaccess to detect use after free
 	stackPoisonCopy  = 0 // fill stack that should not be accessed with garbage, to detect bad dereferences during copy
-
-	stackCache = 1
+	stackNoCache     = 0 // disable per-P small stack caches
 
 	// check the BP links during traceback.
 	debugCheckBP = false
@@ -186,30 +176,31 @@ func stackpoolalloc(order uint8) gclinkptr {
 	s := list.first
 	if s == nil {
 		// no free stacks. Allocate another span worth.
-		s = mheap_.allocStack(_StackCacheSize >> _PageShift)
+		s = mheap_.allocManual(_StackCacheSize>>_PageShift, &memstats.stacks_inuse)
 		if s == nil {
 			throw("out of memory")
 		}
 		if s.allocCount != 0 {
 			throw("bad allocCount")
 		}
-		if s.stackfreelist.ptr() != nil {
-			throw("bad stackfreelist")
+		if s.manualFreeList.ptr() != nil {
+			throw("bad manualFreeList")
 		}
-		for i := uintptr(0); i < _StackCacheSize; i += _FixedStack << order {
+		s.elemsize = _FixedStack << order
+		for i := uintptr(0); i < _StackCacheSize; i += s.elemsize {
 			x := gclinkptr(s.base() + i)
-			x.ptr().next = s.stackfreelist
-			s.stackfreelist = x
+			x.ptr().next = s.manualFreeList
+			s.manualFreeList = x
 		}
 		list.insert(s)
 	}
-	x := s.stackfreelist
+	x := s.manualFreeList
 	if x.ptr() == nil {
 		throw("span has no free stacks")
 	}
-	s.stackfreelist = x.ptr().next
+	s.manualFreeList = x.ptr().next
 	s.allocCount++
-	if s.stackfreelist.ptr() == nil {
+	if s.manualFreeList.ptr() == nil {
 		// all stacks in s are allocated.
 		list.remove(s)
 	}
@@ -219,15 +210,15 @@ func stackpoolalloc(order uint8) gclinkptr {
 // Adds stack x to the free pool. Must be called with stackpoolmu held.
 func stackpoolfree(x gclinkptr, order uint8) {
 	s := mheap_.lookup(unsafe.Pointer(x))
-	if s.state != _MSpanStack {
+	if s.state != _MSpanManual {
 		throw("freeing stack not in a stack span")
 	}
-	if s.stackfreelist.ptr() == nil {
+	if s.manualFreeList.ptr() == nil {
 		// s will now have a free stack
 		stackpool[order].insert(s)
 	}
-	x.ptr().next = s.stackfreelist
-	s.stackfreelist = x
+	x.ptr().next = s.manualFreeList
+	s.manualFreeList = x
 	s.allocCount--
 	if gcphase == _GCoff && s.allocCount == 0 {
 		// Span is completely free. Return it to the heap
@@ -246,8 +237,8 @@ func stackpoolfree(x gclinkptr, order uint8) {
 		//
 		// By not freeing, we prevent step #4 until GC is done.
 		stackpool[order].remove(s)
-		s.stackfreelist = 0
-		mheap_.freeStack(s)
+		s.manualFreeList = 0
+		mheap_.freeManual(s, &memstats.stacks_inuse)
 	}
 }
 
@@ -336,7 +327,8 @@ func stackalloc(n uint32) stack {
 	}
 
 	if debug.efence != 0 || stackFromSystem != 0 {
-		v := sysAlloc(round(uintptr(n), _PageSize), &memstats.stacks_sys)
+		n = uint32(round(uintptr(n), physPageSize))
+		v := sysAlloc(uintptr(n), &memstats.stacks_sys)
 		if v == nil {
 			throw("out of memory (stackalloc)")
 		}
@@ -347,7 +339,7 @@ func stackalloc(n uint32) stack {
 	// If we need a stack of a bigger size, we fall back on allocating
 	// a dedicated span.
 	var v unsafe.Pointer
-	if stackCache != 0 && n < _FixedStack<<_NumStackOrders && n < _StackCacheSize {
+	if n < _FixedStack<<_NumStackOrders && n < _StackCacheSize {
 		order := uint8(0)
 		n2 := n
 		for n2 > _FixedStack {
@@ -356,7 +348,7 @@ func stackalloc(n uint32) stack {
 		}
 		var x gclinkptr
 		c := thisg.m.mcache
-		if c == nil || thisg.m.preemptoff != "" || thisg.m.helpgc != 0 {
+		if stackNoCache != 0 || c == nil || thisg.m.preemptoff != "" || thisg.m.helpgc != 0 {
 			// c == nil can happen in the guts of exitsyscall or
 			// procresize. Just get a stack from the global pool.
 			// Also don't touch stackcache during gc
@@ -389,10 +381,11 @@ func stackalloc(n uint32) stack {
 
 		if s == nil {
 			// Allocate a new stack from the heap.
-			s = mheap_.allocStack(npage)
+			s = mheap_.allocManual(npage, &memstats.stacks_inuse)
 			if s == nil {
 				throw("out of memory")
 			}
+			s.elemsize = uintptr(n)
 		}
 		v = unsafe.Pointer(s.base())
 	}
@@ -440,7 +433,7 @@ func stackfree(stk stack) {
 	if msanenabled {
 		msanfree(v, n)
 	}
-	if stackCache != 0 && n < _FixedStack<<_NumStackOrders && n < _StackCacheSize {
+	if n < _FixedStack<<_NumStackOrders && n < _StackCacheSize {
 		order := uint8(0)
 		n2 := n
 		for n2 > _FixedStack {
@@ -449,7 +442,7 @@ func stackfree(stk stack) {
 		}
 		x := gclinkptr(v)
 		c := gp.m.mcache
-		if c == nil || gp.m.preemptoff != "" || gp.m.helpgc != 0 {
+		if stackNoCache != 0 || c == nil || gp.m.preemptoff != "" || gp.m.helpgc != 0 {
 			lock(&stackpoolmu)
 			stackpoolfree(x, order)
 			unlock(&stackpoolmu)
@@ -463,14 +456,14 @@ func stackfree(stk stack) {
 		}
 	} else {
 		s := mheap_.lookup(v)
-		if s.state != _MSpanStack {
+		if s.state != _MSpanManual {
 			println(hex(s.base()), v)
 			throw("bad span state")
 		}
 		if gcphase == _GCoff {
 			// Free the stack immediately if we're
 			// sweeping.
-			mheap_.freeStack(s)
+			mheap_.freeManual(s, &memstats.stacks_inuse)
 		} else {
 			// If the GC is running, we can't return a
 			// stack span to the heap because it could be
@@ -569,7 +562,7 @@ func ptrbit(bv *gobitvector, i uintptr) uint8 {
 
 // bv describes the memory starting at address scanp.
 // Adjust any pointers contained therein.
-func adjustpointers(scanp unsafe.Pointer, cbv *bitvector, adjinfo *adjustinfo, f *_func) {
+func adjustpointers(scanp unsafe.Pointer, cbv *bitvector, adjinfo *adjustinfo, f funcInfo) {
 	bv := gobv(*cbv)
 	minp := adjinfo.old.lo
 	maxp := adjinfo.old.hi
@@ -589,7 +582,7 @@ func adjustpointers(scanp unsafe.Pointer, cbv *bitvector, adjinfo *adjustinfo, f
 			pp := (*uintptr)(add(scanp, i*sys.PtrSize))
 		retry:
 			p := *pp
-			if f != nil && 0 < p && p < minLegalPointer && debug.invalidptr != 0 {
+			if f.valid() && 0 < p && p < minLegalPointer && debug.invalidptr != 0 {
 				// Looks like a junk value in a pointer slot.
 				// Live analysis wrong?
 				getg().m.traceback = 2
@@ -713,7 +706,7 @@ func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 		if stackDebug >= 3 {
 			print("      args\n")
 		}
-		adjustpointers(unsafe.Pointer(frame.argp), &bv, adjinfo, nil)
+		adjustpointers(unsafe.Pointer(frame.argp), &bv, adjinfo, funcInfo{})
 	}
 	return true
 }
@@ -1163,8 +1156,8 @@ func freeStackSpans() {
 			next := s.next
 			if s.allocCount == 0 {
 				list.remove(s)
-				s.stackfreelist = 0
-				mheap_.freeStack(s)
+				s.manualFreeList = 0
+				mheap_.freeManual(s, &memstats.stacks_inuse)
 			}
 			s = next
 		}
@@ -1178,7 +1171,7 @@ func freeStackSpans() {
 		for s := stackLarge.free[i].first; s != nil; {
 			next := s.next
 			stackLarge.free[i].remove(s)
-			mheap_.freeStack(s)
+			mheap_.freeManual(s, &memstats.stacks_inuse)
 			s = next
 		}
 	}
@@ -1188,6 +1181,6 @@ func freeStackSpans() {
 //go:nosplit
 func morestackc() {
 	systemstack(func() {
-		throw("attempt to execute C code on Go stack")
+		throw("attempt to execute system stack code on user stack")
 	})
 }

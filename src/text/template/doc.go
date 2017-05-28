@@ -20,7 +20,8 @@ The input text for a template is UTF-8-encoded text in any format.
 "{{" and "}}"; all text outside actions is copied to the output unchanged.
 Except for raw strings, actions may not span newlines, although comments can.
 
-Once parsed, a template may be executed safely in parallel.
+Once parsed, a template may be executed safely in parallel, although if parallel
+executions share a Writer the output may be interleaved.
 
 Here is a trivial example that prints "17 items are made of wool".
 
@@ -314,7 +315,8 @@ Predefined global functions are named as follows.
 		or the returned error value is non-nil, execution stops.
 	html
 		Returns the escaped HTML equivalent of the textual
-		representation of its arguments.
+		representation of its arguments. This function is unavailable
+		in html/template, with a few exceptions.
 	index
 		Returns the result of indexing its first argument by the
 		following arguments. Thus "index x 1 2 3" is, in Go syntax,
@@ -340,6 +342,8 @@ Predefined global functions are named as follows.
 	urlquery
 		Returns the escaped value of the textual representation of
 		its arguments in a form suitable for embedding in a URL query.
+		This function is unavailable in html/template, with a few
+		exceptions.
 
 The boolean functions take any zero value to be false and a non-zero
 value to be true.

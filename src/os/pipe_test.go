@@ -10,11 +10,16 @@ package os_test
 import (
 	"fmt"
 	"internal/testenv"
+	"io/ioutil"
 	"os"
 	osexec "os/exec"
 	"os/signal"
+	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestEPIPE(t *testing.T) {
@@ -82,7 +87,7 @@ func TestStdPipe(t *testing.T) {
 					t.Errorf("unexpected SIGPIPE signal for descriptor %d sig %t", dest, sig)
 				}
 			} else {
-				t.Errorf("unexpected exit status %v for descriptor %ds sig %t", err, dest, sig)
+				t.Errorf("unexpected exit status %v for descriptor %d sig %t", err, dest, sig)
 			}
 		}
 	}
@@ -110,4 +115,74 @@ func TestStdPipeHelper(t *testing.T) {
 	// so just exit normally here to cause a failure in the caller.
 	// For descriptor 3, a normal exit is expected.
 	os.Exit(0)
+}
+
+func testClosedPipeRace(t *testing.T, read bool) {
+	switch runtime.GOOS {
+	case "freebsd":
+		t.Skip("FreeBSD does not use the poller; issue 19093")
+	}
+
+	limit := 1
+	if !read {
+		// Get the amount we have to write to overload a pipe
+		// with no reader.
+		limit = 65537
+		if b, err := ioutil.ReadFile("/proc/sys/fs/pipe-max-size"); err == nil {
+			if i, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
+				limit = i + 1
+			}
+		}
+		t.Logf("using pipe write limit of %d", limit)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+
+	// Close the read end of the pipe in a goroutine while we are
+	// writing to the write end, or vice-versa.
+	go func() {
+		// Give the main goroutine a chance to enter the Read or
+		// Write call. This is sloppy but the test will pass even
+		// if we close before the read/write.
+		time.Sleep(20 * time.Millisecond)
+
+		var err error
+		if read {
+			err = r.Close()
+		} else {
+			err = w.Close()
+		}
+		if err != nil {
+			t.Error(err)
+		}
+	}()
+
+	b := make([]byte, limit)
+	if read {
+		_, err = r.Read(b[:])
+	} else {
+		_, err = w.Write(b[:])
+	}
+	if err == nil {
+		t.Error("I/O on closed pipe unexpectedly succeeded")
+	} else if pe, ok := err.(*os.PathError); !ok {
+		t.Errorf("I/O on closed pipe returned unexpected error type %T; expected os.PathError", pe)
+	} else if pe.Err != os.ErrClosed {
+		t.Errorf("got error %q but expected %q", pe.Err, os.ErrClosed)
+	} else {
+		t.Logf("I/O returned expected error %q", err)
+	}
+}
+
+func TestClosedPipeRaceRead(t *testing.T) {
+	testClosedPipeRace(t, true)
+}
+
+func TestClosedPipeRaceWrite(t *testing.T) {
+	testClosedPipeRace(t, false)
 }

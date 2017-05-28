@@ -71,7 +71,7 @@ func ResolveIPAddr(net, addr string) (*IPAddr, error) {
 	if net == "" { // a hint wildcard for Go 1.0 undocumented behavior
 		net = "ip"
 	}
-	afnet, _, err := parseNetwork(context.Background(), net)
+	afnet, _, err := parseNetwork(context.Background(), net, false)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +91,15 @@ func ResolveIPAddr(net, addr string) (*IPAddr, error) {
 // for IP network connections.
 type IPConn struct {
 	conn
+}
+
+// SyscallConn returns a raw network connection.
+// This implements the syscall.Conn interface.
+func (c *IPConn) SyscallConn() (syscall.RawConn, error) {
+	if !c.ok() {
+		return nil, syscall.EINVAL
+	}
+	return newRawConn(c.fd)
 }
 
 // ReadFromIP reads an IP packet from c, copying the payload into b.

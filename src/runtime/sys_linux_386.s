@@ -98,15 +98,18 @@ TEXT runtime·usleep(SB),NOSPLIT,$8
 	MOVL	$1000000, CX
 	DIVL	CX
 	MOVL	AX, 0(SP)
+	MOVL	$1000, AX	// usec to nsec
+	MULL	DX
 	MOVL	DX, 4(SP)
 
-	// select(0, 0, 0, 0, &tv)
-	MOVL	$142, AX
+	// pselect6(0, 0, 0, 0, &ts, 0)
+	MOVL	$308, AX
 	MOVL	$0, BX
 	MOVL	$0, CX
 	MOVL	$0, DX
 	MOVL	$0, SI
 	LEAL	0(SP), DI
+	MOVL	$0, BP
 	INVOKE_SYSCALL
 	RET
 
@@ -162,8 +165,8 @@ TEXT runtime·walltime(SB), NOSPLIT, $32
 	MOVL	12(SP), BX	// nsec
 
 	// sec is in AX, nsec in BX
-	MOVL	AX, sec+0(FP)
-	MOVL	$0, sec+4(FP)
+	MOVL	AX, sec_lo+0(FP)
+	MOVL	$0, sec_hi+4(FP)
 	MOVL	BX, nsec+8(FP)
 	RET
 
@@ -595,4 +598,13 @@ TEXT runtime·socket(SB),NOSPLIT,$0-16
 	LEAL	domain+0(FP), CX
 	INVOKE_SYSCALL
 	MOVL	AX, ret+12(FP)
+	RET
+
+// func sbrk0() uintptr
+TEXT runtime·sbrk0(SB),NOSPLIT,$0-4
+	// Implemented as brk(NULL).
+	MOVL	$45, AX  // syscall - brk
+	MOVL	$0, BX  // NULL
+	INVOKE_SYSCALL
+	MOVL	AX, ret+0(FP)
 	RET

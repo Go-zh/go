@@ -44,6 +44,8 @@ Flags:
 		Print compiler version and exit.
 	-asmhdr file
 		Write assembly header to file.
+	-blockprofile file
+		Write block profile for the compilation to file.
 	-complete
 		Assume package has no non-Go components.
 	-cpuprofile file
@@ -75,6 +77,8 @@ Flags:
 		Set runtime.MemProfileRate for the compilation to rate.
 	-msan
 		Insert calls to C/C++ memory sanitizer.
+	-mutexprofile file
+		Write mutex profile for the compilation to file.
 	-nolocalimports
 		Disallow local (relative) imports.
 	-o file

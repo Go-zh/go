@@ -5,7 +5,8 @@
 package ld
 
 import (
-	"cmd/internal/obj"
+	"cmd/internal/objabi"
+	"cmd/internal/src"
 	"log"
 	"os"
 	"path/filepath"
@@ -108,18 +109,24 @@ func ftabaddstring(ctxt *Link, ftab *Symbol, s string) int32 {
 	return start
 }
 
+// numberfile assigns a file number to the file if it hasn't been assigned already.
+func numberfile(ctxt *Link, file *Symbol) {
+	if file.Type != SFILEPATH {
+		ctxt.Filesyms = append(ctxt.Filesyms, file)
+		file.Value = int64(len(ctxt.Filesyms))
+		file.Type = SFILEPATH
+		path := file.Name[len(src.FileSymPrefix):]
+		file.Name = expandGoroot(path)
+	}
+}
+
 func renumberfiles(ctxt *Link, files []*Symbol, d *Pcdata) {
 	var f *Symbol
 
 	// Give files numbers.
 	for i := 0; i < len(files); i++ {
 		f = files[i]
-		if f.Type != obj.SFILEPATH {
-			ctxt.Filesyms = append(ctxt.Filesyms, f)
-			f.Value = int64(len(ctxt.Filesyms))
-			f.Type = obj.SFILEPATH
-			f.Name = expandGoroot(f.Name)
-		}
+		numberfile(ctxt, f)
 	}
 
 	newval := int32(-1)
@@ -168,12 +175,12 @@ func container(s *Symbol) int {
 	if s == nil {
 		return 0
 	}
-	if Buildmode == BuildmodePlugin && Headtype == obj.Hdarwin && onlycsymbol(s) {
+	if Buildmode == BuildmodePlugin && Headtype == objabi.Hdarwin && onlycsymbol(s) {
 		return 1
 	}
 	// We want to generate func table entries only for the "lowest level" symbols,
 	// not containers of subsymbols.
-	if s.Type&obj.SCONTAINER != 0 {
+	if s.Type&SCONTAINER != 0 {
 		return 1
 	}
 	return 0
@@ -194,7 +201,7 @@ var pclntabLastFunc *Symbol
 func (ctxt *Link) pclntab() {
 	funcdataBytes := int64(0)
 	ftab := ctxt.Syms.Lookup("runtime.pclntab", 0)
-	ftab.Type = obj.SPCLNTAB
+	ftab.Type = SPCLNTAB
 	ftab.Attr |= AttrReachable
 
 	// See golang.org/s/go12symtab for the format. Briefly:
@@ -208,7 +215,7 @@ func (ctxt *Link) pclntab() {
 	// Find container symbols, mark them with SCONTAINER
 	for _, s := range ctxt.Textp {
 		if s.Outer != nil {
-			s.Outer.Type |= obj.SCONTAINER
+			s.Outer.Type |= SCONTAINER
 		}
 	}
 
@@ -223,8 +230,18 @@ func (ctxt *Link) pclntab() {
 	setuint32(ctxt, ftab, 0, 0xfffffffb)
 	setuint8(ctxt, ftab, 6, uint8(SysArch.MinLC))
 	setuint8(ctxt, ftab, 7, uint8(SysArch.PtrSize))
-	setuintxx(ctxt, ftab, 8, uint64(nfunc), int64(SysArch.PtrSize))
+	setuint(ctxt, ftab, 8, uint64(nfunc))
 	pclntabPclntabOffset = int32(8 + SysArch.PtrSize)
+
+	funcnameoff := make(map[string]int32)
+	nameToOffset := func(name string) int32 {
+		nameoff, ok := funcnameoff[name]
+		if !ok {
+			nameoff = ftabaddstring(ctxt, ftab, name)
+			funcnameoff[name] = nameoff
+		}
+		return nameoff
+	}
 
 	nfunc = 0
 	var last *Symbol
@@ -242,11 +259,30 @@ func (ctxt *Link) pclntab() {
 			pclntabFirstFunc = s
 		}
 
+		if len(pcln.InlTree) > 0 {
+			if len(pcln.Pcdata) <= objabi.PCDATA_InlTreeIndex {
+				// Create inlining pcdata table.
+				pcdata := make([]Pcdata, objabi.PCDATA_InlTreeIndex+1)
+				copy(pcdata, pcln.Pcdata)
+				pcln.Pcdata = pcdata
+			}
+
+			if len(pcln.Funcdataoff) <= objabi.FUNCDATA_InlTree {
+				// Create inline tree funcdata.
+				funcdata := make([]*Symbol, objabi.FUNCDATA_InlTree+1)
+				funcdataoff := make([]int64, objabi.FUNCDATA_InlTree+1)
+				copy(funcdata, pcln.Funcdata)
+				copy(funcdataoff, pcln.Funcdataoff)
+				pcln.Funcdata = funcdata
+				pcln.Funcdataoff = funcdataoff
+			}
+		}
+
 		funcstart := int32(len(ftab.P))
 		funcstart += int32(-len(ftab.P)) & (int32(SysArch.PtrSize) - 1)
 
 		setaddr(ctxt, ftab, 8+int64(SysArch.PtrSize)+int64(nfunc)*2*int64(SysArch.PtrSize), s)
-		setuintxx(ctxt, ftab, 8+int64(SysArch.PtrSize)+int64(nfunc)*2*int64(SysArch.PtrSize)+int64(SysArch.PtrSize), uint64(funcstart), int64(SysArch.PtrSize))
+		setuint(ctxt, ftab, 8+int64(SysArch.PtrSize)+int64(nfunc)*2*int64(SysArch.PtrSize)+int64(SysArch.PtrSize), uint64(funcstart))
 
 		// Write runtime._func. Keep in sync with ../../../../runtime/runtime2.go:/_func
 		// and package debug/gosym.
@@ -264,7 +300,8 @@ func (ctxt *Link) pclntab() {
 		off = int32(setaddr(ctxt, ftab, int64(off), s))
 
 		// name int32
-		off = int32(setuint32(ctxt, ftab, int64(off), uint32(ftabaddstring(ctxt, ftab, s.Name))))
+		nameoff := nameToOffset(s.Name)
+		off = int32(setuint32(ctxt, ftab, int64(off), uint32(nameoff)))
 
 		// args int32
 		// TODO: Move into funcinfo.
@@ -295,6 +332,30 @@ func (ctxt *Link) pclntab() {
 			}
 		}
 
+		if len(pcln.InlTree) > 0 {
+			inlTreeSym := ctxt.Syms.Lookup("inltree."+s.Name, 0)
+			inlTreeSym.Type = SRODATA
+			inlTreeSym.Attr |= AttrReachable | AttrDuplicateOK
+
+			for i, call := range pcln.InlTree {
+				// Usually, call.File is already numbered since the file
+				// shows up in the Pcfile table. However, two inlined calls
+				// might overlap exactly so that only the innermost file
+				// appears in the Pcfile table. In that case, this assigns
+				// the outer file a number.
+				numberfile(ctxt, call.File)
+				nameoff := nameToOffset(call.Func.Name)
+
+				setuint32(ctxt, inlTreeSym, int64(i*16+0), uint32(call.Parent))
+				setuint32(ctxt, inlTreeSym, int64(i*16+4), uint32(call.File.Value))
+				setuint32(ctxt, inlTreeSym, int64(i*16+8), uint32(call.Line))
+				setuint32(ctxt, inlTreeSym, int64(i*16+12), uint32(nameoff))
+			}
+
+			pcln.Funcdata[objabi.FUNCDATA_InlTree] = inlTreeSym
+			pcln.Pcdata[objabi.PCDATA_InlTreeIndex] = pcln.Pcinline
+		}
+
 		// pcdata
 		off = addpctab(ctxt, ftab, off, &pcln.Pcsp)
 
@@ -314,7 +375,7 @@ func (ctxt *Link) pclntab() {
 			}
 			for i := 0; i < len(pcln.Funcdata); i++ {
 				if pcln.Funcdata[i] == nil {
-					setuintxx(ctxt, ftab, int64(off)+int64(SysArch.PtrSize)*int64(i), uint64(pcln.Funcdataoff[i]), int64(SysArch.PtrSize))
+					setuint(ctxt, ftab, int64(off)+int64(SysArch.PtrSize)*int64(i), uint64(pcln.Funcdataoff[i]))
 				} else {
 					// TODO: Dedup.
 					funcdataBytes += pcln.Funcdata[i].Size
@@ -355,14 +416,14 @@ func (ctxt *Link) pclntab() {
 	ftab.Size = int64(len(ftab.P))
 
 	if ctxt.Debugvlog != 0 {
-		ctxt.Logf("%5.2f pclntab=%d bytes, funcdata total %d bytes\n", obj.Cputime(), ftab.Size, funcdataBytes)
+		ctxt.Logf("%5.2f pclntab=%d bytes, funcdata total %d bytes\n", Cputime(), ftab.Size, funcdataBytes)
 	}
 }
 
 func expandGoroot(s string) string {
 	const n = len("$GOROOT")
 	if len(s) >= n+1 && s[:n] == "$GOROOT" && (s[n] == '/' || s[n] == '\\') {
-		root := obj.GOROOT
+		root := objabi.GOROOT
 		if final := os.Getenv("GOROOT_FINAL"); final != "" {
 			root = final
 		}
@@ -382,7 +443,7 @@ const (
 // function for a pc. See src/runtime/symtab.go:findfunc for details.
 func (ctxt *Link) findfunctab() {
 	t := ctxt.Syms.Lookup("runtime.findfunctab", 0)
-	t.Type = obj.SRODATA
+	t.Type = SRODATA
 	t.Attr |= AttrReachable
 	t.Attr |= AttrLocal
 

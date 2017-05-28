@@ -37,6 +37,8 @@
 package os
 
 import (
+	"errors"
+	"internal/poll"
 	"io"
 	"syscall"
 )
@@ -99,14 +101,7 @@ func (f *File) Read(b []byte) (n int, err error) {
 		return 0, err
 	}
 	n, e := f.read(b)
-	if e != nil {
-		if e == io.EOF {
-			err = e
-		} else {
-			err = &PathError{"read", f.name, e}
-		}
-	}
-	return n, err
+	return n, f.wrapErr("read", e)
 }
 
 // ReadAt reads len(b) bytes from the File starting at byte offset off.
@@ -117,14 +112,15 @@ func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
 	if err := f.checkValid("read"); err != nil {
 		return 0, err
 	}
+
+	if off < 0 {
+		return 0, &PathError{"readat", f.name, errors.New("negative offset")}
+	}
+
 	for len(b) > 0 {
 		m, e := f.pread(b, off)
 		if e != nil {
-			if e == io.EOF {
-				err = e
-			} else {
-				err = &PathError{"read", f.name, e}
-			}
+			err = f.wrapErr("read", e)
 			break
 		}
 		n += m
@@ -152,8 +148,9 @@ func (f *File) Write(b []byte) (n int, err error) {
 	epipecheck(f, e)
 
 	if e != nil {
-		err = &PathError{"write", f.name, e}
+		err = f.wrapErr("write", e)
 	}
+
 	return n, err
 }
 
@@ -164,10 +161,15 @@ func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 	if err := f.checkValid("write"); err != nil {
 		return 0, err
 	}
+
+	if off < 0 {
+		return 0, &PathError{"writeat", f.name, errors.New("negative offset")}
+	}
+
 	for len(b) > 0 {
 		m, e := f.pwrite(b, off)
 		if e != nil {
-			err = &PathError{"write", f.name, e}
+			err = f.wrapErr("write", e)
 			break
 		}
 		n += m
@@ -191,7 +193,7 @@ func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
 		e = syscall.EISDIR
 	}
 	if e != nil {
-		return 0, &PathError{"seek", f.name, e}
+		return 0, f.wrapErr("seek", e)
 	}
 	return r, nil
 }
@@ -263,4 +265,17 @@ func fixCount(n int, err error) (int, error) {
 		n = 0
 	}
 	return n, err
+}
+
+// wrapErr wraps an error that occurred during an operation on an open file.
+// It passes io.EOF through unchanged, otherwise converts
+// poll.ErrFileClosing to ErrClosed and wraps the error in a PathError.
+func (f *File) wrapErr(op string, err error) error {
+	if err == nil || err == io.EOF {
+		return err
+	}
+	if err == poll.ErrFileClosing {
+		err = ErrClosed
+	}
+	return &PathError{op, f.name, err}
 }

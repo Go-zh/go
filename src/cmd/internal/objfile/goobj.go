@@ -8,6 +8,7 @@ package objfile
 
 import (
 	"cmd/internal/goobj"
+	"cmd/internal/objabi"
 	"cmd/internal/sys"
 	"debug/dwarf"
 	"debug/gosym"
@@ -44,16 +45,14 @@ func (f *goobjFile) symbols() ([]Sym, error) {
 		seen[s.SymID] = true
 		sym := Sym{Addr: uint64(s.Data.Offset), Name: goobjName(s.SymID), Size: int64(s.Size), Type: s.Type.Name, Code: '?'}
 		switch s.Kind {
-		case goobj.STEXT, goobj.SELFRXSECT:
+		case objabi.STEXT:
 			sym.Code = 'T'
-		case goobj.STYPE, goobj.SSTRING, goobj.SGOSTRING, goobj.SGOFUNC, goobj.SRODATA, goobj.SFUNCTAB, goobj.STYPELINK, goobj.SITABLINK, goobj.SSYMTAB, goobj.SPCLNTAB, goobj.SELFROSECT:
+		case objabi.SRODATA:
 			sym.Code = 'R'
-		case goobj.SMACHOPLT, goobj.SELFSECT, goobj.SMACHO, goobj.SMACHOGOT, goobj.SNOPTRDATA, goobj.SINITARR, goobj.SDATA, goobj.SWINDOWS:
+		case objabi.SDATA:
 			sym.Code = 'D'
-		case goobj.SBSS, goobj.SNOPTRBSS, goobj.STLSBSS:
+		case objabi.SBSS, objabi.SNOPTRBSS, objabi.STLSBSS:
 			sym.Code = 'B'
-		case goobj.SXREF, goobj.SMACHOSYMSTR, goobj.SMACHOSYMTAB, goobj.SMACHOINDIRECTPLT, goobj.SMACHOINDIRECTGOT, goobj.SFILE, goobj.SFILEPATH, goobj.SCONST, goobj.SDYNIMPORT, goobj.SHOSTOBJ:
-			sym.Code = 'X' // should not see
 		}
 		if s.Version != 0 {
 			sym.Code += 'a' - 'A'

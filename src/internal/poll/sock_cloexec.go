@@ -5,13 +5,11 @@
 // This file implements sysSocket and accept for platforms that
 // provide a fast path for setting SetNonblock and CloseOnExec.
 
-// +build freebsd linux
+// +build dragonfly freebsd linux
 
 package poll
 
-import (
-	"syscall"
-)
+import "syscall"
 
 // Wrapper around the accept system call that marks the returned file
 // descriptor as nonblocking and close-on-exec.

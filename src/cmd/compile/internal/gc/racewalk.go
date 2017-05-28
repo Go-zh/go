@@ -5,6 +5,7 @@
 package gc
 
 import (
+	"cmd/compile/internal/types"
 	"cmd/internal/src"
 	"fmt"
 	"strings"
@@ -67,7 +68,7 @@ func instrument(fn *Node) {
 		// getcallerpc. We use -widthptr(FP) for x86.
 		// BUG: this will not work on arm.
 		nodpc := *nodfp
-		nodpc.Type = Types[TUINTPTR]
+		nodpc.Type = types.Types[TUINTPTR]
 		nodpc.Xoffset = int64(-Widthptr)
 		nd := mkcall("racefuncenter", nil, nil, &nodpc)
 		fn.Func.Enter.Prepend(nd)
@@ -216,7 +217,7 @@ func instrumentnode(np **Node, init *Nodes, wr int, skip int) {
 		instrumentnode(&n.Left, init, 0, 0)
 		if n.Left.Type.IsMap() {
 			n1 := nod(OCONVNOP, n.Left, nil)
-			n1.Type = ptrto(Types[TUINT8])
+			n1.Type = types.NewPtr(types.Types[TUINT8])
 			n1 = nod(OIND, n1, nil)
 			n1 = typecheck(n1, Erv)
 			callinstr(&n1, init, 0, skip)
@@ -232,7 +233,6 @@ func instrumentnode(np **Node, init *Nodes, wr int, skip int) {
 		OXOR,
 		OSUB,
 		OMUL,
-		OHMUL,
 		OEQ,
 		ONE,
 		OLT,
@@ -365,15 +365,12 @@ func instrumentnode(np **Node, init *Nodes, wr int, skip int) {
 		OAS2RECV,
 		OAS2MAPR,
 		OASOP:
-		yyerror("instrument: %v must be lowered by now", n.Op)
-
-		goto ret
+		Fatalf("instrument: %v must be lowered by now", n.Op)
 
 	case OGETG:
-		yyerror("instrument: OGETG can happen only in runtime which we don't instrument")
-		goto ret
+		Fatalf("instrument: OGETG can happen only in runtime which we don't instrument")
 
-	case OFOR:
+	case OFOR, OFORUNTIL:
 		if n.Left != nil {
 			instrumentnode(&n.Left, &n.Left.Ninit, 0, 0)
 		}
@@ -475,7 +472,7 @@ func callinstr(np **Node, init *Nodes, wr int, skip int) bool {
 	if isartificial(b) {
 		return false
 	}
-	class := b.Class
+	class := b.Class()
 
 	// BUG: we _may_ want to instrument PAUTO sometimes
 	// e.g. if we've got a local variable/method receiver
@@ -564,15 +561,15 @@ func makeaddable(n *Node) {
 
 func uintptraddr(n *Node) *Node {
 	r := nod(OADDR, n, nil)
-	r.Bounded = true
-	r = conv(r, Types[TUNSAFEPTR])
-	r = conv(r, Types[TUINTPTR])
+	r.SetBounded(true)
+	r = conv(r, types.Types[TUNSAFEPTR])
+	r = conv(r, types.Types[TUINTPTR])
 	return r
 }
 
 func detachexpr(n *Node, init *Nodes) *Node {
 	addr := nod(OADDR, n, nil)
-	l := temp(ptrto(n.Type))
+	l := temp(types.NewPtr(n.Type))
 	as := nod(OAS, l, addr)
 	as = typecheck(as, Etop)
 	as = walkexpr(as, init)
@@ -626,10 +623,10 @@ func appendinit(np **Node, init Nodes) {
 		n = nod(OCONVNOP, n, nil)
 
 		n.Type = n.Left.Type
-		n.Typecheck = 1
+		n.SetTypecheck(1)
 		*np = n
 	}
 
 	n.Ninit.AppendNodes(&init)
-	n.Ullman = UINF
+	n.SetHasCall(true)
 }

@@ -96,12 +96,6 @@ var (
 	netCgo bool // set true in conf_netcgo.go for build tag "netcgo"
 )
 
-func init() {
-	sysInit()
-	supportsIPv4 = probeIPv4Stack()
-	supportsIPv6, supportsIPv4map = probeIPv6Stack()
-}
-
 // Addr represents a network end point address.
 //
 // The two methods Network and String conventionally return strings
@@ -467,7 +461,7 @@ func (e *OpError) Error() string {
 var (
 	// aLongTimeAgo is a non-zero time, far in the past, used for
 	// immediate cancelation of dials.
-	aLongTimeAgo = time.Unix(233431200, 0)
+	aLongTimeAgo = time.Unix(1, 0)
 
 	// nonDeadline and noCancel are just zero values for
 	// readability with functions taking too many parameters.

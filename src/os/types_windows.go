@@ -18,10 +18,11 @@ type fileStat struct {
 
 	// used to implement SameFile
 	sync.Mutex
-	path  string
-	vol   uint32
-	idxhi uint32
-	idxlo uint32
+	path             string
+	vol              uint32
+	idxhi            uint32
+	idxlo            uint32
+	appendNameToPath bool
 }
 
 func (fs *fileStat) Size() int64 {
@@ -32,16 +33,16 @@ func (fs *fileStat) Mode() (m FileMode) {
 	if fs == &devNullStat {
 		return ModeDevice | ModeCharDevice | 0666
 	}
-	if fs.sys.FileAttributes&syscall.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		m |= ModeDir | 0111
-	}
 	if fs.sys.FileAttributes&syscall.FILE_ATTRIBUTE_READONLY != 0 {
 		m |= 0444
 	} else {
 		m |= 0666
 	}
 	if fs.sys.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		m |= ModeSymlink
+		return m | ModeSymlink
+	}
+	if fs.sys.FileAttributes&syscall.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		m |= ModeDir | 0111
 	}
 	switch fs.filetype {
 	case syscall.FILE_TYPE_PIPE:
@@ -66,7 +67,13 @@ func (fs *fileStat) loadFileId() error {
 		// already done
 		return nil
 	}
-	pathp, err := syscall.UTF16PtrFromString(fs.path)
+	var path string
+	if fs.appendNameToPath {
+		path = fs.path + `\` + fs.name
+	} else {
+		path = fs.path
+	}
+	pathp, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return err
 	}

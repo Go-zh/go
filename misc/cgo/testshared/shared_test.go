@@ -400,6 +400,12 @@ func TestTrivialExecutablePIE(t *testing.T) {
 	AssertHasRPath(t, "./trivial.pie", gorootInstallDir)
 }
 
+// Build a division test program and check it runs.
+func TestDivisionExecutable(t *testing.T) {
+	goCmd(t, "install", "-linkshared", "division")
+	run(t, "division executable", "./bin/division")
+}
+
 // Build an executable that uses cgo linked against the shared runtime and check it
 // runs.
 func TestCgoExecutable(t *testing.T) {
@@ -757,6 +763,13 @@ func appendFile(path, content string) {
 	}
 }
 
+func writeFile(path, content string) {
+	err := ioutil.WriteFile(path, []byte(content), 0644)
+	if err != nil {
+		log.Fatalf("ioutil.WriteFile failed: %v", err)
+	}
+}
+
 func TestABIChecking(t *testing.T) {
 	goCmd(t, "install", "-buildmode=shared", "-linkshared", "depBase")
 	goCmd(t, "install", "-linkshared", "exe")
@@ -795,9 +808,10 @@ func TestABIChecking(t *testing.T) {
 	run(t, "rebuilt exe", "./bin/exe")
 
 	// If we make a change which does not break ABI (such as adding an unexported
-	// function) and rebuild libdepBase.so, exe still works.
+	// function) and rebuild libdepBase.so, exe still works, even if new function
+	// is in a file by itself.
 	resetFileStamps()
-	appendFile("src/depBase/dep.go", "func noABIBreak() {}\n")
+	writeFile("src/depBase/dep2.go", "package depBase\nfunc noABIBreak() {}\n")
 	goCmd(t, "install", "-buildmode=shared", "-linkshared", "depBase")
 	run(t, "after non-ABI breaking change", "./bin/exe")
 }

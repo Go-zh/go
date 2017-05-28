@@ -17,9 +17,6 @@ func RaceWrite(addr unsafe.Pointer)
 func RaceReadRange(addr unsafe.Pointer, len int)
 func RaceWriteRange(addr unsafe.Pointer, len int)
 
-func RaceSemacquire(s *uint32)
-func RaceSemrelease(s *uint32)
-
 func RaceErrors() int {
 	var n uint64
 	racecall(&__tsan_report_count, uintptr(unsafe.Pointer(&n)), 0, 0, 0)
@@ -101,7 +98,7 @@ func raceSymbolizeCode(ctx *symbolizeCodeContext) {
 	if f != nil {
 		file, line := f.FileLine(ctx.pc)
 		if line != 0 {
-			ctx.fn = cfuncname(f.raw())
+			ctx.fn = cfuncname(f.funcInfo())
 			ctx.line = uintptr(line)
 			ctx.file = &bytes(file)[0] // assume NUL-terminated
 			ctx.off = ctx.pc - f.Entry()

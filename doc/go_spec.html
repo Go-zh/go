@@ -1,12 +1,12 @@
 <!--{
 	"Title": "Go 编程语言规范",
-	"Subtitle": "版本：2016 年 9 月 1 日  译者：Oling Cat",
+	"Subtitle": "版本：2017 年 5 月 9 日  译者：Oling Cat",
 	"Path": "/ref/spec"
 }-->
 
 <!--{
 	"Title": "The Go Programming Language Specification",
-	"Subtitle": "Version of February 9, 2017",
+	"Subtitle": "Version of May 9, 2017",
 	"Path": "/ref/spec"
 }-->
 
@@ -357,7 +357,7 @@ Any other comment acts like a newline.
 <p>
 Tokens form the vocabulary of the Go language.
 There are four classes: <i>identifiers</i>, <i>keywords</i>, <i>operators
-and delimiters</i>, and <i>literals</i>.  <i>White space</i>, formed from
+and punctuation</i>, and <i>literals</i>.  <i>White space</i>, formed from
 spaces (U+0020), horizontal tabs (U+0009),
 carriage returns (U+000D), and newlines (U+000A),
 is ignored except as it separates tokens
@@ -371,7 +371,7 @@ valid token.
 
 <p>
 标记构成 Go 语言的词汇。它有四种类型：<b>标识符</b>，<b>关键字</b>，
-<b>运算符与分隔符</b>以及<b>字面</b>。<b>空白符</b>包括空格（U+0020），
+<b>运算符与标点</b>以及<b>字面</b>。<b>空白符</b>包括空格（U+0020），
 横向制表符（U+0009），回车符（U+000D）和换行符（U+000A），除非用它们来分隔会结合成单个的标记，
 否则将被忽略。此外，换行符或 EOF（文件结束符）会触发<a href="#分号">分号</a>的插入。
 当把输入分解为标记时，可形成有效标记的最长字符序列将作为下一个标记。
@@ -423,7 +423,7 @@ into the token stream immediately after a line's final token if that token is
 	    <code>return</code>
 	</li>
 
-	<li>one of the <a href="#Operators_and_Delimiters">operators and delimiters</a>
+	<li>one of the <a href="#Operators_and_punctuation">operators and punctuation</a>
 	    <code>++</code>,
 	    <code>--</code>,
 	    <code>)</code>,
@@ -469,7 +469,7 @@ into the token stream immediately after a line's final token if that token is
 		<code>return</code>
 	</li>
 
-	<li><a href="#运算符与分隔符">运算符与分隔符</a>
+	<li><a href="#运算符与标点">运算符与标点</a>
 		<code>++</code>，
 		<code>--</code>，
 		<code>)</code>，
@@ -563,19 +563,21 @@ continue     for          import       return       var
 </pre>
 
 <div class="english">
-<h3 id="Operators_and_Delimiters">Operators and Delimiters</h3>
+<h3 id="Operators_and_punctuation">Operators and punctuation</h3>
 </div>
 
-<h3 id="运算符与分隔符">运算符与分隔符</h3>
+<h3 id="运算符与标点">运算符与标点</h3>
 
 <div class="english">
 <p>
-The following character sequences represent <a href="#Operators">operators</a>, delimiters, and other special tokens:
+The following character sequences represent <a href="#Operators">operators</a>
+(including <a href="#assign_op">assignment operators</a>) and punctuation:
 </p>
 </div>
 
 <p>
-以下字符序列表示<a href="#运算符">运算符</a>，分隔符和其它特殊标记：
+以下字符序列表示<a href="#运算符">运算符</a>
+（包括<a href="#赋值操作">赋值操作符</a>）和与标点：
 </p>
 
 <pre class="grammar">
@@ -4470,7 +4472,8 @@ The key is interpreted as a field name for struct literals,
 an index for array and slice literals, and a key for map literals.
 For map literals, all elements must have a key. It is an error
 to specify multiple elements with the same field name or
-constant key value.
+constant key value. For non-constant map keys, see the section on
+<a href="#Order_of_evaluation">evaluation order</a>.
 </p>
 </div>
 
@@ -4478,7 +4481,7 @@ constant key value.
 字面类型的底层类型必须为结构体、数组、切片或映射类型（语法规则强制实施此约束，除非该类型作为类型名给定）。
 元素和键的类型对于其各自的字段、元素以及该字面类型的键类型必须为<a href="#可赋值性">可赋值</a>的，
 它们没有附加的转换。作为结构体字面的字段名，即数组和切片的下标以及映射字面的键，其键是可解译的。
-对于映射字面，所有元素都必须有键。指定多个具有相同字段名或常量键值的元素会产生一个错误。
+对于映射字面，所有元素都必须有键。指定多个具有相同字段名或常量键值的元素会产生一个错误。对于非常量映射键，见<a href="#求值顺序">求值顺序</a>一节。
 </p>
 
 <div class="english">
@@ -6979,6 +6982,33 @@ occurs is implementation-specific.
 是否引发 <a href="#运行时恐慌">运行时恐慌</a> 取决于具体实现。
 </p>
 
+<p>
+An implementation may combine multiple floating-point operations into a single
+fused operation, possibly across statements, and produce a result that differs
+from the value obtained by executing and rounding the instructions individually.
+A floating-point type <a href="#Conversions">conversion</a> explicitly rounds to
+the precision of the target type, preventing fusion that would discard that rounding.
+</p>
+
+<p>
+For instance, some architectures provide a "fused multiply and add" (FMA) instruction
+that computes <code>x*y + z</code> without rounding the intermediate result <code>x*y</code>.
+These examples show when a Go implementation can use that instruction:
+</p>
+
+<pre>
+// FMA allowed for computing r, because x*y is not explicitly rounded:
+r  = x*y + z
+r  = z;   r += x*y
+t  = x*y; r = t + z
+*p = x*y; r = *p + z
+r  = x*y + float64(z)
+
+// FMA disallowed for computing r, because it would omit rounding of x*y:
+r  = float64(x*y) + z
+r  = z; r += float64(x*y)
+t  = float64(x*y); r = t + z
+</pre>
 
 <div class="english">
 <h4 id="String_concatenation">String concatenation</h4>
@@ -7080,7 +7110,7 @@ These terms and the result of the comparisons are defined as follows:
 	</li>
 
 	<li>
-	Floating point values are comparable and ordered,
+	Floating-point values are comparable and ordered,
 	as defined by the IEEE-754 standard.
 	</li>
 
@@ -8765,8 +8795,8 @@ a[i] = 23
 <div class="english">
 <p>
 An <i>assignment operation</i> <code>x</code> <i>op</i><code>=</code>
-<code>y</code> where <i>op</i> is a binary arithmetic operation is equivalent
-to <code>x</code> <code>=</code> <code>x</code> <i>op</i>
+<code>y</code> where <i>op</i> is a binary <a href="#Arithmetic_operators">arithmetic operator</a>
+is equivalent to <code>x</code> <code>=</code> <code>x</code> <i>op</i>
 <code>(y)</code> but evaluates <code>x</code>
 only once.  The <i>op</i><code>=</code> construct is a single token.
 In assignment operations, both the left- and right-hand expression lists
@@ -8776,7 +8806,7 @@ expression must not be the blank identifier.
 </div>
 
 <p>
-<b>赋值操作</b> <code>x</code> <i>op</i><code>=</code> <code>y</code>，其中 <i>op</i> 为一个二元算术操作符，它等价于
+<b>赋值操作</b> <code>x</code> <i>op</i><code>=</code> <code>y</code>，其中 <i>op</i> 为一个二元<a href="#算术操作符">算术操作符</a>，它等价于
 <code>x</code> <code>=</code> <code>x</code> <i>op</i> <code>(y)</code>，但只对 <code>x</code> 求值一次。
 <i>op</i><code>=</code> 为单个标记。在赋值操作中，左、右表达式列表必须均刚好包含一个单值表达式，
 且左表达式必须不为空白标识符。
@@ -9907,7 +9937,7 @@ function completes.
 
 <pre>
 go Server()
-go func(ch chan&lt;- bool) { for { sleep(10); ch &lt;- true; }} (c)
+go func(ch chan&lt;- bool) { for { sleep(10); ch &lt;- true }} (c)
 </pre>
 
 
@@ -10943,13 +10973,14 @@ make(T, n)       slice      slice of type T with length n and capacity n
 make(T, n, m)    slice      slice of type T with length n and capacity m
 
 make(T)          map        map of type T
-make(T, n)       map        map of type T with initial space for n elements
+make(T, n)       map        map of type T with initial space for approximately n elements
 
 make(T)          channel    unbuffered channel of type T
 make(T, n)       channel    buffered channel of type T, buffer size n
 </pre>
 </div>
 
+<p>
 内建函数 <code>make</code> 接受的类型 <code>T</code> 必须为切片、映射或信道类型，
 可选地跟着一个特殊类型的表达式列表。它返回类型为 <code>T</code>（而非 <code>*T</code>）的值。
 其内存根据§<a href="#零值">初始值</a>一节中的描述来初始化。
@@ -10985,7 +11016,7 @@ s := make([]int, 1e3)           // slice with len(s) == cap(s) == 1000
 s := make([]int, 1&lt;&lt;63)         // illegal: len(s) is not representable by a value of type int
 s := make([]int, 10, 0)         // illegal: len(s) > cap(s)
 c := make(chan int, 10)         // channel with a buffer size of 10
-m := make(map[string]int, 100)  // map with initial space for 100 elements
+m := make(map[string]int, 100)  // map with initial space for approximately 100 elements
 </pre>
 </div>
 
@@ -11003,8 +11034,14 @@ s := make([]int, 1e3)           // len(s) == cap(s) == 1000 的切片
 s := make([]int, 1&lt;&lt;63)         // 非法：len(s) 不能表示为 int 类型的值
 s := make([]int, 10, 0)         // 非法：len(s) > cap(s)
 c := make(chan int, 10)         // 缓存大小为 10 的信道
-m := make(map[string]int, 100)  // 初始空间为 100 个元素的映射
+m := make(map[string]int, 100)  // 初始空间约为 100 个元素的映射
 </pre>
+
+<p>
+Calling <code>make</code> with a map type and size hint <code>n</code> will
+create a map with initial space to hold <code>n</code> map elements.
+The precise behavior is implementation-dependent.
+</p>
 
 
 <div class="english">
@@ -11498,6 +11535,11 @@ print      打印所有实参；实参的格式取决于具体实现
 println    类似 print，但会在实参之间打印空格并在末尾打印新行
 </pre>
 
+<p>
+Implementation restriction: <code>print</code> and <code>println</code> need not
+accept arbitrary argument types, but printing of boolean, numeric, and string
+<a href="#Types">types</a> must be supported.
+</p>
 
 <div class="english">
 <h2 id="Packages">Packages</h2>
@@ -12384,7 +12426,7 @@ func Sizeof(variable ArbitraryType) uintptr
 A <code>Pointer</code> is a <a href="#Pointer_types">pointer type</a> but a <code>Pointer</code>
 value may not be <a href="#Address_operators">dereferenced</a>.
 Any pointer or value of <a href="#Types">underlying type</a> <code>uintptr</code> can be converted to
-a <code>Pointer</code> type and vice versa.
+a type of underlying type <code>Pointer</code> and vice versa.
 The effect of converting between <code>Pointer</code> and <code>uintptr</code> is implementation-defined.
 </p>
 </div>
@@ -12392,7 +12434,7 @@ The effect of converting between <code>Pointer</code> and <code>uintptr</code> i
 <p>
 <code>Pointer</code> 为<a href="#指针类型">指针类型</a>但 <code>Pointer</code>
 值可能并未<a href="#地址操作符">解引用</a>。
-任何<a href="#类型">基本类型</a>为 <code>uintptr</code> 的指针或值均可转换为 <code>Pointer</code> 类型，反之亦然。
+任何<a href="#类型">基本类型</a>为 <code>uintptr</code> 的指针或值均可转换为底层类型 <code>Pointer</code>，反之亦然。
 <code>Pointer</code> 和 <code>uintptr</code> 的转换效果由实现定义。
 </p>
 

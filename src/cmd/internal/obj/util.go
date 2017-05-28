@@ -6,60 +6,15 @@ package obj
 
 import (
 	"bytes"
+	"cmd/internal/objabi"
 	"fmt"
-	"log"
-	"os"
 	"strings"
-	"time"
 )
 
 const REG_NONE = 0
 
-var start time.Time
-
-func Cputime() float64 {
-	if start.IsZero() {
-		start = time.Now()
-	}
-	return time.Since(start).Seconds()
-}
-
-func envOr(key, value string) string {
-	if x := os.Getenv(key); x != "" {
-		return x
-	}
-	return value
-}
-
-var (
-	GOROOT  = envOr("GOROOT", defaultGOROOT)
-	GOARCH  = envOr("GOARCH", defaultGOARCH)
-	GOOS    = envOr("GOOS", defaultGOOS)
-	GO386   = envOr("GO386", defaultGO386)
-	GOARM   = goarm()
-	Version = version
-)
-
-func goarm() int {
-	switch v := envOr("GOARM", defaultGOARM); v {
-	case "5":
-		return 5
-	case "6":
-		return 6
-	case "7":
-		return 7
-	}
-	// Fail here, rather than validate at multiple call sites.
-	log.Fatalf("Invalid GOARM value. Must be 5, 6, or 7.")
-	panic("unreachable")
-}
-
-func Getgoextlinkenabled() string {
-	return envOr("GO_EXTLINK_ENABLED", defaultGO_EXTLINK_ENABLED)
-}
-
 func (p *Prog) Line() string {
-	return p.Ctxt.PosTable.Pos(p.Pos).String()
+	return p.Ctxt.OutermostPos(p.Pos).Format(false)
 }
 
 var armCondCode = []string{
@@ -143,15 +98,23 @@ func (p *Prog) String() string {
 		sep = ", "
 	}
 	if p.From3Type() != TYPE_NONE {
-		if p.From3.Type == TYPE_CONST && p.As == ATEXT {
-			// Special case - omit $.
-			fmt.Fprintf(&buf, "%s%d", sep, p.From3.Offset)
-		} else if quadOpAmd64 {
+		if quadOpAmd64 {
 			fmt.Fprintf(&buf, "%s%v", sep, Rconv(int(p.From3.Reg)))
 		} else {
 			fmt.Fprintf(&buf, "%s%v", sep, Dconv(p, p.From3))
 		}
 		sep = ", "
+	}
+	if p.As == ATEXT {
+		// If there are attributes, print them. Otherwise, skip the comma.
+		// In short, print one of these two:
+		// TEXT	foo(SB), DUPOK|NOSPLIT, $0
+		// TEXT	foo(SB), $0
+		s := p.From.Sym.Attribute.TextAttrString()
+		if s != "" {
+			fmt.Fprintf(&buf, "%s%s", sep, s)
+			sep = ", "
+		}
 	}
 	if p.To.Type != TYPE_NONE {
 		fmt.Fprintf(&buf, "%s%v", sep, Dconv(p, &p.To))
@@ -163,26 +126,13 @@ func (p *Prog) String() string {
 }
 
 func (ctxt *Link) NewProg() *Prog {
-	var p *Prog
-	if i := ctxt.allocIdx; i < len(ctxt.progs) {
-		p = &ctxt.progs[i]
-		ctxt.allocIdx = i + 1
-	} else {
-		p = new(Prog) // should be the only call to this; all others should use ctxt.NewProg
-	}
+	p := new(Prog)
 	p.Ctxt = ctxt
 	return p
 }
-func (ctxt *Link) freeProgs() {
-	s := ctxt.progs[:ctxt.allocIdx]
-	for i := range s {
-		s[i] = Prog{}
-	}
-	ctxt.allocIdx = 0
-}
 
-func Getcallerpc(interface{}) uintptr {
-	return 1
+func (ctxt *Link) CanReuseProgs() bool {
+	return !ctxt.Debugasm
 }
 
 func (ctxt *Link) Dconv(a *Addr) string {
@@ -245,7 +195,7 @@ func Dconv(p *Prog, a *Addr) string {
 		}
 
 	case TYPE_TEXTSIZE:
-		if a.Val.(int32) == ArgsSizeUnknown {
+		if a.Val.(int32) == objabi.ArgsSizeUnknown {
 			str = fmt.Sprintf("$%d", a.Offset)
 		} else {
 			str = fmt.Sprintf("$%d-%d", a.Offset, a.Val.(int32))
@@ -268,7 +218,7 @@ func Dconv(p *Prog, a *Addr) string {
 	case TYPE_SHIFT:
 		v := int(a.Offset)
 		ops := "<<>>->@>"
-		switch GOARCH {
+		switch objabi.GOARCH {
 		case "arm":
 			op := ops[((v>>5)&3)<<1:]
 			if v&(1<<4) != 0 {
@@ -283,14 +233,14 @@ func Dconv(p *Prog, a *Addr) string {
 			op := ops[((v>>22)&3)<<1:]
 			str = fmt.Sprintf("R%d%c%c%d", (v>>16)&31, op[0], op[1], (v>>10)&63)
 		default:
-			panic("TYPE_SHIFT is not supported on " + GOARCH)
+			panic("TYPE_SHIFT is not supported on " + objabi.GOARCH)
 		}
 
 	case TYPE_REGREG:
 		str = fmt.Sprintf("(%v, %v)", Rconv(int(a.Reg)), Rconv(int(a.Offset)))
 
 	case TYPE_REGREG2:
-		str = fmt.Sprintf("%v, %v", Rconv(int(a.Reg)), Rconv(int(a.Offset)))
+		str = fmt.Sprintf("%v, %v", Rconv(int(a.Offset)), Rconv(int(a.Reg)))
 
 	case TYPE_REGLIST:
 		str = regListConv(int(a.Offset))
@@ -316,39 +266,60 @@ func Mconv(a *Addr) string {
 			str = fmt.Sprintf("%d(%v)", a.Offset, Rconv(int(a.Reg)))
 		}
 
+		// Note: a.Reg == REG_NONE encodes the default base register for the NAME_ type.
 	case NAME_EXTERN:
+		reg := "SB"
+		if a.Reg != REG_NONE {
+			reg = Rconv(int(a.Reg))
+		}
 		if a.Sym != nil {
-			str = fmt.Sprintf("%s%s(SB)", a.Sym.Name, offConv(a.Offset))
+			str = fmt.Sprintf("%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			str = fmt.Sprintf("%s(SB)", offConv(a.Offset))
+			str = fmt.Sprintf("%s(%s)", offConv(a.Offset), reg)
 		}
 
 	case NAME_GOTREF:
+		reg := "SB"
+		if a.Reg != REG_NONE {
+			reg = Rconv(int(a.Reg))
+		}
 		if a.Sym != nil {
-			str = fmt.Sprintf("%s%s@GOT(SB)", a.Sym.Name, offConv(a.Offset))
+			str = fmt.Sprintf("%s%s@GOT(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			str = fmt.Sprintf("%s@GOT(SB)", offConv(a.Offset))
+			str = fmt.Sprintf("%s@GOT(%s)", offConv(a.Offset), reg)
 		}
 
 	case NAME_STATIC:
+		reg := "SB"
+		if a.Reg != REG_NONE {
+			reg = Rconv(int(a.Reg))
+		}
 		if a.Sym != nil {
-			str = fmt.Sprintf("%s<>%s(SB)", a.Sym.Name, offConv(a.Offset))
+			str = fmt.Sprintf("%s<>%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			str = fmt.Sprintf("<>%s(SB)", offConv(a.Offset))
+			str = fmt.Sprintf("<>%s(%s)", offConv(a.Offset), reg)
 		}
 
 	case NAME_AUTO:
+		reg := "SP"
+		if a.Reg != REG_NONE {
+			reg = Rconv(int(a.Reg))
+		}
 		if a.Sym != nil {
-			str = fmt.Sprintf("%s%s(SP)", a.Sym.Name, offConv(a.Offset))
+			str = fmt.Sprintf("%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			str = fmt.Sprintf("%s(SP)", offConv(a.Offset))
+			str = fmt.Sprintf("%s(%s)", offConv(a.Offset), reg)
 		}
 
 	case NAME_PARAM:
+		reg := "FP"
+		if a.Reg != REG_NONE {
+			reg = Rconv(int(a.Reg))
+		}
 		if a.Sym != nil {
-			str = fmt.Sprintf("%s%s(FP)", a.Sym.Name, offConv(a.Offset))
+			str = fmt.Sprintf("%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			str = fmt.Sprintf("%s(FP)", offConv(a.Offset))
+			str = fmt.Sprintf("%s(%s)", offConv(a.Offset), reg)
 		}
 	}
 	return str
@@ -475,10 +446,6 @@ var Anames = []string{
 	"RET",
 	"TEXT",
 	"UNDEF",
-	"USEFIELD",
-	"VARDEF",
-	"VARKILL",
-	"VARLIVE",
 }
 
 func Bool2int(b bool) int {

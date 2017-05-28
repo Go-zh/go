@@ -28,9 +28,6 @@ type netFD struct {
 	raddr       Addr
 }
 
-func sysInit() {
-}
-
 func newFD(sysfd, family, sotype int, net string) (*netFD, error) {
 	ret := &netFD{
 		pfd: poll.FD{
@@ -46,7 +43,7 @@ func newFD(sysfd, family, sotype int, net string) (*netFD, error) {
 }
 
 func (fd *netFD) init() error {
-	return fd.pfd.Init()
+	return fd.pfd.Init(fd.net, true)
 }
 
 func (fd *netFD) setAddr(laddr, raddr Addr) {
@@ -78,7 +75,7 @@ func (fd *netFD) connect(ctx context.Context, la, ra syscall.Sockaddr) (ret erro
 			return mapErr(ctx.Err())
 		default:
 		}
-		if err := fd.pfd.Init(); err != nil {
+		if err := fd.pfd.Init(fd.net, true); err != nil {
 			return err
 		}
 		runtime.KeepAlive(fd)
@@ -96,7 +93,7 @@ func (fd *netFD) connect(ctx context.Context, la, ra syscall.Sockaddr) (ret erro
 	default:
 		return os.NewSyscallError("connect", err)
 	}
-	if err := fd.pfd.Init(); err != nil {
+	if err := fd.pfd.Init(fd.net, true); err != nil {
 		return err
 	}
 	if deadline, _ := ctx.Deadline(); !deadline.IsZero() {
@@ -210,7 +207,7 @@ func (fd *netFD) Read(p []byte) (n int, err error) {
 }
 
 func (fd *netFD) readFrom(p []byte) (n int, sa syscall.Sockaddr, err error) {
-	n, sa, err = fd.pfd.RecvFrom(p)
+	n, sa, err = fd.pfd.ReadFrom(p)
 	runtime.KeepAlive(fd)
 	return n, sa, wrapSyscallError("recvfrom", err)
 }

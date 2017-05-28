@@ -13,8 +13,7 @@ import "strconv"
 // position base and zero line number).
 //
 // The (line, column) values refer to a position in a file independent of any
-// position base ("absolute" position). Line numbers start at 1, column values
-// start at 0 and are byte offsets from the beginning of the line.
+// position base ("absolute" file position).
 //
 // The position base is used to determine the "relative" position, that is the
 // filename and line number relative to the position base. If the base refers
@@ -63,6 +62,9 @@ func (p Pos) Filename() string { return p.base.Pos().RelFilename() }
 // Base returns the position base.
 func (p Pos) Base() *PosBase { return p.base }
 
+// SetBase sets the position base.
+func (p *Pos) SetBase(base *PosBase) { p.base = base }
+
 // RelFilename returns the filename recorded with the position's base.
 func (p Pos) RelFilename() string { return p.base.Filename() }
 
@@ -72,32 +74,47 @@ func (p Pos) RelLine() uint { b := p.base; return b.Line() + p.Line() - b.Pos().
 // AbsFilename() returns the absolute filename recorded with the position's base.
 func (p Pos) AbsFilename() string { return p.base.AbsFilename() }
 
+// SymFilename() returns the absolute filename recorded with the position's base,
+// prefixed by FileSymPrefix to make it appropriate for use as a linker symbol.
+func (p Pos) SymFilename() string { return p.base.SymFilename() }
+
 func (p Pos) String() string {
+	return p.Format(true)
+}
+
+// Format formats a position as "filename:line" or "filename:line:column",
+// controlled by the showCol flag.
+// If the position is relative to a line directive, the original position
+// is appended in square brackets without column (since the column doesn't
+// change).
+func (p Pos) Format(showCol bool) string {
 	if !p.IsKnown() {
 		return "<unknown line number>"
 	}
 
-	b := p.base
-
-	if b == b.Pos().base {
+	if b := p.base; b == b.Pos().base {
 		// base is file base (incl. nil)
-		return posString(b.Filename(), p.Line(), p.Col())
+		return format(p.Filename(), p.Line(), p.Col(), showCol)
 	}
 
 	// base is relative
-	return posString(b.Filename(), p.RelLine(), p.Col()) + "[" + b.Pos().String() + "]"
+	// Print the column only for the original position since the
+	// relative position's column information may be bogus (it's
+	// typically generated code and we can't say much about the
+	// original source at that point but for the file:line info
+	// that's provided via a line directive).
+	// TODO(gri) This may not be true if we have an inlining base.
+	// We may want to differentiate at some point.
+	return format(p.RelFilename(), p.RelLine(), 0, false) +
+		"[" + format(p.Filename(), p.Line(), p.Col(), showCol) + "]"
 }
 
-// Don't print column numbers because existing tests may not work anymore.
-// It's a variable for now so that the tests can enable it.
-// TODO(gri) fix this
-var printColumn = false
-
-// posString formats a (filename, line, col) tuple as a printable position.
-func posString(filename string, line, col uint) string {
+// format formats a (filename, line, col) tuple as "filename:line" (showCol
+// is false) or "filename:line:column" (showCol is true).
+func format(filename string, line, col uint, showCol bool) string {
 	s := filename + ":" + strconv.FormatUint(uint64(line), 10)
 	// col == colMax is interpreted as unknown column value
-	if printColumn && col < colMax {
+	if showCol && col < colMax {
 		s += ":" + strconv.FormatUint(uint64(col), 10)
 	}
 	return s
@@ -114,14 +131,21 @@ type PosBase struct {
 	pos         Pos
 	filename    string // file name used to open source file, for error messages
 	absFilename string // absolute file name, for PC-Line tables
+	symFilename string // cached symbol file name, to avoid repeated string concatenation
 	line        uint   // relative line number at pos
+	inl         int    // inlining index (see cmd/internal/obj/inl.go)
 }
 
 // NewFileBase returns a new *PosBase for a file with the given (relative and
 // absolute) filenames.
 func NewFileBase(filename, absFilename string) *PosBase {
 	if filename != "" {
-		base := &PosBase{filename: filename, absFilename: absFilename}
+		base := &PosBase{
+			filename:    filename,
+			absFilename: absFilename,
+			symFilename: FileSymPrefix + absFilename,
+			inl:         -1,
+		}
 		base.pos = MakePos(base, 0, 0)
 		return base
 	}
@@ -132,7 +156,24 @@ func NewFileBase(filename, absFilename string) *PosBase {
 //      //line filename:line
 // at position pos.
 func NewLinePragmaBase(pos Pos, filename string, line uint) *PosBase {
-	return &PosBase{pos, filename, filename, line - 1}
+	return &PosBase{pos, filename, filename, FileSymPrefix + filename, line - 1, -1}
+}
+
+// NewInliningBase returns a copy of the old PosBase with the given inlining
+// index. If old == nil, the resulting PosBase has no filename.
+func NewInliningBase(old *PosBase, inlTreeIndex int) *PosBase {
+	if old == nil {
+		base := &PosBase{inl: inlTreeIndex}
+		base.pos = MakePos(base, 0, 0)
+		return base
+	}
+	copy := *old
+	base := &copy
+	base.inl = inlTreeIndex
+	if old == old.pos.base {
+		base.pos.base = base
+	}
+	return base
 }
 
 var noPos Pos
@@ -164,6 +205,18 @@ func (b *PosBase) AbsFilename() string {
 	return ""
 }
 
+const FileSymPrefix = "gofile.."
+
+// SymFilename returns the absolute filename recorded with the base,
+// prefixed by FileSymPrefix to make it appropriate for use as a linker symbol.
+// If b is nil, SymFilename returns FileSymPrefix + "??".
+func (b *PosBase) SymFilename() string {
+	if b != nil {
+		return b.symFilename
+	}
+	return FileSymPrefix + "??"
+}
+
 // Line returns the line number recorded with the base.
 // If b == nil, the result is 0.
 func (b *PosBase) Line() uint {
@@ -171,6 +224,16 @@ func (b *PosBase) Line() uint {
 		return b.line
 	}
 	return 0
+}
+
+// InliningIndex returns the index into the global inlining
+// tree recorded with the base. If b == nil or the base has
+// not been inlined, the result is < 0.
+func (b *PosBase) InliningIndex() int {
+	if b != nil {
+		return b.inl
+	}
+	return -1
 }
 
 // ----------------------------------------------------------------------------

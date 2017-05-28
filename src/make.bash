@@ -107,8 +107,8 @@ done
 # Test for debian/kFreeBSD.
 # cmd/dist will detect kFreeBSD as freebsd/$GOARCH, but we need to
 # disable cgo manually.
-if [ "$(uname -s)" == "GNU/kFreeBSD" ]; then
-        export CGO_ENABLED=0
+if [ "$(uname -s)" = "GNU/kFreeBSD" ]; then
+	export CGO_ENABLED=0
 fi
 
 # Clean old generated file that will cause problems in the build.
@@ -125,7 +125,7 @@ if [ ! -x "$GOROOT_BOOTSTRAP/bin/go" ]; then
 	echo "Set \$GOROOT_BOOTSTRAP to a working Go tree >= Go 1.4." >&2
 	exit 1
 fi
-if [ "$GOROOT_BOOTSTRAP" == "$GOROOT" ]; then
+if [ "$GOROOT_BOOTSTRAP" = "$GOROOT" ]; then
 	echo "ERROR: \$GOROOT_BOOTSTRAP must not be set to \$GOROOT" >&2
 	echo "Set \$GOROOT_BOOTSTRAP to a working Go tree >= Go 1.4." >&2
 	exit 1
@@ -172,7 +172,20 @@ if [ "$GOHOSTARCH" != "$GOARCH" -o "$GOHOSTOS" != "$GOOS" ]; then
 fi
 
 echo "##### Building packages and commands for $GOOS/$GOARCH."
+
+old_bin_files=$(cd $GOROOT/bin && echo *)
+
 CC=$CC_FOR_TARGET "$GOTOOLDIR"/go_bootstrap install $GO_FLAGS -gcflags "$GO_GCFLAGS" -ldflags "$GO_LDFLAGS" -v std cmd
+
+# Check that there are no new files in $GOROOT/bin other than go and gofmt
+# and $GOOS_$GOARCH (a directory used when cross-compiling).
+(cd $GOROOT/bin && for f in *; do
+	if ! expr " $old_bin_files go gofmt ${GOOS}_${GOARCH} " : ".* $f " >/dev/null 2>/dev/null; then
+		echo 1>&2 "ERROR: unexpected new file in $GOROOT/bin: $f"
+		exit 1
+	fi
+done)
+
 echo
 
 rm -f "$GOTOOLDIR"/go_bootstrap

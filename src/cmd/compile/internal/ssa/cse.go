@@ -5,6 +5,7 @@
 package ssa
 
 import (
+	"cmd/compile/internal/types"
 	"fmt"
 	"sort"
 )
@@ -281,7 +282,7 @@ func partitionValues(a []*Value, auxIDs auxmap) []eqclass {
 		j := 1
 		for ; j < len(a); j++ {
 			w := a[j]
-			if cmpVal(v, w, auxIDs) != CMPeq {
+			if cmpVal(v, w, auxIDs) != types.CMPeq {
 				break
 			}
 		}
@@ -293,16 +294,16 @@ func partitionValues(a []*Value, auxIDs auxmap) []eqclass {
 
 	return partition
 }
-func lt2Cmp(isLt bool) Cmp {
+func lt2Cmp(isLt bool) types.Cmp {
 	if isLt {
-		return CMPlt
+		return types.CMPlt
 	}
-	return CMPgt
+	return types.CMPgt
 }
 
 type auxmap map[interface{}]int32
 
-func cmpVal(v, w *Value, auxIDs auxmap) Cmp {
+func cmpVal(v, w *Value, auxIDs auxmap) types.Cmp {
 	// Try to order these comparison by cost (cheaper first)
 	if v.Op != w.Op {
 		return lt2Cmp(v.Op < w.Op)
@@ -321,22 +322,26 @@ func cmpVal(v, w *Value, auxIDs auxmap) Cmp {
 		// that generate memory.
 		return lt2Cmp(v.ID < w.ID)
 	}
-
-	if tc := v.Type.Compare(w.Type); tc != CMPeq {
-		return tc
+	// OpSelect is a pseudo-op. We need to be more aggressive
+	// regarding CSE to keep multiple OpSelect's of the same
+	// argument from existing.
+	if v.Op != OpSelect0 && v.Op != OpSelect1 {
+		if tc := v.Type.Compare(w.Type); tc != types.CMPeq {
+			return tc
+		}
 	}
 
 	if v.Aux != w.Aux {
 		if v.Aux == nil {
-			return CMPlt
+			return types.CMPlt
 		}
 		if w.Aux == nil {
-			return CMPgt
+			return types.CMPgt
 		}
 		return lt2Cmp(auxIDs[v.Aux] < auxIDs[w.Aux])
 	}
 
-	return CMPeq
+	return types.CMPeq
 }
 
 // Sort values to make the initial partition.
@@ -350,8 +355,8 @@ func (sv sortvalues) Swap(i, j int) { sv.a[i], sv.a[j] = sv.a[j], sv.a[i] }
 func (sv sortvalues) Less(i, j int) bool {
 	v := sv.a[i]
 	w := sv.a[j]
-	if cmp := cmpVal(v, w, sv.auxIDs); cmp != CMPeq {
-		return cmp == CMPlt
+	if cmp := cmpVal(v, w, sv.auxIDs); cmp != types.CMPeq {
+		return cmp == types.CMPlt
 	}
 
 	// Sort by value ID last to keep the sort result deterministic.

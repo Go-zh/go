@@ -109,7 +109,7 @@ type PackageInternal struct {
 	ExeName      string               // desired name for temporary executable
 	CoverMode    string               // preprocess Go source files with the coverage tool in this mode
 	CoverVars    map[string]*CoverVar // variables created by coverage analysis
-	OmitDWARF    bool                 // tell linker not to write DWARF information
+	OmitDebug    bool                 // tell linker not to write debug information
 	BuildID      string               // expected build ID for generated package
 	GobinSubdir  bool                 // install target would be subdir of GOBIN
 }
@@ -959,10 +959,6 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) *Package 
 		if p.Name == "main" && cfg.Goarch == "arm" {
 			ImportPaths = append(ImportPaths, "math")
 		}
-		// In coverage atomic mode everything depends on sync/atomic.
-		if cfg.TestCoverMode == "atomic" && (!p.Standard || (p.ImportPath != "runtime/cgo" && p.ImportPath != "runtime/race" && p.ImportPath != "sync/atomic")) {
-			ImportPaths = append(ImportPaths, "sync/atomic")
-		}
 	}
 
 	// Runtime and its internal packages depend on runtime/internal/sys,
@@ -1507,13 +1503,7 @@ func isStale(p *Package) (bool, string) {
 	// Package is stale if a dependency is.
 	for _, p1 := range p.Internal.Deps {
 		if p1.Stale {
-			// Don't add "stale dependency" if it is
-			// already there.
-			if strings.HasPrefix(p1.StaleReason, "stale dependency") {
-				return true, p1.StaleReason
-			}
-			msg := fmt.Sprintf("stale dependency %s: %s", p1.Name, p1.StaleReason)
-			return true, msg
+			return true, "stale dependency"
 		}
 	}
 
@@ -1551,8 +1541,7 @@ func isStale(p *Package) (bool, string) {
 	// Package is stale if a dependency is, or if a dependency is newer.
 	for _, p1 := range p.Internal.Deps {
 		if p1.Internal.Target != "" && olderThan(p1.Internal.Target) {
-			msg := fmt.Sprintf("newer dependency %s ", p1.Internal.Target)
-			return true, msg
+			return true, "newer dependency"
 		}
 	}
 
@@ -1619,8 +1608,7 @@ func isStale(p *Package) (bool, string) {
 	srcs := str.StringList(p.GoFiles, p.CFiles, p.CXXFiles, p.MFiles, p.HFiles, p.FFiles, p.SFiles, p.CgoFiles, p.SysoFiles, p.SwigFiles, p.SwigCXXFiles)
 	for _, src := range srcs {
 		if olderThan(filepath.Join(p.Dir, src)) {
-			msg := fmt.Sprintf("newer source file %s", filepath.Join(p.Dir, src))
-			return true, msg
+			return true, "newer source file"
 		}
 	}
 
@@ -1656,10 +1644,21 @@ func computeBuildID(p *Package) {
 	// different build ID in each Go release.
 	if p.Standard && p.ImportPath == "runtime/internal/sys" && cfg.BuildContext.Compiler != "gccgo" {
 		data, err := ioutil.ReadFile(filepath.Join(p.Dir, "zversion.go"))
-		if err != nil {
+		if os.IsNotExist(err) {
+			p.Stale = true
+			p.StaleReason = fmt.Sprintf("missing zversion.go")
+		} else if err != nil {
 			base.Fatalf("go: %s", err)
 		}
 		fmt.Fprintf(h, "zversion %q\n", string(data))
+
+		// Add environment variables that affect code generation.
+		switch cfg.BuildContext.GOARCH {
+		case "arm":
+			fmt.Fprintf(h, "GOARM=%s\n", cfg.GOARM)
+		case "386":
+			fmt.Fprintf(h, "GO386=%s\n", cfg.GO386)
+		}
 	}
 
 	// Include the build IDs of any dependencies in the hash.

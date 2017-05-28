@@ -5,7 +5,7 @@
 package ld
 
 import (
-	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"cmd/internal/sys"
 	"fmt"
 	"strings"
@@ -46,7 +46,7 @@ import (
 // Any unreached text symbols are removed from ctxt.Textp.
 func deadcode(ctxt *Link) {
 	if ctxt.Debugvlog != 0 {
-		ctxt.Logf("%5.2f deadcode\n", obj.Cputime())
+		ctxt.Logf("%5.2f deadcode\n", Cputime())
 	}
 
 	d := &deadcodepass{
@@ -127,27 +127,6 @@ func deadcode(ctxt *Link) {
 	ctxt.Textp = textp
 }
 
-var markextra = []string{
-	"runtime.morestack",
-	"runtime.morestackx",
-	"runtime.morestack00",
-	"runtime.morestack10",
-	"runtime.morestack01",
-	"runtime.morestack11",
-	"runtime.morestack8",
-	"runtime.morestack16",
-	"runtime.morestack24",
-	"runtime.morestack32",
-	"runtime.morestack40",
-	"runtime.morestack48",
-
-	// on arm, lock in the div/mod helpers too
-	"_div",
-	"_divu",
-	"_mod",
-	"_modu",
-}
-
 // methodref holds the relocations from a receiver type symbol to its
 // method. There are three relocations, one for each of the fields in
 // the reflect.method struct: mtyp, ifn, and tfn.
@@ -177,7 +156,7 @@ type deadcodepass struct {
 
 func (d *deadcodepass) cleanupReloc(r *Reloc) {
 	if r.Sym.Attr.Reachable() {
-		r.Type = obj.R_ADDROFF
+		r.Type = objabi.R_ADDROFF
 	} else {
 		if d.ctxt.Debugvlog > 1 {
 			d.ctxt.Logf("removing method %s\n", r.Sym.Name)
@@ -211,7 +190,7 @@ func (d *deadcodepass) mark(s, parent *Symbol) {
 func (d *deadcodepass) markMethod(m methodref) {
 	for _, r := range m.r {
 		d.mark(r.Sym, m.src)
-		r.Type = obj.R_ADDROFF
+		r.Type = objabi.R_ADDROFF
 	}
 }
 
@@ -222,9 +201,6 @@ func (d *deadcodepass) init() {
 
 	if SysArch.Family == sys.ARM {
 		// mark some functions that are only referenced after linker code editing
-		if obj.GOARM == 5 {
-			names = append(names, "_sfloat")
-		}
 		names = append(names, "runtime.read_tls_fallback")
 	}
 
@@ -232,7 +208,7 @@ func (d *deadcodepass) init() {
 		// Mark all symbols defined in this library as reachable when
 		// building a shared library.
 		for _, s := range d.ctxt.Syms.Allsym {
-			if s.Type != 0 && s.Type != obj.SDYNIMPORT {
+			if s.Type != 0 && s.Type != SDYNIMPORT {
 				d.mark(s, nil)
 			}
 		}
@@ -254,7 +230,6 @@ func (d *deadcodepass) init() {
 				}
 			}
 		}
-		names = append(names, markextra...)
 		for _, s := range dynexp {
 			d.mark(s, nil)
 		}
@@ -271,7 +246,7 @@ func (d *deadcodepass) flood() {
 	for len(d.markQueue) > 0 {
 		s := d.markQueue[0]
 		d.markQueue = d.markQueue[1:]
-		if s.Type == obj.STEXT {
+		if s.Type == STEXT {
 			if d.ctxt.Debugvlog > 1 {
 				d.ctxt.Logf("marktext %s\n", s.Name)
 			}
@@ -306,13 +281,13 @@ func (d *deadcodepass) flood() {
 			if r.Sym == nil {
 				continue
 			}
-			if r.Type == obj.R_WEAKADDROFF {
+			if r.Type == objabi.R_WEAKADDROFF {
 				// An R_WEAKADDROFF relocation is not reason
 				// enough to mark the pointed-to symbol as
 				// reachable.
 				continue
 			}
-			if r.Type != obj.R_METHODOFF {
+			if r.Type != objabi.R_METHODOFF {
 				d.mark(r.Sym, s)
 				continue
 			}

@@ -14,6 +14,11 @@ import (
 // Mode describes the parser mode.
 type Mode uint
 
+// Modes supported by the parser.
+const (
+	CheckBranches Mode = 1 << iota // check correct use of labels, break, continue, and goto statements
+)
+
 // Error describes a syntax error. Error implements the error interface.
 type Error struct {
 	Pos src.Pos
@@ -40,8 +45,9 @@ type Pragma uint16
 type PragmaHandler func(pos src.Pos, text string) Pragma
 
 // Parse parses a single Go source file from src and returns the corresponding
-// syntax tree. If there are errors, Parse will return the first error found.
-// The base argument is only used for position information.
+// syntax tree. If there are errors, Parse will return the first error found,
+// and a possibly partially constructed syntax tree, or nil if no correct package
+// clause was found. The base argument is only used for position information.
 //
 // If errh != nil, it is called with each error encountered, and Parse will
 // process as much source as possible. If errh is nil, Parse will terminate
@@ -62,9 +68,9 @@ func Parse(base *src.PosBase, src io.Reader, errh ErrorHandler, pragh PragmaHand
 	}()
 
 	var p parser
-	p.init(base, src, errh, pragh)
+	p.init(base, src, errh, pragh, mode)
 	p.next()
-	return p.file(), p.first
+	return p.fileOrNil(), p.first
 }
 
 // ParseBytes behaves like Parse but it reads the source from the []byte slice provided.

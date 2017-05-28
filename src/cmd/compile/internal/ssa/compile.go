@@ -5,7 +5,7 @@
 package ssa
 
 import (
-	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"cmd/internal/src"
 	"fmt"
 	"log"
@@ -43,7 +43,7 @@ func Compile(f *Func) {
 
 	// Run all the passes
 	printFunc(f)
-	f.Config.HTML.WriteFunc("start", f)
+	f.HTMLWriter.WriteFunc("start", f)
 	if BuildDump != "" && BuildDump == f.Name {
 		f.dumpFile("build")
 	}
@@ -71,7 +71,7 @@ func Compile(f *Func) {
 		tEnd := time.Now()
 
 		// Need something less crude than "Log the whole intermediate result".
-		if f.Log() || f.Config.HTML != nil {
+		if f.Log() || f.HTMLWriter != nil {
 			time := tEnd.Sub(tStart).Nanoseconds()
 			var stats string
 			if logMemStats {
@@ -86,7 +86,7 @@ func Compile(f *Func) {
 
 			f.Logf("  pass %s end %s\n", p.name, stats)
 			printFunc(f)
-			f.Config.HTML.WriteFunc(fmt.Sprintf("after %s <span class=\"stats\">%s</span>", phaseName, stats), f)
+			f.HTMLWriter.WriteFunc(fmt.Sprintf("after %s <span class=\"stats\">%s</span>", phaseName, stats), f)
 		}
 		if p.time || p.mem {
 			// Surround timing information w/ enough context to allow comparisons.
@@ -130,7 +130,7 @@ func (f *Func) dumpFile(phaseName string) {
 
 	fi, err := os.Create(fname)
 	if err != nil {
-		f.Config.Warnl(src.NoXPos, "Unable to create after-phase dump file %s", fname)
+		f.Warnl(src.NoXPos, "Unable to create after-phase dump file %s", fname)
 		return
 	}
 
@@ -204,7 +204,7 @@ func PhaseOption(phase, flag string, val int, valString string) string {
 			}
 		}
 		return "" +
-			`GcFlag -d=ssa/<phase>/<flag>[=<value>]|[:<function_name>]
+			`GcFlag -d=ssa/<phase>/<flag>[=<value>|<function_name>]
 <phase> is one of:
 ` + phasenames + `
 <flag> is one of on, off, debug, mem, time, test, stats, dump
@@ -348,11 +348,11 @@ var passes = [...]pass{
 	{name: "late opt", fn: opt, required: true}, // TODO: split required rules and optimizing rules
 	{name: "generic deadcode", fn: deadcode},
 	{name: "check bce", fn: checkbce},
-	{name: "writebarrier", fn: writebarrier, required: true}, // expand write barrier ops
 	{name: "fuse", fn: fuse},
 	{name: "dse", fn: dse},
+	{name: "writebarrier", fn: writebarrier, required: true}, // expand write barrier ops
 	{name: "insert resched checks", fn: insertLoopReschedChecks,
-		disabled: obj.Preemptibleloops_enabled == 0}, // insert resched checks in loops.
+		disabled: objabi.Preemptibleloops_enabled == 0}, // insert resched checks in loops.
 	{name: "tighten", fn: tighten}, // move values closer to their uses
 	{name: "lower", fn: lower, required: true},
 	{name: "lowered cse", fn: cse},
@@ -369,6 +369,7 @@ var passes = [...]pass{
 	{name: "late nilcheck", fn: nilcheckelim2},
 	{name: "flagalloc", fn: flagalloc, required: true}, // allocate flags register
 	{name: "regalloc", fn: regalloc, required: true},   // allocate int & float registers + stack slots
+	{name: "loop rotate", fn: loopRotate},
 	{name: "stackframe", fn: stackframe, required: true},
 	{name: "trim", fn: trim}, // remove empty blocks
 }
@@ -427,6 +428,8 @@ var passOrder = [...]constraint{
 	{"schedule", "flagalloc"},
 	// regalloc needs flags to be allocated first.
 	{"flagalloc", "regalloc"},
+	// loopRotate will confuse regalloc.
+	{"regalloc", "loop rotate"},
 	// stackframe needs to know about spilled registers.
 	{"regalloc", "stackframe"},
 	// trim needs regalloc to be done first.

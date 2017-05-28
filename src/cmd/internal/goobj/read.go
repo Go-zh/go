@@ -12,7 +12,7 @@ package goobj
 import (
 	"bufio"
 	"bytes"
-	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"errors"
 	"fmt"
 	"io"
@@ -20,113 +20,16 @@ import (
 	"strings"
 )
 
-// A SymKind describes the kind of memory represented by a symbol.
-type SymKind int
-
-// This list is taken from include/link.h.
-
-// Defined SymKind values.
-// TODO(rsc): Give idiomatic Go names.
-// TODO(rsc): Reduce the number of symbol types in the object files.
-const (
-	// readonly, executable
-	STEXT      = SymKind(obj.STEXT)
-	SELFRXSECT = SymKind(obj.SELFRXSECT)
-
-	// readonly, non-executable
-	STYPE      = SymKind(obj.STYPE)
-	SSTRING    = SymKind(obj.SSTRING)
-	SGOSTRING  = SymKind(obj.SGOSTRING)
-	SGOFUNC    = SymKind(obj.SGOFUNC)
-	SRODATA    = SymKind(obj.SRODATA)
-	SFUNCTAB   = SymKind(obj.SFUNCTAB)
-	STYPELINK  = SymKind(obj.STYPELINK)
-	SITABLINK  = SymKind(obj.SITABLINK)
-	SSYMTAB    = SymKind(obj.SSYMTAB) // TODO: move to unmapped section
-	SPCLNTAB   = SymKind(obj.SPCLNTAB)
-	SELFROSECT = SymKind(obj.SELFROSECT)
-
-	// writable, non-executable
-	SMACHOPLT  = SymKind(obj.SMACHOPLT)
-	SELFSECT   = SymKind(obj.SELFSECT)
-	SMACHO     = SymKind(obj.SMACHO) // Mach-O __nl_symbol_ptr
-	SMACHOGOT  = SymKind(obj.SMACHOGOT)
-	SWINDOWS   = SymKind(obj.SWINDOWS)
-	SELFGOT    = SymKind(obj.SELFGOT)
-	SNOPTRDATA = SymKind(obj.SNOPTRDATA)
-	SINITARR   = SymKind(obj.SINITARR)
-	SDATA      = SymKind(obj.SDATA)
-	SBSS       = SymKind(obj.SBSS)
-	SNOPTRBSS  = SymKind(obj.SNOPTRBSS)
-	STLSBSS    = SymKind(obj.STLSBSS)
-
-	// not mapped
-	SXREF             = SymKind(obj.SXREF)
-	SMACHOSYMSTR      = SymKind(obj.SMACHOSYMSTR)
-	SMACHOSYMTAB      = SymKind(obj.SMACHOSYMTAB)
-	SMACHOINDIRECTPLT = SymKind(obj.SMACHOINDIRECTPLT)
-	SMACHOINDIRECTGOT = SymKind(obj.SMACHOINDIRECTGOT)
-	SFILE             = SymKind(obj.SFILE)
-	SFILEPATH         = SymKind(obj.SFILEPATH)
-	SCONST            = SymKind(obj.SCONST)
-	SDYNIMPORT        = SymKind(obj.SDYNIMPORT)
-	SHOSTOBJ          = SymKind(obj.SHOSTOBJ)
-)
-
-var symKindStrings = []string{
-	SBSS:              "SBSS",
-	SCONST:            "SCONST",
-	SDATA:             "SDATA",
-	SDYNIMPORT:        "SDYNIMPORT",
-	SELFROSECT:        "SELFROSECT",
-	SELFRXSECT:        "SELFRXSECT",
-	SELFSECT:          "SELFSECT",
-	SFILE:             "SFILE",
-	SFILEPATH:         "SFILEPATH",
-	SFUNCTAB:          "SFUNCTAB",
-	SGOFUNC:           "SGOFUNC",
-	SGOSTRING:         "SGOSTRING",
-	SHOSTOBJ:          "SHOSTOBJ",
-	SINITARR:          "SINITARR",
-	SMACHO:            "SMACHO",
-	SMACHOGOT:         "SMACHOGOT",
-	SMACHOINDIRECTGOT: "SMACHOINDIRECTGOT",
-	SMACHOINDIRECTPLT: "SMACHOINDIRECTPLT",
-	SMACHOPLT:         "SMACHOPLT",
-	SMACHOSYMSTR:      "SMACHOSYMSTR",
-	SMACHOSYMTAB:      "SMACHOSYMTAB",
-	SNOPTRBSS:         "SNOPTRBSS",
-	SNOPTRDATA:        "SNOPTRDATA",
-	SPCLNTAB:          "SPCLNTAB",
-	SRODATA:           "SRODATA",
-	SSTRING:           "SSTRING",
-	SSYMTAB:           "SSYMTAB",
-	STEXT:             "STEXT",
-	STLSBSS:           "STLSBSS",
-	STYPE:             "STYPE",
-	STYPELINK:         "STYPELINK",
-	SITABLINK:         "SITABLINK",
-	SWINDOWS:          "SWINDOWS",
-	SXREF:             "SXREF",
-}
-
-func (k SymKind) String() string {
-	if k < 0 || int(k) >= len(symKindStrings) {
-		return fmt.Sprintf("SymKind(%d)", k)
-	}
-	return symKindStrings[k]
-}
-
 // A Sym is a named symbol in an object file.
 type Sym struct {
-	SymID         // symbol identifier (name and version)
-	Kind  SymKind // kind of symbol
-	DupOK bool    // are duplicate definitions okay?
-	Size  int     // size of corresponding data
-	Type  SymID   // symbol for Go type information
-	Data  Data    // memory image of symbol
-	Reloc []Reloc // relocations to apply to Data
-	Func  *Func   // additional data for functions
+	SymID                // symbol identifier (name and version)
+	Kind  objabi.SymKind // kind of symbol
+	DupOK bool           // are duplicate definitions okay?
+	Size  int            // size of corresponding data
+	Type  SymID          // symbol for Go type information
+	Data  Data           // memory image of symbol
+	Reloc []Reloc        // relocations to apply to Data
+	Func  *Func          // additional data for functions
 }
 
 // A SymID - the combination of Name and Version - uniquely identifies
@@ -172,7 +75,7 @@ type Reloc struct {
 	// The Type records the form of address expected in the bytes
 	// described by the previous fields: absolute, PC-relative, and so on.
 	// TODO(rsc): The interpretation of Type is not exposed by this package.
-	Type obj.RelocType
+	Type objabi.RelocType
 }
 
 // A Var describes a variable in a function stack frame: a declared
@@ -198,9 +101,11 @@ type Func struct {
 	PCSP     Data       // PC → SP offset map
 	PCFile   Data       // PC → file number map (index into File)
 	PCLine   Data       // PC → line number map
+	PCInline Data       // PC → inline tree index map
 	PCData   []Data     // PC → runtime support data map
 	FuncData []FuncData // non-PC-specific runtime support data
 	File     []string   // paths indexed by PCFile
+	InlTree  []InlinedCall
 }
 
 // TODO: Add PCData []byte and PCDataIter (similar to liblink).
@@ -209,6 +114,15 @@ type Func struct {
 type FuncData struct {
 	Sym    SymID // symbol holding data
 	Offset int64 // offset into symbol for funcdata pointer
+}
+
+// An InlinedCall is a node in an InlTree.
+// See cmd/internal/obj.InlTree for details.
+type InlinedCall struct {
+	Parent int
+	File   string
+	Line   int
+	Func   SymID
 }
 
 // A Package is a parsed Go object file or archive defining a Go package.
@@ -245,45 +159,6 @@ type objReader struct {
 	pkgprefix  string
 }
 
-// importPathToPrefix returns the prefix that will be used in the
-// final symbol table for the given import path.
-// We escape '%', '"', all control characters and non-ASCII bytes,
-// and any '.' after the final slash.
-//
-// See ../../../cmd/ld/lib.c:/^pathtoprefix and
-// ../../../cmd/gc/subr.c:/^pathtoprefix.
-func importPathToPrefix(s string) string {
-	// find index of last slash, if any, or else -1.
-	// used for determining whether an index is after the last slash.
-	slash := strings.LastIndex(s, "/")
-
-	// check for chars that need escaping
-	n := 0
-	for r := 0; r < len(s); r++ {
-		if c := s[r]; c <= ' ' || (c == '.' && r > slash) || c == '%' || c == '"' || c >= 0x7F {
-			n++
-		}
-	}
-
-	// quick exit
-	if n == 0 {
-		return s
-	}
-
-	// escape
-	const hex = "0123456789abcdef"
-	p := make([]byte, 0, len(s)+2*n)
-	for r := 0; r < len(s); r++ {
-		if c := s[r]; c <= ' ' || (c == '.' && r > slash) || c == '%' || c == '"' || c >= 0x7F {
-			p = append(p, '%', hex[c>>4], hex[c&0xF])
-		} else {
-			p = append(p, c)
-		}
-	}
-
-	return string(p)
-}
-
 // init initializes r to read package p from f.
 func (r *objReader) init(f io.ReadSeeker, p *Package) {
 	r.f = f
@@ -292,7 +167,7 @@ func (r *objReader) init(f io.ReadSeeker, p *Package) {
 	r.limit, _ = f.Seek(0, io.SeekEnd)
 	f.Seek(r.offset, io.SeekStart)
 	r.b = bufio.NewReader(f)
-	r.pkgprefix = importPathToPrefix(p.ImportPath) + "."
+	r.pkgprefix = objabi.PathToPrefix(p.ImportPath) + "."
 }
 
 // error records that an error occurred.
@@ -583,7 +458,7 @@ func (r *objReader) parseObject(prefix []byte) error {
 	// TODO: extract OS + build ID if/when we need it
 
 	r.readFull(r.tmp[:8])
-	if !bytes.Equal(r.tmp[:8], []byte("\x00\x00go17ld")) {
+	if !bytes.Equal(r.tmp[:8], []byte("\x00\x00go19ld")) {
 		return r.error(errCorruptObject)
 	}
 
@@ -632,10 +507,10 @@ func (r *objReader) parseObject(prefix []byte) error {
 			break
 		}
 
-		typ := r.readInt()
+		typ := r.readByte()
 		s := &Sym{SymID: r.readSymID()}
 		r.p.Syms = append(r.p.Syms, s)
-		s.Kind = SymKind(typ)
+		s.Kind = objabi.SymKind(typ)
 		flags := r.readInt()
 		s.DupOK = flags&1 != 0
 		s.Size = r.readInt()
@@ -646,18 +521,18 @@ func (r *objReader) parseObject(prefix []byte) error {
 			rel := &s.Reloc[i]
 			rel.Offset = r.readInt()
 			rel.Size = r.readInt()
-			rel.Type = obj.RelocType(r.readInt())
+			rel.Type = objabi.RelocType(r.readInt())
 			rel.Add = r.readInt()
 			rel.Sym = r.readSymID()
 		}
 
-		if s.Kind == STEXT {
+		if s.Kind == objabi.STEXT {
 			f := new(Func)
 			s.Func = f
 			f.Args = r.readInt()
 			f.Frame = r.readInt()
 			flags := r.readInt()
-			f.Leaf = flags&1 != 0
+			f.Leaf = flags&(1<<0) != 0
 			f.NoSplit = r.readInt() != 0
 			f.Var = make([]Var, r.readInt())
 			for i := range f.Var {
@@ -671,6 +546,7 @@ func (r *objReader) parseObject(prefix []byte) error {
 			f.PCSP = r.readData()
 			f.PCFile = r.readData()
 			f.PCLine = r.readData()
+			f.PCInline = r.readData()
 			f.PCData = make([]Data, r.readInt())
 			for i := range f.PCData {
 				f.PCData[i] = r.readData()
@@ -686,11 +562,18 @@ func (r *objReader) parseObject(prefix []byte) error {
 			for i := range f.File {
 				f.File[i] = r.readSymID().Name
 			}
+			f.InlTree = make([]InlinedCall, r.readInt())
+			for i := range f.InlTree {
+				f.InlTree[i].Parent = r.readInt()
+				f.InlTree[i].File = r.readSymID().Name
+				f.InlTree[i].Line = r.readInt()
+				f.InlTree[i].Func = r.readSymID()
+			}
 		}
 	}
 
 	r.readFull(r.tmp[:7])
-	if !bytes.Equal(r.tmp[:7], []byte("\xffgo17ld")) {
+	if !bytes.Equal(r.tmp[:7], []byte("\xffgo19ld")) {
 		return r.error(errCorruptObject)
 	}
 

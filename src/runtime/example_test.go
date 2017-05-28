@@ -7,22 +7,37 @@ package runtime_test
 import (
 	"fmt"
 	"runtime"
+	"strings"
 )
 
 func ExampleFrames() {
 	c := func() {
-		pc := make([]uintptr, 5)
+		// Ask runtime.Callers for up to 10 pcs, including runtime.Callers itself.
+		pc := make([]uintptr, 10)
 		n := runtime.Callers(0, pc)
 		if n == 0 {
+			// No pcs available. Stop now.
+			// This can happen if the first argument to runtime.Callers is large.
 			return
 		}
 
-		frames := runtime.CallersFrames(pc[:n])
-		var frame runtime.Frame
-		more := true
-		for more {
-			frame, more = frames.Next()
+		pc = pc[:n] // pass only valid pcs to runtime.CallersFrames
+		frames := runtime.CallersFrames(pc)
+
+		// Loop to get frames.
+		// A fixed number of pcs can expand to an indefinite number of Frames.
+		for {
+			frame, more := frames.Next()
+			// To keep this example's output stable
+			// even if there are changes in the testing package,
+			// stop unwinding when we leave package runtime.
+			if !strings.Contains(frame.File, "runtime/") {
+				break
+			}
 			fmt.Printf("- more:%v | %s\n", more, frame.Function)
+			if !more {
+				break
+			}
 		}
 	}
 
@@ -35,5 +50,5 @@ func ExampleFrames() {
 	// - more:true | runtime_test.ExampleFrames.func1
 	// - more:true | runtime_test.ExampleFrames.func2
 	// - more:true | runtime_test.ExampleFrames.func3
-	// - more:false | runtime_test.ExampleFrames
+	// - more:true | runtime_test.ExampleFrames
 }

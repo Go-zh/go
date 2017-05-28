@@ -424,7 +424,7 @@ func (p *Parser) atStartOfRegister(name string) bool {
 // We have consumed the register or R prefix.
 func (p *Parser) atRegisterShift() bool {
 	// ARM only.
-	if p.arch.Family != sys.ARM {
+	if !p.arch.InFamily(sys.ARM, sys.ARM64) {
 		return false
 	}
 	// R1<<...
@@ -506,7 +506,7 @@ func (p *Parser) register(name string, prefix rune) (r1, r2 int16, scale int8, o
 	return r1, r2, scale, true
 }
 
-// registerShift parses an ARM shifted register reference and returns the encoded representation.
+// registerShift parses an ARM/ARM64 shifted register reference and returns the encoded representation.
 // There is known to be a register (current token) and a shift operator (peeked token).
 func (p *Parser) registerShift(name string, prefix rune) int64 {
 	if prefix != 0 {
@@ -531,6 +531,8 @@ func (p *Parser) registerShift(name string, prefix rune) int64 {
 	case lex.ARR:
 		op = 2
 	case lex.ROT:
+		// following instructions on ARM64 support rotate right
+		// AND, ANDS, TST, BIC, BICS, EON, EOR, ORR, MVN, ORN
 		op = 3
 	}
 	tok := p.next()
@@ -538,22 +540,37 @@ func (p *Parser) registerShift(name string, prefix rune) int64 {
 	var count int16
 	switch tok.ScanToken {
 	case scanner.Ident:
-		r2, ok := p.registerReference(str)
-		if !ok {
-			p.errorf("rhs of shift must be register or integer: %s", str)
+		if p.arch.Family == sys.ARM64 {
+			p.errorf("rhs of shift must be integer: %s", str)
+		} else {
+			r2, ok := p.registerReference(str)
+			if !ok {
+				p.errorf("rhs of shift must be register or integer: %s", str)
+			}
+			count = (r2&15)<<8 | 1<<4
 		}
-		count = (r2&15)<<8 | 1<<4
 	case scanner.Int, '(':
 		p.back()
 		x := int64(p.expr())
-		if x >= 32 {
-			p.errorf("register shift count too large: %s", str)
+		if p.arch.Family == sys.ARM64 {
+			if x >= 64 {
+				p.errorf("register shift count too large: %s", str)
+			}
+			count = int16((x & 63) << 10)
+		} else {
+			if x >= 32 {
+				p.errorf("register shift count too large: %s", str)
+			}
+			count = int16((x & 31) << 7)
 		}
-		count = int16((x & 31) << 7)
 	default:
 		p.errorf("unexpected %s in register shift", tok.String())
 	}
-	return int64((r1 & 15) | op<<5 | count)
+	if p.arch.Family == sys.ARM64 {
+		return int64(int64(r1&31)<<16 | int64(op)<<22 | int64(uint16(count)))
+	} else {
+		return int64((r1 & 15) | op<<5 | count)
+	}
 }
 
 // symbolReference parses a symbol that is known not to be a register.
@@ -568,16 +585,20 @@ func (p *Parser) symbolReference(a *obj.Addr, name string, prefix rune) {
 		a.Type = obj.TYPE_INDIR
 	}
 	// Weirdness with statics: Might now have "<>".
-	isStatic := 0 // TODO: Really a boolean, but Linklookup wants a "version" integer.
+	isStatic := false
 	if p.peek() == '<' {
-		isStatic = 1
+		isStatic = true
 		p.next()
 		p.get('>')
 	}
 	if p.peek() == '+' || p.peek() == '-' {
 		a.Offset = int64(p.expr())
 	}
-	a.Sym = obj.Linklookup(p.ctxt, name, isStatic)
+	if isStatic {
+		a.Sym = p.ctxt.LookupStatic(name)
+	} else {
+		a.Sym = p.ctxt.Lookup(name)
+	}
 	if p.peek() == scanner.EOF {
 		if prefix == 0 && p.isJump {
 			// Symbols without prefix or suffix are jump labels.
@@ -590,7 +611,7 @@ func (p *Parser) symbolReference(a *obj.Addr, name string, prefix rune) {
 	p.get('(')
 	reg := p.get(scanner.Ident).String()
 	p.get(')')
-	p.setPseudoRegister(a, reg, isStatic != 0, prefix)
+	p.setPseudoRegister(a, reg, isStatic, prefix)
 }
 
 // setPseudoRegister sets the NAME field of addr for a pseudo-register reference such as (SB).

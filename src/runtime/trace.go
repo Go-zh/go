@@ -31,7 +31,7 @@ const (
 	traceEvGCScanStart       = 9  // GC mark termination start [timestamp]
 	traceEvGCScanDone        = 10 // GC mark termination done [timestamp]
 	traceEvGCSweepStart      = 11 // GC sweep start [timestamp, stack id]
-	traceEvGCSweepDone       = 12 // GC sweep done [timestamp]
+	traceEvGCSweepDone       = 12 // GC sweep done [timestamp, swept, reclaimed]
 	traceEvGoCreate          = 13 // goroutine creation [timestamp, new goroutine id, new stack id, stack id]
 	traceEvGoStart           = 14 // goroutine starts running [timestamp, goroutine id, seq]
 	traceEvGoEnd             = 15 // goroutine ends [timestamp]
@@ -764,10 +764,22 @@ func (tab *traceStackTable) newStack(n int) *traceStack {
 	return (*traceStack)(tab.mem.alloc(unsafe.Sizeof(traceStack{}) + uintptr(n)*sys.PtrSize))
 }
 
+// allFrames returns all of the Frames corresponding to pcs.
+func allFrames(pcs []uintptr) []Frame {
+	frames := make([]Frame, 0, len(pcs))
+	ci := CallersFrames(pcs)
+	for {
+		f, more := ci.Next()
+		frames = append(frames, f)
+		if !more {
+			return frames
+		}
+	}
+}
+
 // dump writes all previously cached stacks to trace buffers,
 // releases all memory and resets state.
 func (tab *traceStackTable) dump() {
-	frames := make(map[uintptr]traceFrame)
 	var tmp [(2 + 4*traceStackSize) * traceBytesPerNumber]byte
 	buf := traceFlush(0).ptr()
 	for _, stk := range tab.tab {
@@ -775,11 +787,12 @@ func (tab *traceStackTable) dump() {
 		for ; stk != nil; stk = stk.link.ptr() {
 			tmpbuf := tmp[:0]
 			tmpbuf = traceAppend(tmpbuf, uint64(stk.id))
-			tmpbuf = traceAppend(tmpbuf, uint64(stk.n))
-			for _, pc := range stk.stack() {
+			frames := allFrames(stk.stack())
+			tmpbuf = traceAppend(tmpbuf, uint64(len(frames)))
+			for _, f := range frames {
 				var frame traceFrame
-				frame, buf = traceFrameForPC(buf, frames, pc)
-				tmpbuf = traceAppend(tmpbuf, uint64(pc))
+				frame, buf = traceFrameForPC(buf, f)
+				tmpbuf = traceAppend(tmpbuf, uint64(f.PC))
 				tmpbuf = traceAppend(tmpbuf, uint64(frame.funcID))
 				tmpbuf = traceAppend(tmpbuf, uint64(frame.fileID))
 				tmpbuf = traceAppend(tmpbuf, uint64(frame.line))
@@ -809,26 +822,17 @@ type traceFrame struct {
 	line   uint64
 }
 
-func traceFrameForPC(buf *traceBuf, frames map[uintptr]traceFrame, pc uintptr) (traceFrame, *traceBuf) {
-	if frame, ok := frames[pc]; ok {
-		return frame, buf
-	}
-
+func traceFrameForPC(buf *traceBuf, f Frame) (traceFrame, *traceBuf) {
 	var frame traceFrame
-	f := findfunc(pc)
-	if f == nil {
-		frames[pc] = frame
-		return frame, buf
-	}
 
-	fn := funcname(f)
+	fn := f.Function
 	const maxLen = 1 << 10
 	if len(fn) > maxLen {
 		fn = fn[len(fn)-maxLen:]
 	}
 	frame.funcID, buf = traceString(buf, fn)
-	file, line := funcline(f, pc-sys.PCQuantum)
-	frame.line = uint64(line)
+	frame.line = uint64(f.Line)
+	file := f.File
 	if len(file) > maxLen {
 		file = file[len(file)-maxLen:]
 	}
@@ -928,12 +932,44 @@ func traceGCScanDone() {
 	traceEvent(traceEvGCScanDone, -1)
 }
 
+// traceGCSweepStart prepares to trace a sweep loop. This does not
+// emit any events until traceGCSweepSpan is called.
+//
+// traceGCSweepStart must be paired with traceGCSweepDone and there
+// must be no preemption points between these two calls.
 func traceGCSweepStart() {
-	traceEvent(traceEvGCSweepStart, 1)
+	// Delay the actual GCSweepStart event until the first span
+	// sweep. If we don't sweep anything, don't emit any events.
+	_p_ := getg().m.p.ptr()
+	if _p_.traceSweep {
+		throw("double traceGCSweepStart")
+	}
+	_p_.traceSweep, _p_.traceSwept, _p_.traceReclaimed = true, 0, 0
+}
+
+// traceGCSweepSpan traces the sweep of a single page.
+//
+// This may be called outside a traceGCSweepStart/traceGCSweepDone
+// pair; however, it will not emit any trace events in this case.
+func traceGCSweepSpan(bytesSwept uintptr) {
+	_p_ := getg().m.p.ptr()
+	if _p_.traceSweep {
+		if _p_.traceSwept == 0 {
+			traceEvent(traceEvGCSweepStart, 1)
+		}
+		_p_.traceSwept += bytesSwept
+	}
 }
 
 func traceGCSweepDone() {
-	traceEvent(traceEvGCSweepDone, -1)
+	_p_ := getg().m.p.ptr()
+	if !_p_.traceSweep {
+		throw("missing traceGCSweepStart")
+	}
+	if _p_.traceSwept != 0 {
+		traceEvent(traceEvGCSweepDone, -1, uint64(_p_.traceSwept), uint64(_p_.traceReclaimed))
+	}
+	_p_.traceSweep = false
 }
 
 func traceGCMarkAssistStart() {
@@ -982,7 +1018,7 @@ func traceGoPreempt() {
 	traceEvent(traceEvGoPreempt, 1)
 }
 
-func traceGoPark(traceEv byte, skip int, gp *g) {
+func traceGoPark(traceEv byte, skip int) {
 	if traceEv&traceFutileWakeup != 0 {
 		traceEvent(traceEvFutileWakeup, -1)
 	}

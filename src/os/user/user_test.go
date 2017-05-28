@@ -16,9 +16,6 @@ func checkUser(t *testing.T) {
 }
 
 func TestCurrent(t *testing.T) {
-	if runtime.GOOS == "android" {
-		t.Skipf("skipping on %s", runtime.GOOS)
-	}
 	u, err := Current()
 	if err != nil {
 		t.Fatalf("Current: %v (got %#v)", err, u)
@@ -70,6 +67,9 @@ func TestLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Current: %v", err)
 	}
+	// TODO: Lookup() has a fast path that calls Current() and returns if the
+	// usernames match, so this test does not exercise very much. It would be
+	// good to try and test finding a different user than the current user.
 	got, err := Lookup(want.Username)
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)

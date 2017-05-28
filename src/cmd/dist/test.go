@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +60,7 @@ type tester struct {
 	goroot     string
 	goarch     string
 	gohostarch string
+	goarm      string
 	goos       string
 	gohostos   string
 	cgoEnabled bool
@@ -102,6 +104,7 @@ func (t *tester) run() {
 	t.gohostos = mustEnv("GOHOSTOS")
 	t.goarch = mustEnv("GOARCH")
 	t.gohostarch = mustEnv("GOHOSTARCH")
+	t.goarm = os.Getenv("GOARM")
 	slurp, err := exec.Command("go", "env", "CGO_ENABLED").Output()
 	if err != nil {
 		log.Fatalf("Error running go env CGO_ENABLED: %v", err)
@@ -263,7 +266,7 @@ var (
 
 func (t *tester) registerStdTest(pkg string) {
 	testName := "go_test:" + pkg
-	if t.runRx == nil || t.runRx.MatchString(testName) {
+	if t.runRx == nil || t.runRx.MatchString(testName) == t.runRxWant {
 		stdMatches = append(stdMatches, pkg)
 	}
 	t.tests = append(t.tests, distTest{
@@ -299,7 +302,7 @@ func (t *tester) registerStdTest(pkg string) {
 
 func (t *tester) registerRaceBenchTest(pkg string) {
 	testName := "go_test_bench:" + pkg
-	if t.runRx == nil || t.runRx.MatchString(testName) {
+	if t.runRx == nil || t.runRx.MatchString(testName) == t.runRxWant {
 		benchMatches = append(benchMatches, pkg)
 	}
 	t.tests = append(t.tests, distTest{
@@ -338,16 +341,17 @@ var stdOutErrAreTerminals func() bool
 func (t *tester) registerTests() {
 	if strings.HasSuffix(os.Getenv("GO_BUILDER_NAME"), "-vetall") {
 		// Run vet over std and cmd and call it quits.
-		t.tests = append(t.tests, distTest{
-			name:    "vet/all",
-			heading: "go vet std cmd",
-			fn: func(dt *distTest) error {
-				// This runs vet/all for the current platform.
-				// TODO: on a fast builder or builders, run over all platforms.
-				t.addCmd(dt, "src/cmd/vet/all", "go", "run", "main.go", "-all")
-				return nil
-			},
-		})
+		for k := range cgoEnabled {
+			osarch := k
+			t.tests = append(t.tests, distTest{
+				name:    "vet/" + osarch,
+				heading: "go vet std cmd",
+				fn: func(dt *distTest) error {
+					t.addCmd(dt, "src/cmd/vet/all", "go", "run", "main.go", "-p="+osarch)
+					return nil
+				},
+			})
+		}
 		return
 	}
 
@@ -426,7 +430,7 @@ func (t *tester) registerTests() {
 				cmd := t.addCmd(dt, "src", "go", "test", "-short", t.timeout(300), t.tags(), "runtime", "-cpu=1,2,4")
 				// We set GOMAXPROCS=2 in addition to -cpu=1,2,4 in order to test runtime bootstrap code,
 				// creation of first goroutines and first garbage collections in the parallel setting.
-				cmd.Env = mergeEnvLists([]string{"GOMAXPROCS=2"}, os.Environ())
+				cmd.Env = append(os.Environ(), "GOMAXPROCS=2")
 				return nil
 			},
 		})
@@ -462,7 +466,10 @@ func (t *tester) registerTests() {
 	}
 
 	// Test internal linking of PIE binaries where it is supported.
-	if t.goos == "linux" && t.goarch == "amd64" {
+	if t.goos == "linux" && t.goarch == "amd64" && !isAlpineLinux() {
+		// Issue 18243: We don't have a way to set the default
+		// dynamic linker used in internal linking mode. So
+		// this test is skipped on Alpine.
 		t.tests = append(t.tests, distTest{
 			name:    "pie_internal",
 			heading: "internal linking of -buildmode=pie",
@@ -590,7 +597,13 @@ func (t *tester) registerTests() {
 		t.registerTest("bench_go1", "../test/bench/go1", "go", "test", t.timeout(600), t.runFlag(""))
 	}
 	if t.goos != "android" && !t.iOS() {
-		const nShards = 5
+		// Only start multiple test dir shards on builders,
+		// where they get distributed to multiple machines.
+		// See issue 20141.
+		nShards := 1
+		if os.Getenv("GO_BUILDER_NAME") != "" {
+			nShards = 10
+		}
 		for shard := 0; shard < nShards; shard++ {
 			shard := shard
 			t.tests = append(t.tests, distTest{
@@ -743,6 +756,10 @@ func (t *tester) internalLink() bool {
 	if t.goarch == "arm64" || t.goarch == "mips64" || t.goarch == "mips64le" || t.goarch == "mips" || t.goarch == "mipsle" {
 		return false
 	}
+	if isAlpineLinux() {
+		// Issue 18243.
+		return false
+	}
 	return true
 }
 
@@ -755,7 +772,8 @@ func (t *tester) supportedBuildmode(mode string) bool {
 		}
 		switch pair {
 		case "darwin-386", "darwin-amd64", "darwin-arm", "darwin-arm64",
-			"linux-amd64", "linux-386", "windows-amd64", "windows-386":
+			"linux-amd64", "linux-386", "linux-ppc64le",
+			"windows-amd64", "windows-386":
 			return true
 		}
 		return false
@@ -782,10 +800,16 @@ func (t *tester) supportedBuildmode(mode string) bool {
 			return false
 		}
 
+		if pair == "linux-arm" && t.goarm == "5" {
+			// Skip the plugin tests for now on ARMv5 because it causes a
+			// SIGILL. See https://golang.org/issue/19674
+			return false
+		}
+
 		// linux-arm64 is missing because it causes the external linker
 		// to crash, see https://golang.org/issue/17138
 		switch pair {
-		case "linux-386", "linux-amd64", "linux-arm":
+		case "linux-386", "linux-amd64", "linux-arm", "linux-s390x":
 			return true
 		}
 		return false
@@ -807,10 +831,9 @@ func (t *tester) registerHostTest(name, heading, dir, pkg string) {
 }
 
 func (t *tester) runHostTest(dir, pkg string) error {
-	env := mergeEnvLists([]string{"GOARCH=" + t.gohostarch, "GOOS=" + t.gohostos}, os.Environ())
 	defer os.Remove(filepath.Join(t.goroot, dir, "test.test"))
 	cmd := t.dirCmd(dir, "go", "test", t.tags(), "-c", "-o", "test.test", pkg)
-	cmd.Env = env
+	cmd.Env = append(os.Environ(), "GOARCH="+t.gohostarch, "GOOS="+t.gohostos)
 	if err := cmd.Run(); err != nil {
 		return err
 	}
@@ -818,7 +841,7 @@ func (t *tester) runHostTest(dir, pkg string) error {
 }
 
 func (t *tester) cgoTest(dt *distTest) error {
-	env := mergeEnvLists([]string{"GOTRACEBACK=2"}, os.Environ())
+	env := append(os.Environ(), "GOTRACEBACK=2")
 
 	cmd := t.addCmd(dt, "misc/cgo/test", "go", "test", t.tags(), "-ldflags", "-linkmode=auto", t.runFlag(""))
 	cmd.Env = env
@@ -1053,12 +1076,12 @@ func (t *tester) cgoTestSO(dt *distTest, testpath string) error {
 		if t.goos == "darwin" {
 			s = "DYLD_LIBRARY_PATH"
 		}
-		cmd.Env = mergeEnvLists([]string{s + "=."}, os.Environ())
+		cmd.Env = append(os.Environ(), s+"=.")
 
 		// On FreeBSD 64-bit architectures, the 32-bit linker looks for
 		// different environment variables.
 		if t.goos == "freebsd" && t.gohostarch == "386" {
-			cmd.Env = mergeEnvLists([]string{"LD_32_LIBRARY_PATH=."}, cmd.Env)
+			cmd.Env = append(cmd.Env, "LD_32_LIBRARY_PATH=.")
 		}
 	}
 	return cmd.Run()
@@ -1075,9 +1098,19 @@ func (t *tester) hasBash() bool {
 func (t *tester) raceDetectorSupported() bool {
 	switch t.gohostos {
 	case "linux", "darwin", "freebsd", "windows":
-		return t.cgoEnabled && t.goarch == "amd64" && t.gohostos == t.goos
+		// The race detector doesn't work on Alpine Linux:
+		// golang.org/issue/14481
+		return t.cgoEnabled && t.goarch == "amd64" && t.gohostos == t.goos && !isAlpineLinux()
 	}
 	return false
+}
+
+func isAlpineLinux() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	fi, err := os.Lstat("/etc/alpine-release")
+	return err == nil && fi.Mode().IsRegular()
 }
 
 func (t *tester) runFlag(rx string) string {
@@ -1088,18 +1121,17 @@ func (t *tester) runFlag(rx string) string {
 }
 
 func (t *tester) raceTest(dt *distTest) error {
-	t.addCmd(dt, "src", "go", "test", "-race", "-i", "runtime/race", "flag", "os/exec")
+	t.addCmd(dt, "src", "go", "test", "-race", "-i", "runtime/race", "flag", "os", "os/exec")
 	t.addCmd(dt, "src", "go", "test", "-race", t.runFlag("Output"), "runtime/race")
-	t.addCmd(dt, "src", "go", "test", "-race", "-short", t.runFlag("TestParse|TestEcho|TestStdinCloseRace"), "flag", "os/exec")
+	t.addCmd(dt, "src", "go", "test", "-race", "-short", t.runFlag("TestParse|TestEcho|TestStdinCloseRace|TestClosedPipeRace"), "flag", "os", "os/exec")
 	// We don't want the following line, because it
 	// slows down all.bash (by 10 seconds on my laptop).
 	// The race builder should catch any error here, but doesn't.
 	// TODO(iant): Figure out how to catch this.
 	// t.addCmd(dt, "src", "go", "test", "-race", "-run=TestParallelTest", "cmd/go")
 	if t.cgoEnabled {
-		env := mergeEnvLists([]string{"GOTRACEBACK=2"}, os.Environ())
 		cmd := t.addCmd(dt, "misc/cgo/test", "go", "test", "-race", "-short", t.runFlag(""))
-		cmd.Env = env
+		cmd.Env = append(os.Environ(), "GOTRACEBACK=2")
 	}
 	if t.extLink() {
 		// Test with external linking; see issue 9133.
@@ -1118,7 +1150,7 @@ func (t *tester) testDirTest(dt *distTest, shard, shards int) error {
 	runtest.Do(func() {
 		const exe = "runtest.exe" // named exe for Windows, but harmless elsewhere
 		cmd := t.dirCmd("test", "go", "build", "-o", exe, "run.go")
-		cmd.Env = mergeEnvLists([]string{"GOOS=" + t.gohostos, "GOARCH=" + t.gohostarch, "GOMAXPROCS="}, os.Environ())
+		cmd.Env = append(os.Environ(), "GOOS="+t.gohostos, "GOARCH="+t.gohostarch)
 		runtest.exe = filepath.Join(cmd.Dir, exe)
 		if err := cmd.Run(); err != nil {
 			runtest.err = err
@@ -1139,24 +1171,6 @@ func (t *tester) testDirTest(dt *distTest, shard, shards int) error {
 		fmt.Sprintf("--shards=%d", shards),
 	)
 	return nil
-}
-
-// mergeEnvLists merges the two environment lists such that
-// variables with the same name in "in" replace those in "out".
-// out may be mutated.
-func mergeEnvLists(in, out []string) []string {
-NextVar:
-	for _, inkv := range in {
-		k := strings.SplitAfterN(inkv, "=", 2)[0]
-		for i, outkv := range out {
-			if strings.HasPrefix(outkv, k) {
-				out[i] = inkv
-				continue NextVar
-			}
-		}
-		out = append(out, inkv)
-	}
-	return out
 }
 
 // cgoPackages is the standard packages that use cgo.

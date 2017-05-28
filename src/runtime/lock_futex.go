@@ -140,9 +140,17 @@ func notesleep(n *note) {
 	if gp != gp.m.g0 {
 		throw("notesleep not on g0")
 	}
+	ns := int64(-1)
+	if *cgo_yield != nil {
+		// Sleep for an arbitrary-but-moderate interval to poll libc interceptors.
+		ns = 10e6
+	}
 	for atomic.Load(key32(&n.key)) == 0 {
 		gp.m.blocked = true
-		futexsleep(key32(&n.key), 0, -1)
+		futexsleep(key32(&n.key), 0, ns)
+		if *cgo_yield != nil {
+			asmcgocall(*cgo_yield, nil)
+		}
 		gp.m.blocked = false
 	}
 }
@@ -156,9 +164,16 @@ func notetsleep_internal(n *note, ns int64) bool {
 	gp := getg()
 
 	if ns < 0 {
+		if *cgo_yield != nil {
+			// Sleep for an arbitrary-but-moderate interval to poll libc interceptors.
+			ns = 10e6
+		}
 		for atomic.Load(key32(&n.key)) == 0 {
 			gp.m.blocked = true
-			futexsleep(key32(&n.key), 0, -1)
+			futexsleep(key32(&n.key), 0, ns)
+			if *cgo_yield != nil {
+				asmcgocall(*cgo_yield, nil)
+			}
 			gp.m.blocked = false
 		}
 		return true
@@ -170,8 +185,14 @@ func notetsleep_internal(n *note, ns int64) bool {
 
 	deadline := nanotime() + ns
 	for {
+		if *cgo_yield != nil && ns > 10e6 {
+			ns = 10e6
+		}
 		gp.m.blocked = true
 		futexsleep(key32(&n.key), 0, ns)
+		if *cgo_yield != nil {
+			asmcgocall(*cgo_yield, nil)
+		}
 		gp.m.blocked = false
 		if atomic.Load(key32(&n.key)) != 0 {
 			break

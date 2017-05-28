@@ -138,7 +138,6 @@ const (
 
 	REG_RESERVED // end of allocated registers
 
-	REGZERO = REG_R0  // set to zero
 	REGARG  = -1      // -1 disables passing the first argument in register
 	REGRT1  = REG_R3  // used during zeroing of the stack - not reserved
 	REGRT2  = REG_R4  // used during zeroing of the stack - not reserved
@@ -159,16 +158,8 @@ const (
 
 const (
 	// mark flags
-	LABEL   = 1 << 0
-	LEAF    = 1 << 1
-	FLOAT   = 1 << 2
-	BRANCH  = 1 << 3
-	LOAD    = 1 << 4
-	FCMP    = 1 << 5
-	SYNC    = 1 << 6
-	LIST    = 1 << 7
-	FOLL    = 1 << 8
-	NOSCHED = 1 << 9
+	LEAF = 1 << iota
+	BRANCH
 )
 
 const ( // comments from func aclass in asmz.go
@@ -298,6 +289,10 @@ const (
 	AFSQRTS
 	AFIEBR
 	AFIDBR
+
+	// move from GPR to FPR and vice versa
+	ALDGR
+	ALGDR
 
 	// convert from int32/int64 to float/float64
 	ACEFBRA

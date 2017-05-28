@@ -166,33 +166,26 @@ import "runtime/internal/sys"
 // program counter, file name, and line number within the file of the corresponding
 // call. The boolean ok is false if it was not possible to recover the information.
 func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
-	// Ask for two PCs: the one we were asked for
-	// and what it called, so that we can see if it
-	// "called" sigpanic.
-	var rpc [2]uintptr
+	// Make room for three PCs: the one we were asked for,
+	// what it called, so that CallersFrames can see if it "called"
+	// sigpanic, and possibly a PC for skipPleaseUseCallersFrames.
+	var rpc [3]uintptr
 	if callers(1+skip-1, rpc[:]) < 2 {
 		return
 	}
-	f := findfunc(rpc[1])
-	if f == nil {
-		// TODO(rsc): Probably a bug?
-		// The C version said "have retpc at least"
-		// but actually returned pc=0.
-		ok = true
+	var stackExpander stackExpander
+	callers := stackExpander.init(rpc[:])
+	// We asked for one extra, so skip that one. If this is sigpanic,
+	// stepping over this frame will set up state in Frames so the
+	// next frame is correct.
+	callers, _, ok = stackExpander.next(callers)
+	if !ok {
 		return
 	}
-	pc = rpc[1]
-	xpc := pc
-	g := findfunc(rpc[0])
-	// All architectures turn faults into apparent calls to sigpanic.
-	// If we see a call to sigpanic, we do not back up the PC to find
-	// the line number of the call instruction, because there is no call.
-	if xpc > f.entry && (g == nil || g.entry != funcPC(sigpanic)) {
-		xpc--
-	}
-	file, line32 := funcline(f, xpc)
-	line = int(line32)
-	ok = true
+	_, frame, _ := stackExpander.next(callers)
+	pc = frame.PC
+	file = frame.File
+	line = frame.Line
 	return
 }
 
@@ -202,11 +195,13 @@ func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
 // 1 identifying the caller of Callers.
 // It returns the number of entries written to pc.
 //
-// Note that since each slice entry pc[i] is a return program counter,
-// looking up the file and line for pc[i] (for example, using (*Func).FileLine)
-// will normally return the file and line number of the instruction immediately
-// following the call.
-// To easily look up file/line information for the call sequence, use Frames.
+// To translate these PCs into symbolic information such as function
+// names and line numbers, use CallersFrames. CallersFrames accounts
+// for inlined functions and adjusts the return program counters into
+// call program counters. Iterating over the returned slice of PCs
+// directly is discouraged, as is using FuncForPC on any of the
+// returned PCs, since these cannot account for inlining or return
+// program counter adjustment.
 func Callers(skip int, pc []uintptr) int {
 	// runtime.callers uses pc.array==nil as a signal
 	// to print a stack trace. Pick off 0-length pc here
@@ -240,5 +235,5 @@ func Version() string {
 const GOOS string = sys.GOOS
 
 // GOARCH is the running program's architecture target:
-// 386, amd64, arm, or s390x.
+// one of 386, amd64, arm, s390x, and so on.
 const GOARCH string = sys.GOARCH

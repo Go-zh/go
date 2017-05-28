@@ -8,15 +8,19 @@
 package dwarf
 
 import (
+	"errors"
 	"fmt"
-	"strings"
 )
 
 // InfoPrefix is the prefix for all the symbols containing DWARF info entries.
 const InfoPrefix = "go.info."
 
+// RangePrefix is the prefix for all the symbols containing DWARF range lists.
+const RangePrefix = "go.range."
+
 // Sym represents a symbol.
 type Sym interface {
+	Len() int64
 }
 
 // A Var represents a local variable or a function parameter.
@@ -24,7 +28,60 @@ type Var struct {
 	Name   string
 	Abbrev int // Either DW_ABRV_AUTO or DW_ABRV_PARAM
 	Offset int32
+	Scope  int32
 	Type   Sym
+}
+
+// A Scope represents a lexical scope. All variables declared within a
+// scope will only be visible to instructions covered by the scope.
+// Lexical scopes are contiguous in source files but can end up being
+// compiled to discontiguous blocks of instructions in the executable.
+// The Ranges field lists all the blocks of instructions that belong
+// in this scope.
+type Scope struct {
+	Parent int32
+	Ranges []Range
+	Vars   []*Var
+}
+
+// A Range represents a half-open interval [Start, End).
+type Range struct {
+	Start, End int64
+}
+
+// UnifyRanges merges the list of ranges of c into the list of ranges of s
+func (s *Scope) UnifyRanges(c *Scope) {
+	out := make([]Range, 0, len(s.Ranges)+len(c.Ranges))
+
+	i, j := 0, 0
+	for {
+		var cur Range
+		if i < len(s.Ranges) && j < len(c.Ranges) {
+			if s.Ranges[i].Start < c.Ranges[j].Start {
+				cur = s.Ranges[i]
+				i++
+			} else {
+				cur = c.Ranges[j]
+				j++
+			}
+		} else if i < len(s.Ranges) {
+			cur = s.Ranges[i]
+			i++
+		} else if j < len(c.Ranges) {
+			cur = c.Ranges[j]
+			j++
+		} else {
+			break
+		}
+
+		if n := len(out); n > 0 && cur.Start <= out[n-1].End {
+			out[n-1].End = cur.End
+		} else {
+			out = append(out, cur)
+		}
+	}
+
+	s.Ranges = out
 }
 
 // A Context specifies how to add data to a Sym.
@@ -71,17 +128,56 @@ func AppendSleb128(b []byte, v int64) []byte {
 	return b
 }
 
-var encbuf [20]byte
+// sevenbits contains all unsigned seven bit numbers, indexed by their value.
+var sevenbits = [...]byte{
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+	0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+	0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+	0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
+	0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
+	0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
+	0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f,
+}
 
-// AppendUleb128 appends v to s using DWARF's unsigned LEB128 encoding.
+// sevenBitU returns the unsigned LEB128 encoding of v if v is seven bits and nil otherwise.
+// The contents of the returned slice must not be modified.
+func sevenBitU(v int64) []byte {
+	if uint64(v) < uint64(len(sevenbits)) {
+		return sevenbits[v : v+1]
+	}
+	return nil
+}
+
+// sevenBitS returns the signed LEB128 encoding of v if v is seven bits and nil otherwise.
+// The contents of the returned slice must not be modified.
+func sevenBitS(v int64) []byte {
+	if uint64(v) <= 63 {
+		return sevenbits[v : v+1]
+	}
+	if uint64(-v) <= 64 {
+		return sevenbits[128+v : 128+v+1]
+	}
+	return nil
+}
+
+// Uleb128put appends v to s using DWARF's unsigned LEB128 encoding.
 func Uleb128put(ctxt Context, s Sym, v int64) {
-	b := AppendUleb128(encbuf[:0], uint64(v))
+	b := sevenBitU(v)
+	if b == nil {
+		var encbuf [20]byte
+		b = AppendUleb128(encbuf[:0], uint64(v))
+	}
 	ctxt.AddBytes(s, b)
 }
 
-// AppendUleb128 appends v to s using DWARF's signed LEB128 encoding.
+// Sleb128put appends v to s using DWARF's signed LEB128 encoding.
 func Sleb128put(ctxt Context, s Sym, v int64) {
-	b := AppendSleb128(encbuf[:0], v)
+	b := sevenBitS(v)
+	if b == nil {
+		var encbuf [20]byte
+		b = AppendSleb128(encbuf[:0], v)
+	}
 	ctxt.AddBytes(s, b)
 }
 
@@ -101,6 +197,9 @@ const (
 	DW_AT_go_kind = 0x2900
 	DW_AT_go_key  = 0x2901
 	DW_AT_go_elem = 0x2902
+	// Attribute for DW_TAG_member of a struct type.
+	// Nonzero value indicates the struct field is an embedded field.
+	DW_AT_go_embedded_field = 0x2903
 
 	DW_AT_internal_location = 253 // params and locals; not emitted
 )
@@ -115,6 +214,8 @@ const (
 	DW_ABRV_VARIABLE
 	DW_ABRV_AUTO
 	DW_ABRV_PARAM
+	DW_ABRV_LEXICAL_BLOCK_RANGES
+	DW_ABRV_LEXICAL_BLOCK_SIMPLE
 	DW_ABRV_STRUCTFIELD
 	DW_ABRV_FUNCTYPEPARAM
 	DW_ABRV_DOTDOTDOT
@@ -154,8 +255,9 @@ var abbrevs = [DW_NABRV]dwAbbrev{
 			{DW_AT_language, DW_FORM_data1},
 			{DW_AT_low_pc, DW_FORM_addr},
 			{DW_AT_high_pc, DW_FORM_addr},
-			{DW_AT_stmt_list, DW_FORM_data4},
+			{DW_AT_stmt_list, DW_FORM_sec_offset},
 			{DW_AT_comp_dir, DW_FORM_string},
+			{DW_AT_producer, DW_FORM_string},
 		},
 	},
 
@@ -167,6 +269,7 @@ var abbrevs = [DW_NABRV]dwAbbrev{
 			{DW_AT_name, DW_FORM_string},
 			{DW_AT_low_pc, DW_FORM_addr},
 			{DW_AT_high_pc, DW_FORM_addr},
+			{DW_AT_frame_base, DW_FORM_block1},
 			{DW_AT_external, DW_FORM_flag},
 		},
 	},
@@ -204,6 +307,24 @@ var abbrevs = [DW_NABRV]dwAbbrev{
 			{DW_AT_type, DW_FORM_ref_addr},
 		},
 	},
+	/* LEXICAL_BLOCK_RANGES */
+	{
+		DW_TAG_lexical_block,
+		DW_CHILDREN_yes,
+		[]dwAttrForm{
+			{DW_AT_ranges, DW_FORM_sec_offset},
+		},
+	},
+
+	/* LEXICAL_BLOCK_SIMPLE */
+	{
+		DW_TAG_lexical_block,
+		DW_CHILDREN_yes,
+		[]dwAttrForm{
+			{DW_AT_low_pc, DW_FORM_addr},
+			{DW_AT_high_pc, DW_FORM_addr},
+		},
+	},
 
 	/* STRUCTFIELD */
 	{
@@ -213,6 +334,7 @@ var abbrevs = [DW_NABRV]dwAbbrev{
 			{DW_AT_name, DW_FORM_string},
 			{DW_AT_data_member_location, DW_FORM_block1},
 			{DW_AT_type, DW_FORM_ref_addr},
+			{DW_AT_go_embedded_field, DW_FORM_flag},
 		},
 	},
 
@@ -399,7 +521,6 @@ func GetAbbrev() []byte {
 	for i := 1; i < DW_NABRV; i++ {
 		// See section 7.5.3
 		buf = AppendUleb128(buf, uint64(i))
-
 		buf = AppendUleb128(buf, uint64(abbrevs[i].tag))
 		buf = append(buf, byte(abbrevs[i].children))
 		for _, f := range abbrevs[i].attr {
@@ -483,8 +604,8 @@ func putattr(ctxt Context, s Sym, abbrev int, form int, cls int, value int64, da
 		ctxt.AddInt(s, 2, value)
 
 	case DW_FORM_data4: // constant, {line,loclist,mac,rangelist}ptr
-		if cls == DW_CLS_PTR { // DW_AT_stmt_list
-			ctxt.AddSectionOffset(s, 4, data, 0)
+		if cls == DW_CLS_PTR { // DW_AT_stmt_list and DW_AT_ranges
+			ctxt.AddSectionOffset(s, 4, data, value)
 			break
 		}
 		ctxt.AddInt(s, 4, value)
@@ -513,16 +634,15 @@ func putattr(ctxt Context, s Sym, abbrev int, form int, cls int, value int64, da
 			ctxt.AddInt(s, 1, 0)
 		}
 
-	// In DWARF 2 (which is what we claim to generate),
-	// the ref_addr is the same size as a normal address.
-	// In DWARF 3 it is always 32 bits, unless emitting a large
+	// As of DWARF 3 the ref_addr is always 32 bits, unless emitting a large
 	// (> 4 GB of debug info aka "64-bit") unit, which we don't implement.
 	case DW_FORM_ref_addr: // reference to a DIE in the .info section
+		fallthrough
+	case DW_FORM_sec_offset: // offset into a DWARF section other than .info
 		if data == nil {
 			return fmt.Errorf("dwarf: null reference in %d", abbrev)
-		} else {
-			ctxt.AddSectionOffset(s, ctxt.PtrSize(), data, 0)
 		}
+		ctxt.AddSectionOffset(s, 4, data, value)
 
 	case DW_FORM_ref1, // reference within the compilation unit
 		DW_FORM_ref2,      // reference
@@ -564,42 +684,78 @@ func HasChildren(die *DWDie) bool {
 
 // PutFunc writes a DIE for a function to s.
 // It also writes child DIEs for each variable in vars.
-func PutFunc(ctxt Context, s Sym, name string, external bool, startPC Sym, size int64, vars []*Var) {
+func PutFunc(ctxt Context, s, ranges Sym, name string, external bool, startPC Sym, size int64, scopes []Scope) error {
 	Uleb128put(ctxt, s, DW_ABRV_FUNCTION)
 	putattr(ctxt, s, DW_ABRV_FUNCTION, DW_FORM_string, DW_CLS_STRING, int64(len(name)), name)
 	putattr(ctxt, s, DW_ABRV_FUNCTION, DW_FORM_addr, DW_CLS_ADDRESS, 0, startPC)
-	putattr(ctxt, s, DW_ABRV_FUNCTION, DW_FORM_addr, DW_CLS_ADDRESS, size+ctxt.SymValue(startPC), startPC)
+	putattr(ctxt, s, DW_ABRV_FUNCTION, DW_FORM_addr, DW_CLS_ADDRESS, size, startPC)
+	putattr(ctxt, s, DW_ABRV_FUNCTION, DW_FORM_block1, DW_CLS_BLOCK, 1, []byte{DW_OP_call_frame_cfa})
 	var ev int64
 	if external {
 		ev = 1
 	}
 	putattr(ctxt, s, DW_ABRV_FUNCTION, DW_FORM_flag, DW_CLS_FLAG, ev, 0)
-	names := make(map[string]bool)
-	for _, v := range vars {
-		if strings.Contains(v.Name, ".autotmp_") {
-			continue
+	if len(scopes) > 0 {
+		var encbuf [20]byte
+		if putscope(ctxt, s, ranges, startPC, 0, scopes, encbuf[:0]) < int32(len(scopes)) {
+			return errors.New("multiple toplevel scopes")
 		}
-		var n string
-		if names[v.Name] {
-			n = fmt.Sprintf("%s#%d", v.Name, len(names))
-		} else {
-			n = v.Name
-		}
-		names[n] = true
-
-		Uleb128put(ctxt, s, int64(v.Abbrev))
-		putattr(ctxt, s, v.Abbrev, DW_FORM_string, DW_CLS_STRING, int64(len(n)), n)
-		loc := append(encbuf[:0], DW_OP_call_frame_cfa)
-		if v.Offset != 0 {
-			loc = append(loc, DW_OP_consts)
-			loc = AppendSleb128(loc, int64(v.Offset))
-			loc = append(loc, DW_OP_plus)
-		}
-		putattr(ctxt, s, v.Abbrev, DW_FORM_block1, DW_CLS_BLOCK, int64(len(loc)), loc)
-		putattr(ctxt, s, v.Abbrev, DW_FORM_ref_addr, DW_CLS_REFERENCE, 0, v.Type)
-
 	}
+
 	Uleb128put(ctxt, s, 0)
+	return nil
+}
+
+func putscope(ctxt Context, s, ranges Sym, startPC Sym, curscope int32, scopes []Scope, encbuf []byte) int32 {
+	for _, v := range scopes[curscope].Vars {
+		putvar(ctxt, s, v, encbuf)
+	}
+	this := curscope
+	curscope++
+	for curscope < int32(len(scopes)) {
+		scope := scopes[curscope]
+		if scope.Parent != this {
+			return curscope
+		}
+
+		if len(scope.Ranges) == 1 {
+			Uleb128put(ctxt, s, DW_ABRV_LEXICAL_BLOCK_SIMPLE)
+			putattr(ctxt, s, DW_ABRV_LEXICAL_BLOCK_SIMPLE, DW_FORM_addr, DW_CLS_ADDRESS, scope.Ranges[0].Start, startPC)
+			putattr(ctxt, s, DW_ABRV_LEXICAL_BLOCK_SIMPLE, DW_FORM_addr, DW_CLS_ADDRESS, scope.Ranges[0].End, startPC)
+		} else {
+			Uleb128put(ctxt, s, DW_ABRV_LEXICAL_BLOCK_RANGES)
+			putattr(ctxt, s, DW_ABRV_LEXICAL_BLOCK_RANGES, DW_FORM_sec_offset, DW_CLS_PTR, ranges.Len(), ranges)
+
+			ctxt.AddAddress(ranges, nil, -1)
+			ctxt.AddAddress(ranges, startPC, 0)
+			for _, r := range scope.Ranges {
+				ctxt.AddAddress(ranges, nil, r.Start)
+				ctxt.AddAddress(ranges, nil, r.End)
+			}
+			ctxt.AddAddress(ranges, nil, 0)
+			ctxt.AddAddress(ranges, nil, 0)
+		}
+
+		curscope = putscope(ctxt, s, ranges, startPC, curscope, scopes, encbuf)
+
+		Uleb128put(ctxt, s, 0)
+	}
+	return curscope
+}
+
+func putvar(ctxt Context, s Sym, v *Var, encbuf []byte) {
+	n := v.Name
+
+	Uleb128put(ctxt, s, int64(v.Abbrev))
+	putattr(ctxt, s, v.Abbrev, DW_FORM_string, DW_CLS_STRING, int64(len(n)), n)
+	loc := append(encbuf[:0], DW_OP_call_frame_cfa)
+	if v.Offset != 0 {
+		loc = append(loc, DW_OP_consts)
+		loc = AppendSleb128(loc, int64(v.Offset))
+		loc = append(loc, DW_OP_plus)
+	}
+	putattr(ctxt, s, v.Abbrev, DW_FORM_block1, DW_CLS_BLOCK, int64(len(loc)), loc)
+	putattr(ctxt, s, v.Abbrev, DW_FORM_ref_addr, DW_CLS_REFERENCE, 0, v.Type)
 }
 
 // VarsByOffset attaches the methods of sort.Interface to []*Var,

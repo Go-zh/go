@@ -565,7 +565,7 @@ func dumpmemprof_callback(b *bucket, nstk uintptr, pstk *uintptr, size, allocs, 
 	for i := uintptr(0); i < nstk; i++ {
 		pc := stk[i]
 		f := findfunc(pc)
-		if f == nil {
+		if !f.valid() {
 			var buf [64]byte
 			n := len(buf)
 			n--
@@ -653,7 +653,7 @@ func writeheapdump_m(fd uintptr) {
 	// Update stats so we can dump them.
 	// As a side effect, flushes all the MCaches so the MSpan.freelist
 	// lists contain all the free objects.
-	updatememstats(nil)
+	updatememstats()
 
 	// Set dump file.
 	dumpfd = fd

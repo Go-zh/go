@@ -64,7 +64,9 @@ func newConsoleFile(h syscall.Handle, name string) *File {
 	return newFile(h, name, "console")
 }
 
-// NewFile returns a new File with the given file descriptor and name.
+// NewFile returns a new File with the given file descriptor and
+// name. The returned value will be nil if fd is not a valid file
+// descriptor.
 func NewFile(fd uintptr, name string) *File {
 	h := syscall.Handle(fd)
 	if h == syscall.InvalidHandle {
@@ -179,7 +181,7 @@ func (file *File) Close() error {
 }
 
 func (file *file) close() error {
-	if file == nil || file.pfd.Sysfd == badFd {
+	if file == nil {
 		return syscall.EINVAL
 	}
 	if file.isdir() && file.dirinfo.isempty {
@@ -188,9 +190,11 @@ func (file *file) close() error {
 	}
 	var err error
 	if e := file.pfd.Close(); e != nil {
+		if e == poll.ErrFileClosing {
+			e = ErrClosed
+		}
 		err = &PathError{"close", file.name, e}
 	}
-	file.pfd.Sysfd = badFd // so it can't be closed again
 
 	// no need for a finalizer anymore
 	runtime.SetFinalizer(file, nil)
@@ -394,5 +398,3 @@ func Symlink(oldname, newname string) error {
 	}
 	return nil
 }
-
-const badFd = syscall.InvalidHandle

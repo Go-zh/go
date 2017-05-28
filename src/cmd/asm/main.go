@@ -18,13 +18,14 @@ import (
 
 	"cmd/internal/bio"
 	"cmd/internal/obj"
+	"cmd/internal/objabi"
 )
 
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix("asm: ")
 
-	GOARCH := obj.GOARCH
+	GOARCH := objabi.GOARCH
 
 	architecture := arch.Set(GOARCH)
 	if architecture == nil {
@@ -35,12 +36,14 @@ func main() {
 
 	ctxt := obj.Linknew(architecture.LinkArch)
 	if *flags.PrintOut {
-		ctxt.Debugasm = 1
+		ctxt.Debugasm = true
 	}
 	ctxt.Flag_dynlink = *flags.Dynlink
 	ctxt.Flag_shared = *flags.Shared || *flags.Dynlink
 	ctxt.Bso = bufio.NewWriter(os.Stdout)
 	defer ctxt.Bso.Flush()
+
+	architecture.Init(ctxt)
 
 	// Create object file, write header.
 	out, err := os.Create(*flags.OutputFile)
@@ -50,7 +53,7 @@ func main() {
 	defer bio.MustClose(out)
 	buf := bufio.NewWriter(bio.MustWriter(out))
 
-	fmt.Fprintf(buf, "go object %s %s %s\n", obj.GOOS, obj.GOARCH, obj.Version)
+	fmt.Fprintf(buf, "go object %s %s %s\n", objabi.GOOS, objabi.GOARCH, objabi.Version)
 	fmt.Fprintf(buf, "!\n")
 
 	var ok, diag bool
@@ -62,16 +65,17 @@ func main() {
 			diag = true
 			log.Printf(format, args...)
 		}
-		pList := obj.Linknewplist(ctxt)
+		pList := new(obj.Plist)
 		pList.Firstpc, ok = parser.Parse()
 		if !ok {
 			failedFile = f
 			break
 		}
+		// reports errors to parser.Errorf
+		obj.Flushplist(ctxt, pList, nil)
 	}
 	if ok {
-		// reports errors to parser.Errorf
-		obj.Writeobjdirect(ctxt, buf)
+		obj.WriteObjFile(ctxt, buf)
 	}
 	if !ok || diag {
 		if failedFile != "" {

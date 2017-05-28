@@ -19,8 +19,35 @@ TEXT ·mulWW(SB), NOSPLIT, $0
 	MOVD   R7, z0+24(FP)
 	RET
 
+// func addVV(z, y, y []Word) (c Word)
+// z[i] = x[i] + y[i] for all i, carrying
 TEXT ·addVV(SB), NOSPLIT, $0
-	BR ·addVV_g(SB)
+	MOVD  z_len+8(FP), R7
+	MOVD  x+24(FP), R8
+	MOVD  y+48(FP), R9
+	MOVD  z+0(FP), R10
+
+	MOVD  R0, R4
+	MOVD  R0, R6  // R6 will be the address index
+	ADDC R4, R4   // clear CA
+	MOVD  R7, CTR
+
+	CMP   R0, R7
+	BEQ   done
+
+loop:
+	MOVD  (R8)(R6), R11   // x[i]
+	MOVD  (R9)(R6), R12   // y[i]
+	ADDE  R12, R11, R15   // x[i] + y[i] + CA
+	MOVD  R15, (R10)(R6)  // z[i]
+
+	ADD $8, R6
+	BC  16, 0, loop	// bdnz
+
+done:
+	ADDZE R4
+	MOVD  R4, c+72(FP)
+	RET
 
 // func subVV(z, x, y []Word) (c Word)
 // z[i] = x[i] - y[i] for all i, carrying
@@ -30,32 +57,30 @@ TEXT ·subVV(SB), NOSPLIT, $0
 	MOVD y+48(FP), R9
 	MOVD z+0(FP), R10
 
-	MOVD $0, R4  // c = 0
-	MOVD $0, R5  // i = 0
-	MOVD $1, R29 // work around lack of ADDI
-	MOVD $8, R28 // work around lack of scaled addressing
-
+	MOVD  R0, R4  // c = 0
+	MOVD  R0, R6
 	SUBC R0, R0  // clear CA
-	JMP  sublend
+	MOVD  R7, CTR
+
+	CMP R0, R7
+	BEQ  sublend
 
 // amd64 saves and restores CF, but I believe they only have to do that because all of
 // their math operations clobber it - we should just be able to recover it at the end.
 subloop:
-	MULLD R5, R28, R6
 	MOVD  (R8)(R6), R11 // x[i]
 	MOVD  (R9)(R6), R12 // y[i]
 
 	SUBE R12, R11, R15
 	MOVD R15, (R10)(R6)
 
-	ADD R29, R5 // i++
+	ADD $8, R6
+	BC  16, 0, subloop  // bdnz
 
 sublend:
-	CMP R5, R7
-	BLT subloop
 
 	ADDZE R4
-	XOR   R29, R4
+	XOR   $1, R4
 	MOVD  R4, c+72(FP)
 	RET
 
@@ -173,14 +198,44 @@ end:
 	MOVD R4, c+56(FP)
 	RET
 
+// func divWW(x1, x0, y Word) (q, r Word)
+TEXT ·divWW(SB), NOSPLIT, $0
+	MOVD x1+0(FP), R4
+	MOVD x0+8(FP), R5
+	MOVD y+16(FP), R6
+
+	CMPU R4, R6
+	BGE  divbigger
+
+	// from the programmer's note in ch. 3 of the ISA manual, p.74
+	DIVDEU R6, R4, R3
+	DIVDU  R6, R5, R7
+	MULLD  R6, R3, R8
+	MULLD  R6, R7, R20
+	SUB    R20, R5, R10
+	ADD    R7, R3, R3
+	SUB    R8, R10, R4
+	CMPU   R4, R10
+	BLT    adjust
+	CMPU   R4, R6
+	BLT    end
+
+adjust:
+	MOVD $1, R21
+	ADD  R21, R3, R3
+	SUB  R6, R4, R4
+
+end:
+	MOVD R3, q+24(FP)
+	MOVD R4, r+32(FP)
+
+	RET
+
+divbigger:
+	MOVD $-1, R7
+	MOVD R7, q+24(FP)
+	MOVD R7, r+32(FP)
+	RET
+
 TEXT ·divWVW(SB), NOSPLIT, $0
 	BR ·divWVW_g(SB)
-
-// func bitLen(x Word) int
-TEXT ·bitLen(SB), NOSPLIT, $0
-	MOVD   x+0(FP), R4
-	CNTLZD R4, R4
-	MOVD   $64, R5
-	SUB    R4, R5
-	MOVD   R5, n+8(FP)
-	RET

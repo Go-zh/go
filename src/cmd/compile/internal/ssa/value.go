@@ -5,6 +5,7 @@
 package ssa
 
 import (
+	"cmd/compile/internal/types"
 	"cmd/internal/obj"
 	"cmd/internal/src"
 	"fmt"
@@ -24,7 +25,7 @@ type Value struct {
 
 	// The type of this value. Normally this will be a Go type, but there
 	// are a few other pseudo-types, see type.go.
-	Type Type
+	Type *types.Type
 
 	// Auxiliary info for this value. The type of this information depends on the opcode and type.
 	// AuxInt is used for integer values, Aux is used for other values.
@@ -128,17 +129,15 @@ func (v *Value) auxString() string {
 		return fmt.Sprintf(" [%d]", v.AuxInt32())
 	case auxInt64, auxInt128:
 		return fmt.Sprintf(" [%d]", v.AuxInt)
-	case auxSizeAndAlign:
-		return fmt.Sprintf(" [%s]", SizeAndAlign(v.AuxInt))
 	case auxFloat32, auxFloat64:
 		return fmt.Sprintf(" [%g]", v.AuxFloat())
 	case auxString:
 		return fmt.Sprintf(" {%q}", v.Aux)
-	case auxSym:
+	case auxSym, auxTyp:
 		if v.Aux != nil {
 			return fmt.Sprintf(" {%v}", v.Aux)
 		}
-	case auxSymOff, auxSymInt32:
+	case auxSymOff, auxSymInt32, auxTypSize:
 		s := ""
 		if v.Aux != nil {
 			s = fmt.Sprintf(" {%v}", v.Aux)
@@ -153,12 +152,6 @@ func (v *Value) auxString() string {
 			s = fmt.Sprintf(" {%v}", v.Aux)
 		}
 		return s + fmt.Sprintf(" [%s]", v.AuxValAndOff())
-	case auxSymSizeAndAlign:
-		s := ""
-		if v.Aux != nil {
-			s = fmt.Sprintf(" {%v}", v.Aux)
-		}
-		return s + fmt.Sprintf(" [%s]", SizeAndAlign(v.AuxInt))
 	}
 	return ""
 }
@@ -219,7 +212,23 @@ func (v *Value) reset(op Op) {
 
 // copyInto makes a new value identical to v and adds it to the end of b.
 func (v *Value) copyInto(b *Block) *Value {
-	c := b.NewValue0(v.Pos, v.Op, v.Type)
+	c := b.NewValue0(v.Pos, v.Op, v.Type) // Lose the position, this causes line number churn otherwise.
+	c.Aux = v.Aux
+	c.AuxInt = v.AuxInt
+	c.AddArgs(v.Args...)
+	for _, a := range v.Args {
+		if a.Type.IsMemory() {
+			v.Fatalf("can't move a value with a memory arg %s", v.LongString())
+		}
+	}
+	return c
+}
+
+// copyIntoNoXPos makes a new value identical to v and adds it to the end of b.
+// The copied value receives no source code position to avoid confusing changes
+// in debugger information (the intended user is the register allocator).
+func (v *Value) copyIntoNoXPos(b *Block) *Value {
+	c := b.NewValue0(src.NoXPos, v.Op, v.Type) // Lose the position, this causes line number churn otherwise.
 	c.Aux = v.Aux
 	c.AuxInt = v.AuxInt
 	c.AddArgs(v.Args...)
@@ -234,7 +243,7 @@ func (v *Value) copyInto(b *Block) *Value {
 func (v *Value) Logf(msg string, args ...interface{}) { v.Block.Logf(msg, args...) }
 func (v *Value) Log() bool                            { return v.Block.Log() }
 func (v *Value) Fatalf(msg string, args ...interface{}) {
-	v.Block.Func.Config.Fatalf(v.Pos, msg, args...)
+	v.Block.Func.fe.Fatalf(v.Pos, msg, args...)
 }
 
 // isGenericIntConst returns whether v is a generic integer constant.
@@ -245,7 +254,6 @@ func (v *Value) isGenericIntConst() bool {
 // ExternSymbol is an aux value that encodes a variable's
 // constant offset from the static base pointer.
 type ExternSymbol struct {
-	Typ Type // Go type
 	Sym *obj.LSym
 	// Note: the offset for an external symbol is not
 	// calculated until link time.
@@ -254,14 +262,12 @@ type ExternSymbol struct {
 // ArgSymbol is an aux value that encodes an argument or result
 // variable's constant offset from FP (FP = SP + framesize).
 type ArgSymbol struct {
-	Typ  Type   // Go type
 	Node GCNode // A *gc.Node referring to the argument/result variable.
 }
 
 // AutoSymbol is an aux value that encodes a local variable's
 // constant offset from SP.
 type AutoSymbol struct {
-	Typ  Type   // Go type
 	Node GCNode // A *gc.Node referring to a local (auto) variable.
 }
 
@@ -310,4 +316,21 @@ func (v *Value) RegName() string {
 		v.Fatalf("nil register for value: %s\n%s\n", v.LongString(), v.Block.Func)
 	}
 	return reg.(*Register).name
+}
+
+// MemoryArg returns the memory argument for the Value.
+// The returned value, if non-nil, will be memory-typed (or a tuple with a memory-typed second part).
+// Otherwise, nil is returned.
+func (v *Value) MemoryArg() *Value {
+	if v.Op == OpPhi {
+		v.Fatalf("MemoryArg on Phi")
+	}
+	na := len(v.Args)
+	if na == 0 {
+		return nil
+	}
+	if m := v.Args[na-1]; m.Type.IsMemory() {
+		return m
+	}
+	return nil
 }

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -172,16 +171,15 @@ func pkgImportPath(pkgpath string) *load.Package {
 }
 
 // When installing packages, the installed package directory should
-// respect the group sticky bit and group name of the destination
+// respect the SetGID bit and group name of the destination
 // directory.
 // See https://golang.org/issue/18878.
-func TestRespectGroupSticky(t *testing.T) {
+func TestRespectSetgidDir(t *testing.T) {
 	if runtime.GOOS == "nacl" {
-		t.Skip("can't set group sticky bit with chmod on nacl")
+		t.Skip("can't set SetGID bit with chmod on nacl")
 	}
 
 	var b Builder
-	b.Init()
 
 	// Check that `cp` is called instead of `mv` by looking at the output
 	// of `(*Builder).ShowCmd` afterwards as a sanity check.
@@ -191,33 +189,39 @@ func TestRespectGroupSticky(t *testing.T) {
 		return cmdBuf.WriteString(fmt.Sprint(a...))
 	}
 
-	stickydir := path.Join(os.TempDir(), "GroupSticky")
-	if err := os.Mkdir(stickydir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(stickydir)
-
-	// Mkdir doesn't always correctly set the group sticky bit.
-	// Change stickydir's permissions to include group sticky bit.
-	if err := os.Chmod(stickydir, 0755|os.ModeSetgid); err != nil {
-		t.Fatal(err)
-	}
-
-	pkgfile, err := ioutil.TempFile(b.WorkDir, "")
+	setgiddir, err := ioutil.TempDir("", "SetGroupID")
 	if err != nil {
-		t.Fatalf("ioutil.TempFile(%q): %v", b.WorkDir, err)
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(setgiddir)
+
+	if runtime.GOOS == "freebsd" {
+		err = os.Chown(setgiddir, os.Getuid(), os.Getgid())
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Change setgiddir's permissions to include the SetGID bit.
+	if err := os.Chmod(setgiddir, 0755|os.ModeSetgid); err != nil {
+		t.Fatal(err)
+	}
+
+	pkgfile, err := ioutil.TempFile("", "pkgfile")
+	if err != nil {
+		t.Fatalf("ioutil.TempFile(\"\", \"pkgfile\"): %v", err)
 	}
 	defer os.Remove(pkgfile.Name())
 	defer pkgfile.Close()
 
-	stickyFile := filepath.Join(stickydir, "sticky")
-	if err := b.moveOrCopyFile(nil, stickyFile, pkgfile.Name(), 0666, true); err != nil {
+	dirGIDFile := filepath.Join(setgiddir, "setgid")
+	if err := b.moveOrCopyFile(nil, dirGIDFile, pkgfile.Name(), 0666, true); err != nil {
 		t.Fatalf("moveOrCopyFile: %v", err)
 	}
 
 	got := strings.TrimSpace(cmdBuf.String())
-	want := b.fmtcmd("", "cp %s %s", pkgfile.Name(), stickyFile)
+	want := b.fmtcmd("", "cp %s %s", pkgfile.Name(), dirGIDFile)
 	if got != want {
-		t.Fatalf("moveOrCopyFile(%q, %q): want %q, got %q", stickyFile, pkgfile.Name(), want, got)
+		t.Fatalf("moveOrCopyFile(%q, %q): want %q, got %q", dirGIDFile, pkgfile.Name(), want, got)
 	}
 }

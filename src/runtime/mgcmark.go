@@ -201,6 +201,11 @@ func markroot(gcw *gcWork, i uint32) {
 		}
 
 	case i == fixedRootFinalizers:
+		// Only do this once per GC cycle since we don't call
+		// queuefinalizer during marking.
+		if work.markrootDone {
+			break
+		}
 		for fb := allfin; fb != nil; fb = fb.alllink {
 			cnt := uintptr(atomic.Load(&fb.cnt))
 			scanblock(uintptr(unsafe.Pointer(&fb.fin[0])), cnt*unsafe.Sizeof(fb.fin[0]), &finptrmask[0], gcw)
@@ -1122,7 +1127,7 @@ func scanobject(b uintptr, gcw *gcWork) {
 			// paths), in which case we must *not* enqueue
 			// oblets since their bitmaps will be
 			// uninitialized.
-			if !hbits.hasPointers(n) {
+			if s.spanclass.noscan() {
 				// Bypass the whole scan.
 				gcw.bytesMarked += uint64(n)
 				return
@@ -1225,6 +1230,7 @@ func greyobject(obj, base, off uintptr, hbits heapBits, span *mspan, gcw *gcWork
 			// Dump the object
 			gcDumpObject("obj", obj, ^uintptr(0))
 
+			getg().m.traceback = 2
 			throw("checkmark found unmarked object")
 		}
 		if hbits.isCheckmarked(span.elemsize) {
@@ -1239,6 +1245,7 @@ func greyobject(obj, base, off uintptr, hbits heapBits, span *mspan, gcw *gcWork
 			print("runtime: marking free object ", hex(obj), " found at *(", hex(base), "+", hex(off), ")\n")
 			gcDumpObject("base", base, off)
 			gcDumpObject("obj", obj, ^uintptr(0))
+			getg().m.traceback = 2
 			throw("marking free object")
 		}
 
@@ -1250,7 +1257,7 @@ func greyobject(obj, base, off uintptr, hbits heapBits, span *mspan, gcw *gcWork
 		atomic.Or8(mbits.bytep, mbits.mask)
 		// If this is a noscan object, fast-track it to black
 		// instead of greying it.
-		if !hbits.hasPointers(span.elemsize) {
+		if span.spanclass.noscan() {
 			gcw.bytesMarked += uint64(span.elemsize)
 			return
 		}
@@ -1283,7 +1290,7 @@ func gcDumpObject(label string, obj, off uintptr) {
 		print(" s=nil\n")
 		return
 	}
-	print(" s.base()=", hex(s.base()), " s.limit=", hex(s.limit), " s.sizeclass=", s.sizeclass, " s.elemsize=", s.elemsize, " s.state=")
+	print(" s.base()=", hex(s.base()), " s.limit=", hex(s.limit), " s.spanclass=", s.spanclass, " s.elemsize=", s.elemsize, " s.state=")
 	if 0 <= s.state && int(s.state) < len(mSpanStateNames) {
 		print(mSpanStateNames[s.state], "\n")
 	} else {
@@ -1292,7 +1299,7 @@ func gcDumpObject(label string, obj, off uintptr) {
 
 	skipped := false
 	size := s.elemsize
-	if s.state == _MSpanStack && size == 0 {
+	if s.state == _MSpanManual && size == 0 {
 		// We're printing something from a stack frame. We
 		// don't know how big it is, so just show up to an
 		// including off.

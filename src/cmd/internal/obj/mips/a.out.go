@@ -29,7 +29,9 @@
 
 package mips
 
-import "cmd/internal/obj"
+import (
+	"cmd/internal/obj"
+)
 
 //go:generate go run ../stringer.go -i $GOFILE -o anames.go -p mips
 
@@ -218,11 +220,6 @@ const (
 )
 
 const (
-	Mips32 = 32
-	Mips64 = 64
-)
-
-const (
 	C_NONE = iota
 	C_REG
 	C_FREG
@@ -302,6 +299,7 @@ const (
 	ADIVW
 	AGOK
 	ALL
+	ALLV
 	ALUI
 	AMOVB
 	AMOVBU
@@ -326,12 +324,14 @@ const (
 	ANEGD
 	ANEGF
 	ANEGW
+	ANOOP // hardware nop
 	ANOR
 	AOR
 	AREM
 	AREMU
 	ARFE
 	ASC
+	ASCV
 	ASGT
 	ASGTU
 	ASLL

@@ -158,14 +158,16 @@ type Context interface {
 	// 更多如何使用 Done 的例子请参阅：https://blog.golang.org/pipelines 。
 	Done() <-chan struct{}
 
-	// Err returns a non-nil error value after Done is closed. Err returns
-	// Canceled if the context was canceled or DeadlineExceeded if the
-	// context's deadline passed. No other values for Err are defined.
-	// After Done is closed, successive calls to Err return the same value.
-
-	// 在 Done 返回的 channel 被关闭后，Err 会返回一个非 nil 的错误。如果 context 被
-	// 取消那么会返回 Canceled 。如果 context 超时那么会返回 DeadlineExceeded 。在
-	// 在 Done 返回的 channel 被关闭后，连续调用 Err 会返回相同的结果。
+	// If Done is not yet closed, Err returns nil.
+	// If Done is closed, Err returns a non-nil error explaining why:
+	// Canceled if the context was canceled
+	// or DeadlineExceeded if the context's deadline passed.
+	// After Err returns a non-nil error, successive calls to Err return the same error.
+	//
+	// 若 Done 尚未关闭，Err 返回 nil。
+	// 若 Done 已被关闭，Err 返回一个非 nil 错误来解释原因：
+	// 若上下文被取消则为 Canceled，若上下文已过期则为 DeadlineExceeded。
+	// 在 Err 返回非 nil 值后，对 Err 的后续调用会返回同样的错误。
 	Err() error
 
 	// Value returns the value associated with this context for key, or nil

@@ -5,7 +5,6 @@
 package ld
 
 import (
-	"cmd/internal/obj"
 	"cmd/internal/sys"
 	"sort"
 	"strings"
@@ -302,31 +301,31 @@ func (ctxt *Link) domacho() {
 	// empirically, string table must begin with " \x00".
 	s := ctxt.Syms.Lookup(".machosymstr", 0)
 
-	s.Type = obj.SMACHOSYMSTR
+	s.Type = SMACHOSYMSTR
 	s.Attr |= AttrReachable
 	Adduint8(ctxt, s, ' ')
 	Adduint8(ctxt, s, '\x00')
 
 	s = ctxt.Syms.Lookup(".machosymtab", 0)
-	s.Type = obj.SMACHOSYMTAB
+	s.Type = SMACHOSYMTAB
 	s.Attr |= AttrReachable
 
 	if Linkmode != LinkExternal {
 		s := ctxt.Syms.Lookup(".plt", 0) // will be __symbol_stub
-		s.Type = obj.SMACHOPLT
+		s.Type = SMACHOPLT
 		s.Attr |= AttrReachable
 
 		s = ctxt.Syms.Lookup(".got", 0) // will be __nl_symbol_ptr
-		s.Type = obj.SMACHOGOT
+		s.Type = SMACHOGOT
 		s.Attr |= AttrReachable
 		s.Align = 4
 
 		s = ctxt.Syms.Lookup(".linkedit.plt", 0) // indirect table for .plt
-		s.Type = obj.SMACHOINDIRECTPLT
+		s.Type = SMACHOINDIRECTPLT
 		s.Attr |= AttrReachable
 
 		s = ctxt.Syms.Lookup(".linkedit.got", 0) // indirect table for .got
-		s.Type = obj.SMACHOINDIRECTGOT
+		s.Type = SMACHOINDIRECTGOT
 		s.Attr |= AttrReachable
 	}
 }
@@ -449,7 +448,7 @@ func Asmbmacho(ctxt *Link) {
 			ms.filesize = Segdata.Fileoff + Segdata.Filelen - Segtext.Fileoff
 		} else {
 			ms.filesize = Segdwarf.Fileoff + Segdwarf.Filelen - Segtext.Fileoff
-			ms.vsize = ms.filesize
+			ms.vsize = Segdwarf.Vaddr + Segdwarf.Length - Segtext.Vaddr
 		}
 	}
 
@@ -472,7 +471,7 @@ func Asmbmacho(ctxt *Link) {
 		ms.prot2 = 5
 	}
 
-	for sect := Segtext.Sect; sect != nil; sect = sect.Next {
+	for _, sect := range Segtext.Sections {
 		machoshbits(ctxt, ms, sect, "__TEXT")
 	}
 
@@ -488,7 +487,7 @@ func Asmbmacho(ctxt *Link) {
 		ms.prot2 = 3
 	}
 
-	for sect := Segdata.Sect; sect != nil; sect = sect.Next {
+	for _, sect := range Segdata.Sections {
 		machoshbits(ctxt, ms, sect, "__DATA")
 	}
 
@@ -501,7 +500,7 @@ func Asmbmacho(ctxt *Link) {
 			ms.fileoffset = Segdwarf.Fileoff
 			ms.filesize = Segdwarf.Filelen
 		}
-		for sect := Segdwarf.Sect; sect != nil; sect = sect.Next {
+		for _, sect := range Segdwarf.Sections {
 			machoshbits(ctxt, ms, sect, "__DWARF")
 		}
 	}
@@ -603,7 +602,7 @@ func Asmbmacho(ctxt *Link) {
 }
 
 func symkind(s *Symbol) int {
-	if s.Type == obj.SDYNIMPORT {
+	if s.Type == SDYNIMPORT {
 		return SymKindUndef
 	}
 	if s.Attr.CgoExport() {
@@ -659,7 +658,7 @@ func (x machoscmp) Less(i, j int) bool {
 func machogenasmsym(ctxt *Link) {
 	genasmsym(ctxt, addsym)
 	for _, s := range ctxt.Syms.Allsym {
-		if s.Type == obj.SDYNIMPORT || s.Type == obj.SHOSTOBJ {
+		if s.Type == SDYNIMPORT || s.Type == SHOSTOBJ {
 			if s.Attr.Reachable() {
 				addsym(ctxt, s, "", DataSym, 0, nil)
 			}
@@ -704,7 +703,7 @@ func machoShouldExport(ctxt *Link, s *Symbol) bool {
 	if strings.HasPrefix(s.Name, "go.link.pkghash") {
 		return true
 	}
-	return s.Type >= obj.SELFSECT // only writable sections
+	return s.Type >= SELFSECT // only writable sections
 }
 
 func machosymtab(ctxt *Link) {
@@ -732,7 +731,7 @@ func machosymtab(ctxt *Link) {
 		// replace "·" as ".", because DTrace cannot handle it.
 		Addstring(symstr, strings.Replace(s.Extname, "·", ".", -1))
 
-		if s.Type == obj.SDYNIMPORT || s.Type == obj.SHOSTOBJ {
+		if s.Type == SDYNIMPORT || s.Type == SHOSTOBJ {
 			Adduint8(ctxt, symtab, 0x01)                // type N_EXT, external symbol
 			Adduint8(ctxt, symtab, 0)                   // no section
 			Adduint16(ctxt, symtab, 0)                  // desc
@@ -892,14 +891,14 @@ func Machoemitreloc(ctxt *Link) {
 		Cput(0)
 	}
 
-	machorelocsect(ctxt, Segtext.Sect, ctxt.Textp)
-	for sect := Segtext.Sect.Next; sect != nil; sect = sect.Next {
+	machorelocsect(ctxt, Segtext.Sections[0], ctxt.Textp)
+	for _, sect := range Segtext.Sections[1:] {
 		machorelocsect(ctxt, sect, datap)
 	}
-	for sect := Segdata.Sect; sect != nil; sect = sect.Next {
+	for _, sect := range Segdata.Sections {
 		machorelocsect(ctxt, sect, datap)
 	}
-	for sect := Segdwarf.Sect; sect != nil; sect = sect.Next {
+	for _, sect := range Segdwarf.Sections {
 		machorelocsect(ctxt, sect, dwarfp)
 	}
 }

@@ -127,7 +127,7 @@ func (t *Template) AddParseTree(name string, tree *parse.Tree) (*Template, error
 	// Even if nt == t, we need to install it in the common.tmpl map.
 	if replace, err := t.associate(nt, tree); err != nil {
 		return nil, err
-	} else if replace {
+	} else if replace || nt.Tree == nil {
 		nt.Tree = tree
 	}
 	return nt, nil
@@ -159,6 +159,7 @@ func (t *Template) Delims(left, right string) *Template {
 }
 
 // Funcs adds the elements of the argument map to the template's function map.
+// It must be called before the template is parsed.
 // It panics if a value in the map is not a function with appropriate return
 // type or if the name cannot be used syntactically as a function in a template.
 // It is legal to overwrite elements of the map. The return value is the template,
@@ -215,7 +216,7 @@ func (t *Template) associate(new *Template, tree *parse.Tree) (bool, error) {
 	if new.common != t.common {
 		panic("internal error: associate not common")
 	}
-	if t.tmpl[new.name] != nil && parse.IsEmptyTree(tree.Root) && t.Tree != nil {
+	if old := t.tmpl[new.name]; old != nil && parse.IsEmptyTree(tree.Root) && old.Tree != nil {
 		// If a template by that name exists,
 		// don't replace it with an empty template.
 		return false, nil

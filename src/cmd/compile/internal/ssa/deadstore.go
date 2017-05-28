@@ -4,7 +4,10 @@
 
 package ssa
 
-import "cmd/internal/src"
+import (
+	"cmd/compile/internal/types"
+	"cmd/internal/src"
+)
 
 // dse does dead-store elimination on the Function.
 // Dead stores are those which are unconditionally followed by
@@ -31,10 +34,6 @@ func dse(f *Func) {
 			}
 			if v.Type.IsMemory() {
 				stores = append(stores, v)
-				if v.Op == OpSelect1 {
-					// Use the args of the tuple-generating op.
-					v = v.Args[0]
-				}
 				for _, a := range v.Args {
 					if a.Block == b && a.Type.IsMemory() {
 						storeUse.add(a.ID)
@@ -64,7 +63,7 @@ func dse(f *Func) {
 				continue
 			}
 			if last != nil {
-				b.Fatalf("two final stores - simultaneous live stores %s %s", last, v)
+				b.Fatalf("two final stores - simultaneous live stores %s %s", last.LongString(), v.LongString())
 			}
 			last = v
 		}
@@ -88,9 +87,9 @@ func dse(f *Func) {
 		if v.Op == OpStore || v.Op == OpZero {
 			var sz int64
 			if v.Op == OpStore {
-				sz = v.AuxInt
+				sz = v.Aux.(*types.Type).Size()
 			} else { // OpZero
-				sz = SizeAndAlign(v.AuxInt).Size()
+				sz = v.AuxInt
 			}
 			if shadowedSize := int64(shadowed.get(v.Args[0].ID)); shadowedSize != -1 && shadowedSize >= sz {
 				// Modify store into a copy

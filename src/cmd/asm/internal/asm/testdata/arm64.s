@@ -6,7 +6,9 @@
 // the old assembler's (7a's) grammar and hand-writing complete
 // instructions for each rule, to guarantee we cover the same space.
 
-TEXT	foo(SB), 7, $-8
+#include "../../../../../runtime/textflag.h"
+
+TEXT	foo(SB), DUPOK|NOSPLIT, $-8
 
 //
 // ADD
@@ -16,7 +18,6 @@ TEXT	foo(SB), 7, $-8
 //		outcode($1, &$2, $4, &$6);
 //	}
 // imsr comes from the old 7a, we only support immediates and registers
-// at the moment, no shifted registers.
 	ADDW	$1, R2, R3
 	ADDW	R1, R2, R3
 	ADDW	R1, ZR, R3
@@ -24,6 +25,10 @@ TEXT	foo(SB), 7, $-8
 	ADD	R1, R2, R3
 	ADD	R1, ZR, R3
 	ADD	$1, R2, R3
+	ADD	R1>>11, R2, R3
+	ADD	R1<<22, R2, R3
+	ADD	R1->33, R2, R3
+	AND	R1@>33, R2, R3
 
 //	LTYPE1 imsr ',' spreg ','
 //	{
@@ -37,6 +42,19 @@ TEXT	foo(SB), 7, $-8
 	ADDW	R1, R2
 	ADD	$1, R2
 	ADD	R1, R2
+	ADD	R1>>11, R2
+	ADD	R1<<22, R2
+	ADD	R1->33, R2
+	AND	R1@>33, R2
+
+// logical ops
+// make sure constants get encoded into an instruction when it could
+	AND	$(1<<63), R1   // AND	$-9223372036854775808, R1 // 21004192
+	AND	$(1<<63-1), R1 // AND	$9223372036854775807, R1  // 21f84092
+	ORR	$(1<<63), R1   // ORR	$-9223372036854775808, R1 // 210041b2
+	ORR	$(1<<63-1), R1 // ORR	$9223372036854775807, R1  // 21f840b2
+	EOR	$(1<<63), R1   // EOR	$-9223372036854775808, R1 // 210041d2
+	EOR	$(1<<63-1), R1 // EOR	$9223372036854775807, R1  // 21f840d2
 
 //
 // CLS
@@ -66,6 +84,60 @@ TEXT	foo(SB), 7, $-8
 	MOVD	$1, ZR
 	MOVD	$1, R1
 	MOVD	ZR, (R1)
+
+	// small offset fits into instructions
+	MOVB	1(R1), R2 // 22048039
+	MOVH	1(R1), R2 // 22108078
+	MOVH	2(R1), R2 // 22048079
+	MOVW	1(R1), R2 // 221080b8
+	MOVW	4(R1), R2 // 220480b9
+	MOVD	1(R1), R2 // 221040f8
+	MOVD	8(R1), R2 // 220440f9
+	FMOVS	1(R1), F2 // 221040bc
+	FMOVS	4(R1), F2 // 220440bd
+	FMOVD	1(R1), F2 // 221040fc
+	FMOVD	8(R1), F2 // 220440fd
+	MOVB	R1, 1(R2) // 41040039
+	MOVH	R1, 1(R2) // 41100078
+	MOVH	R1, 2(R2) // 41040079
+	MOVW	R1, 1(R2) // 411000b8
+	MOVW	R1, 4(R2) // 410400b9
+	MOVD	R1, 1(R2) // 411000f8
+	MOVD	R1, 8(R2) // 410400f9
+	FMOVS	F1, 1(R2) // 411000bc
+	FMOVS	F1, 4(R2) // 410400bd
+	FMOVD	F1, 1(R2) // 411000fc
+	FMOVD	F1, 8(R2) // 410400fd
+
+	// large aligned offset, use two instructions
+	MOVB	0x1001(R1), R2 // MOVB	4097(R1), R2  // 3b04409162078039
+	MOVH	0x2002(R1), R2 // MOVH	8194(R1), R2  // 3b08409162078079
+	MOVW	0x4004(R1), R2 // MOVW	16388(R1), R2 // 3b104091620780b9
+	MOVD	0x8008(R1), R2 // MOVD	32776(R1), R2 // 3b204091620740f9
+	FMOVS	0x4004(R1), F2 // FMOVS	16388(R1), F2 // 3b104091620740bd
+	FMOVD	0x8008(R1), F2 // FMOVD	32776(R1), F2 // 3b204091620740fd
+	MOVB	R1, 0x1001(R2) // MOVB	R1, 4097(R2)  // 5b04409161070039
+	MOVH	R1, 0x2002(R2) // MOVH	R1, 8194(R2)  // 5b08409161070079
+	MOVW	R1, 0x4004(R2) // MOVW	R1, 16388(R2) // 5b104091610700b9
+	MOVD	R1, 0x8008(R2) // MOVD	R1, 32776(R2) // 5b204091610700f9
+	FMOVS	F1, 0x4004(R2) // FMOVS	F1, 16388(R2) // 5b104091610700bd
+	FMOVD	F1, 0x8008(R2) // FMOVD	F1, 32776(R2) // 5b204091610700fd
+
+	// very large or unaligned offset uses constant pool
+	// the encoding cannot be checked as the address of the constant pool is unknown.
+	// here we only test that they can be assembled.
+	MOVB	0x44332211(R1), R2 // MOVB	1144201745(R1), R2
+	MOVH	0x44332211(R1), R2 // MOVH	1144201745(R1), R2
+	MOVW	0x44332211(R1), R2 // MOVW	1144201745(R1), R2
+	MOVD	0x44332211(R1), R2 // MOVD	1144201745(R1), R2
+	FMOVS	0x44332211(R1), F2 // FMOVS	1144201745(R1), F2
+	FMOVD	0x44332211(R1), F2 // FMOVD	1144201745(R1), F2
+	MOVB	R1, 0x44332211(R2) // MOVB	R1, 1144201745(R2)
+	MOVH	R1, 0x44332211(R2) // MOVH	R1, 1144201745(R2)
+	MOVW	R1, 0x44332211(R2) // MOVW	R1, 1144201745(R2)
+	MOVD	R1, 0x44332211(R2) // MOVD	R1, 1144201745(R2)
+	FMOVS	F1, 0x44332211(R2) // FMOVS	F1, 1144201745(R2)
+	FMOVD	F1, 0x44332211(R2) // FMOVD	F1, 1144201745(R2)
 
 //
 // MOVK
@@ -118,7 +190,9 @@ TEXT	foo(SB), 7, $-8
 //	}
 	CMP	$3, R2
 	CMP	R1, R2
-
+	CMP	R1->11, R2
+	CMP	R1>>22, R2
+	CMP	R1<<33, R2
 //
 // CBZ
 //
@@ -136,7 +210,7 @@ again:
 //	{
 //		outcode($1, &$2, NREG, &$4);
 //	}
-	CSET	GT, R1
+	CSET	GT, R1	// e1d79f9a
 //
 // CSEL/CSINC/CSNEG/CSINV
 //
@@ -144,16 +218,18 @@ again:
 //	{
 //		outgcode($1, &$2, $6.reg, &$4, &$8);
 //	}
-	CSEL	LT, R1, R2, ZR
-	CSINC	GT, R1, ZR, R3
-	CSNEG	MI, R1, R2, R3
-	CSINV	CS, R1, R2, R3 // CSINV HS, R1, R2, R3
+	CSEL	LT, R1, R2, ZR	// 3fb0829a
+	CSINC	GT, R1, ZR, R3	// 23c49f9a
+	CSNEG	MI, R1, R2, R3	// 234482da
+	CSINV	CS, R1, R2, R3	// CSINV HS, R1, R2, R3 // 232082da
 
 //		LTYPES cond ',' reg ',' reg
 //	{
 //		outcode($1, &$2, $4.reg, &$6);
 //	}
-	CSEL	LT, R1, R2
+	CINC	EQ, R4, R9	// 8914849a
+	CINV	PL, R11, R22	// 76418bda
+	CNEG	LS, R13, R7	// a7858dda
 //
 // CCMN
 //
@@ -161,7 +237,7 @@ again:
 //	{
 //		outgcode($1, &$2, $6.reg, &$4, &$8);
 //	}
-	CCMN	MI, ZR, R1, $4
+	CCMN	MI, ZR, R1, $4	// e44341ba
 
 //
 // FADDD
@@ -197,7 +273,7 @@ again:
 //	{
 //		outgcode($1, &$2, $6.reg, &$4, &$8);
 //	}
-//	FCCMP	LT, F1, F2, $1
+	FCCMPS	LT, F1, F2, $1	// 41b4211e
 
 //
 // FMULA
@@ -257,6 +333,8 @@ again:
 	B	foo(SB) // JMP foo(SB)
 	BL	foo(SB) // CALL foo(SB)
 	BEQ	2(PC)
+	TBZ	$1, R1, 2(PC)
+	TBNZ	$2, R2, 2(PC)
 	JMP	foo(SB)
 	CALL	foo(SB)
 

@@ -1646,16 +1646,38 @@ var powSC = []float64{
 
 var vfpow10SC = []int{
 	MinInt32,
-	MaxInt32,
-	-325,
+	-324,
+	-323,
+	-50,
+	-22,
+	-1,
+	0,
+	1,
+	22,
+	50,
+	100,
+	200,
+	308,
 	309,
+	MaxInt32,
 }
 
 var pow10SC = []float64{
-	0,      // pow10(MinInt32)
-	Inf(1), // pow10(MaxInt32)
-	0,      // pow10(-325)
-	Inf(1), // pow10(309)
+	0,        // pow10(MinInt32)
+	0,        // pow10(-324)
+	1.0e-323, // pow10(-323)
+	1.0e-50,  // pow10(-50)
+	1.0e-22,  // pow10(-22)
+	1.0e-1,   // pow10(-1)
+	1.0e0,    // pow10(0)
+	1.0e1,    // pow10(1)
+	1.0e22,   // pow10(22)
+	1.0e50,   // pow10(50)
+	1.0e100,  // pow10(100)
+	1.0e200,  // pow10(200)
+	1.0e308,  // pow10(308)
+	Inf(1),   // pow10(309)
+	Inf(1),   // pow10(MaxInt32)
 }
 
 var vfsignbitSC = []float64{
@@ -1742,11 +1764,13 @@ var vfy0SC = []float64{
 	0,
 	Inf(1),
 	NaN(),
+	-1,
 }
 var y0SC = []float64{
 	NaN(),
 	Inf(-1),
 	0,
+	NaN(),
 	NaN(),
 }
 var y1SC = []float64{
@@ -1754,17 +1778,20 @@ var y1SC = []float64{
 	Inf(-1),
 	0,
 	NaN(),
+	NaN(),
 }
 var y2SC = []float64{
 	NaN(),
 	Inf(-1),
 	0,
 	NaN(),
+	NaN(),
 }
 var yM3SC = []float64{
 	NaN(),
 	Inf(1),
 	0,
+	NaN(),
 	NaN(),
 }
 
@@ -2716,6 +2743,9 @@ func TestYn(t *testing.T) {
 			t.Errorf("Yn(-3, %g) = %g, want %g", vfy0SC[i], f, yM3SC[i])
 		}
 	}
+	if f := Yn(0, 0); !alike(Inf(-1), f) {
+		t.Errorf("Yn(0, 0) = %g, want %g", f, Inf(-1))
+	}
 }
 
 // Check that math functions of high angle values
@@ -3171,18 +3201,22 @@ func BenchmarkPowFrac(b *testing.B) {
 	GlobalF = x
 }
 
+var pow10pos = int(300)
+
 func BenchmarkPow10Pos(b *testing.B) {
 	x := 0.0
 	for i := 0; i < b.N; i++ {
-		x = Pow10(300)
+		x = Pow10(pow10pos)
 	}
 	GlobalF = x
 }
 
+var pow10neg = int(-300)
+
 func BenchmarkPow10Neg(b *testing.B) {
 	x := 0.0
 	for i := 0; i < b.N; i++ {
-		x = Pow10(-300)
+		x = Pow10(pow10neg)
 	}
 	GlobalF = x
 }

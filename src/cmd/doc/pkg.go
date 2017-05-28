@@ -281,11 +281,11 @@ func (pkg *Package) oneLineNodeDepth(node ast.Node, depth int) string {
 			}
 		}
 
-		param := strings.Join(params, ", ")
+		param := joinStrings(params)
 		if len(results) == 0 {
 			return fmt.Sprintf("func(%s)", param)
 		}
-		result := strings.Join(results, ", ")
+		result := joinStrings(results)
 		if !needParens {
 			return fmt.Sprintf("func(%s) %s", param, result)
 		}
@@ -338,7 +338,7 @@ func (pkg *Package) oneLineNodeDepth(node ast.Node, depth int) string {
 		for _, arg := range n.Args {
 			args = append(args, pkg.oneLineNodeDepth(arg, depth))
 		}
-		return fmt.Sprintf("%s(%s)", fnc, strings.Join(args, ", "))
+		return fmt.Sprintf("%s(%s)", fnc, joinStrings(args))
 
 	case *ast.UnaryExpr:
 		return fmt.Sprintf("%s%s", n.Op, pkg.oneLineNodeDepth(n.X, depth))
@@ -367,7 +367,21 @@ func (pkg *Package) oneLineField(field *ast.Field, depth int) string {
 	if len(names) == 0 {
 		return pkg.oneLineNodeDepth(field.Type, depth)
 	}
-	return strings.Join(names, ", ") + " " + pkg.oneLineNodeDepth(field.Type, depth)
+	return joinStrings(names) + " " + pkg.oneLineNodeDepth(field.Type, depth)
+}
+
+// joinStrings formats the input as a comma-separated list,
+// but truncates the list at some reasonable length if necessary.
+func joinStrings(ss []string) string {
+	var n int
+	for i, s := range ss {
+		n += len(s) + len(", ")
+		if n > punchedCardWidth {
+			ss = append(ss[:i:i], "...")
+			break
+		}
+	}
+	return strings.Join(ss, ", ")
 }
 
 // packageDoc prints the docs for the package (package doc plus one-liners of the rest).
@@ -776,7 +790,6 @@ func (pkg *Package) printMethodDoc(symbol, method string) bool {
 		inter, ok := spec.Type.(*ast.InterfaceType)
 		if !ok {
 			// Not an interface type.
-			// TODO? Maybe handle struct fields here.
 			continue
 		}
 		for _, iMethod := range inter.Methods.List {
@@ -787,7 +800,6 @@ func (pkg *Package) printMethodDoc(symbol, method string) bool {
 			}
 			name := iMethod.Names[0].Name
 			if match(method, name) {
-				// pkg.oneLineField(iMethod, 0)
 				if iMethod.Doc != nil {
 					for _, comment := range iMethod.Doc.List {
 						doc.ToText(&pkg.buf, comment.Text, "", indent, indentedWidth)
@@ -808,10 +820,66 @@ func (pkg *Package) printMethodDoc(symbol, method string) bool {
 	return found
 }
 
+// printFieldDoc prints the docs for matches of symbol.fieldName.
+// It reports whether it found any field.
+// Both symbol and fieldName must be non-empty or it returns false.
+func (pkg *Package) printFieldDoc(symbol, fieldName string) bool {
+	if symbol == "" || fieldName == "" {
+		return false
+	}
+	defer pkg.flush()
+	types := pkg.findTypes(symbol)
+	if types == nil {
+		pkg.Fatalf("symbol %s is not a type in package %s installed in %q", symbol, pkg.name, pkg.build.ImportPath)
+	}
+	found := false
+	for _, typ := range types {
+		// Type must be a struct.
+		spec := pkg.findTypeSpec(typ.Decl, typ.Name)
+		structType, ok := spec.Type.(*ast.StructType)
+		if !ok {
+			// Not a struct type.
+			continue
+		}
+		for _, field := range structType.Fields.List {
+			// TODO: Anonymous fields.
+			for _, name := range field.Names {
+				if match(fieldName, name.Name) {
+					if !found {
+						pkg.Printf("struct %s {\n", typ.Name)
+					}
+					if field.Doc != nil {
+						for _, comment := range field.Doc.List {
+							doc.ToText(&pkg.buf, comment.Text, indent, indent, indentedWidth)
+						}
+					}
+					s := pkg.oneLineNode(field.Type)
+					lineComment := ""
+					if field.Comment != nil {
+						lineComment = fmt.Sprintf("  %s", field.Comment.List[0].Text)
+					}
+					pkg.Printf("%s%s %s%s\n", indent, name, s, lineComment)
+					found = true
+				}
+			}
+		}
+	}
+	if found {
+		pkg.Printf("}\n")
+	}
+	return found
+}
+
 // methodDoc prints the docs for matches of symbol.method.
 func (pkg *Package) methodDoc(symbol, method string) bool {
 	defer pkg.flush()
 	return pkg.printMethodDoc(symbol, method)
+}
+
+// fieldDoc prints the docs for matches of symbol.field.
+func (pkg *Package) fieldDoc(symbol, field string) bool {
+	defer pkg.flush()
+	return pkg.printFieldDoc(symbol, field)
 }
 
 // match reports whether the user's symbol matches the program's.

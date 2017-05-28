@@ -19,6 +19,7 @@ import (
 
 	"cmd/asm/internal/lex"
 	"cmd/internal/obj"
+	"cmd/internal/objabi"
 )
 
 // An end-to-end test for the assembler: Do we print what we parse?
@@ -28,9 +29,10 @@ import (
 func testEndToEnd(t *testing.T, goarch, file string) {
 	input := filepath.Join("testdata", file+".s")
 	architecture, ctxt := setArch(goarch)
+	architecture.Init(ctxt)
 	lexer := lex.NewLexer(input)
 	parser := NewParser(ctxt, architecture, lexer)
-	pList := obj.Linknewplist(ctxt)
+	pList := new(obj.Plist)
 	var ok bool
 	testOut = new(bytes.Buffer) // The assembler writes test output to this buffer.
 	ctxt.Bso = bufio.NewWriter(os.Stdout)
@@ -60,6 +62,11 @@ func testEndToEnd(t *testing.T, goarch, file string) {
 Diff:
 	for _, line := range lines {
 		lineno++
+
+		// Ignore include of textflag.h.
+		if strings.HasPrefix(line, "#include ") {
+			continue
+		}
 
 		// The general form of a test input line is:
 		//	// comment
@@ -179,7 +186,7 @@ Diff:
 		t.Errorf(format, args...)
 		ok = false
 	}
-	obj.FlushplistNoFree(ctxt)
+	obj.Flushplist(ctxt, pList, nil)
 
 	for p := top; p != nil; p = p.Link {
 		if p.As == obj.ATEXT {
@@ -267,7 +274,7 @@ func testErrors(t *testing.T, goarch, file string) {
 	architecture, ctxt := setArch(goarch)
 	lexer := lex.NewLexer(input)
 	parser := NewParser(ctxt, architecture, lexer)
-	pList := obj.Linknewplist(ctxt)
+	pList := new(obj.Plist)
 	var ok bool
 	testOut = new(bytes.Buffer) // The assembler writes test output to this buffer.
 	ctxt.Bso = bufio.NewWriter(os.Stdout)
@@ -283,7 +290,7 @@ func testErrors(t *testing.T, goarch, file string) {
 		errBuf.WriteString(s)
 	}
 	pList.Firstpc, ok = parser.Parse()
-	obj.Flushplist(ctxt)
+	obj.Flushplist(ctxt, pList, nil)
 	if ok && !failed {
 		t.Errorf("asm: %s had no errors", goarch)
 	}
@@ -299,7 +306,7 @@ func testErrors(t *testing.T, goarch, file string) {
 			continue
 		}
 		fileline := m[1]
-		if errors[fileline] != "" {
+		if errors[fileline] != "" && errors[fileline] != line {
 			t.Errorf("multiple errors on %s:\n\t%s\n\t%s", fileline, errors[fileline], line)
 			continue
 		}
@@ -346,23 +353,28 @@ func testErrors(t *testing.T, goarch, file string) {
 }
 
 func Test386EndToEnd(t *testing.T) {
-	defer os.Setenv("GO386", os.Getenv("GO386"))
-
-	for _, go386 := range []string{"387", "sse"} {
-		os.Setenv("GO386", go386)
-		t.Logf("GO386=%v", os.Getenv("GO386"))
+	defer func(old string) { objabi.GO386 = old }(objabi.GO386)
+	for _, go386 := range []string{"387", "sse2"} {
+		t.Logf("GO386=%v", go386)
+		objabi.GO386 = go386
 		testEndToEnd(t, "386", "386")
 	}
 }
 
 func TestARMEndToEnd(t *testing.T) {
-	defer os.Setenv("GOARM", os.Getenv("GOARM"))
-
-	for _, goarm := range []string{"5", "6", "7"} {
-		os.Setenv("GOARM", goarm)
-		t.Logf("GOARM=%v", os.Getenv("GOARM"))
+	defer func(old int) { objabi.GOARM = old }(objabi.GOARM)
+	for _, goarm := range []int{5, 6, 7} {
+		t.Logf("GOARM=%d", goarm)
+		objabi.GOARM = goarm
 		testEndToEnd(t, "arm", "arm")
+		if goarm == 6 {
+			testEndToEnd(t, "arm", "armv6")
+		}
 	}
+}
+
+func TestARMErrors(t *testing.T) {
+	testErrors(t, "arm", "armerror")
 }
 
 func TestARM64EndToEnd(t *testing.T) {

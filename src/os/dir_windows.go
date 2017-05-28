@@ -17,9 +17,6 @@ func (file *File) readdir(n int) (fi []FileInfo, err error) {
 	if !file.isdir() {
 		return nil, &PathError{"Readdir", file.name, syscall.ENOTDIR}
 	}
-	if !file.dirinfo.isempty && file.pfd.Sysfd == syscall.InvalidHandle {
-		return nil, syscall.EINVAL
-	}
 	wantAll := n <= 0
 	size := n
 	if wantAll {
@@ -59,7 +56,8 @@ func (file *File) readdir(n int) (fi []FileInfo, err error) {
 				FileSizeHigh:   d.FileSizeHigh,
 				FileSizeLow:    d.FileSizeLow,
 			},
-			path: file.dirinfo.path + `\` + name,
+			path:             file.dirinfo.path,
+			appendNameToPath: true,
 		}
 		n--
 		fi = append(fi, f)

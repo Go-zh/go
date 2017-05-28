@@ -138,13 +138,9 @@ func schedule(f *Func) {
 		// the calculated store chain is good only for this block.
 		for _, v := range b.Values {
 			if v.Op != OpPhi && v.Type.IsMemory() {
-				mem := v
-				if v.Op == OpSelect1 {
-					v = v.Args[0]
-				}
 				for _, w := range v.Args {
 					if w.Type.IsMemory() {
-						nextMem[w.ID] = mem
+						nextMem[w.ID] = v
 					}
 				}
 			}
@@ -163,15 +159,15 @@ func schedule(f *Func) {
 					uses[w.ID]++
 				}
 				// Any load must come before the following store.
-				if v.Type.IsMemory() || !w.Type.IsMemory() {
-					continue // not a load
+				if !v.Type.IsMemory() && w.Type.IsMemory() {
+					// v is a load.
+					s := nextMem[w.ID]
+					if s == nil || s.Block != b {
+						continue
+					}
+					additionalArgs[s.ID] = append(additionalArgs[s.ID], v)
+					uses[v.ID]++
 				}
-				s := nextMem[w.ID]
-				if s == nil || s.Block != b {
-					continue
-				}
-				additionalArgs[s.ID] = append(additionalArgs[s.ID], v)
-				uses[v.ID]++
 			}
 		}
 
@@ -314,11 +310,7 @@ func storeOrder(values []*Value, sset *sparseSet, storeNumber []int32) []*Value 
 			if v.Op == OpInitMem || v.Op == OpPhi {
 				continue
 			}
-			a := v.Args[len(v.Args)-1]
-			if v.Op == OpSelect1 {
-				a = a.Args[len(a.Args)-1]
-			}
-			sset.add(a.ID) // record that a is used
+			sset.add(v.MemoryArg().ID) // record that v's memory arg is used
 		}
 		if v.Op == OpNilCheck {
 			hasNilCheck = true
@@ -334,7 +326,7 @@ func storeOrder(values []*Value, sset *sparseSet, storeNumber []int32) []*Value 
 	for _, v := range stores {
 		if !sset.contains(v.ID) {
 			if last != nil {
-				f.Fatalf("two stores live simutaneously: %v and %v", v, last)
+				f.Fatalf("two stores live simultaneously: %v and %v", v, last)
 			}
 			last = v
 		}
@@ -361,10 +353,7 @@ func storeOrder(values []*Value, sset *sparseSet, storeNumber []int32) []*Value 
 			}
 			break
 		}
-		if w.Op == OpSelect1 {
-			w = w.Args[0]
-		}
-		w = w.Args[len(w.Args)-1]
+		w = w.MemoryArg()
 	}
 	var stack []*Value
 	for _, v := range values {
@@ -400,7 +389,7 @@ func storeOrder(values []*Value, sset *sparseSet, storeNumber []int32) []*Value 
 					stack = append(stack, a)
 					sset.add(a.ID)
 					argsdone = false
-					continue
+					break
 				}
 				if storeNumber[a.ID]/3 > max {
 					max = storeNumber[a.ID] / 3

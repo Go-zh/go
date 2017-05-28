@@ -289,9 +289,11 @@ const (
 // It is embedded in other, public struct types, but always
 // with a unique tag like `reflect:"array"` or `reflect:"ptr"`
 // so that code cannot convert from, say, *arrayType to *ptrType.
+//
+// rtype must be kept in sync with ../runtime/type.go:/^type._type.
 type rtype struct {
 	size       uintptr
-	ptrdata    uintptr
+	ptrdata    uintptr  // number of bytes in the type that can contain pointers
 	hash       uint32   // hash of type; avoids computation in hash tables
 	tflag      tflag    // extra type information flags
 	align      uint8    // alignment of variable with this type
@@ -780,18 +782,12 @@ func (t *rtype) pointers() bool { return t.kind&kindNoPointers == 0 }
 
 func (t *rtype) common() *rtype { return t }
 
-var methodCache struct {
-	sync.RWMutex
-	m map[*rtype][]method
-}
+var methodCache sync.Map // map[*rtype][]method
 
 func (t *rtype) exportedMethods() []method {
-	methodCache.RLock()
-	methods, found := methodCache.m[t]
-	methodCache.RUnlock()
-
+	methodsi, found := methodCache.Load(t)
 	if found {
-		return methods
+		return methodsi.([]method)
 	}
 
 	ut := t.uncommon()
@@ -807,6 +803,7 @@ func (t *rtype) exportedMethods() []method {
 			break
 		}
 	}
+	var methods []method
 	if allExported {
 		methods = allm
 	} else {
@@ -820,14 +817,8 @@ func (t *rtype) exportedMethods() []method {
 		methods = methods[:len(methods):len(methods)]
 	}
 
-	methodCache.Lock()
-	if methodCache.m == nil {
-		methodCache.m = make(map[*rtype][]method)
-	}
-	methodCache.m[t] = methods
-	methodCache.Unlock()
-
-	return methods
+	methodsi, _ = methodCache.LoadOrStore(t, methods)
+	return methodsi.([]method)
 }
 
 func (t *rtype) NumMethod() int {
@@ -836,7 +827,7 @@ func (t *rtype) NumMethod() int {
 		return tt.NumMethod()
 	}
 	if t.tflag&tflagUncommon == 0 {
-		return 0 // avoid methodCache lock in zero case
+		return 0 // avoid methodCache synchronization
 	}
 	return len(t.exportedMethods())
 }
@@ -1408,10 +1399,7 @@ func TypeOf(i interface{}) Type {
 }
 
 // ptrMap is the cache for PtrTo.
-var ptrMap struct {
-	sync.RWMutex
-	m map[*rtype]*ptrType
-}
+var ptrMap sync.Map // map[*rtype]*ptrType
 
 // PtrTo returns the pointer type with element t.
 // For example, if t represents type Foo, PtrTo(t) represents *Foo.
@@ -1425,35 +1413,19 @@ func (t *rtype) ptrTo() *rtype {
 	}
 
 	// Check the cache.
-	ptrMap.RLock()
-	if m := ptrMap.m; m != nil {
-		if p := m[t]; p != nil {
-			ptrMap.RUnlock()
-			return &p.rtype
-		}
-	}
-	ptrMap.RUnlock()
-
-	ptrMap.Lock()
-	if ptrMap.m == nil {
-		ptrMap.m = make(map[*rtype]*ptrType)
-	}
-	p := ptrMap.m[t]
-	if p != nil {
-		// some other goroutine won the race and created it
-		ptrMap.Unlock()
-		return &p.rtype
+	if pi, ok := ptrMap.Load(t); ok {
+		return &pi.(*ptrType).rtype
 	}
 
 	// Look in known types.
 	s := "*" + t.String()
 	for _, tt := range typesByString(s) {
-		p = (*ptrType)(unsafe.Pointer(tt))
-		if p.elem == t {
-			ptrMap.m[t] = p
-			ptrMap.Unlock()
-			return &p.rtype
+		p := (*ptrType)(unsafe.Pointer(tt))
+		if p.elem != t {
+			continue
 		}
+		pi, _ := ptrMap.LoadOrStore(t, p)
+		return &pi.(*ptrType).rtype
 	}
 
 	// Create a new ptrType starting with the description
@@ -1474,9 +1446,8 @@ func (t *rtype) ptrTo() *rtype {
 
 	pp.elem = t
 
-	ptrMap.m[t] = &pp
-	ptrMap.Unlock()
-	return &pp.rtype
+	pi, _ := ptrMap.LoadOrStore(t, &pp)
+	return &pi.(*ptrType).rtype
 }
 
 // fnv1 incorporates the list of bytes into the hash x using the FNV-1 hash function.
@@ -1777,10 +1748,7 @@ func typesByString(s string) []*rtype {
 }
 
 // The lookupCache caches ArrayOf, ChanOf, MapOf and SliceOf lookups.
-var lookupCache struct {
-	sync.RWMutex
-	m map[cacheKey]*rtype
-}
+var lookupCache sync.Map // map[cacheKey]*rtype
 
 // A cacheKey is the key for use in the lookupCache.
 // Four values describe any of the types we are looking for:
@@ -1792,47 +1760,15 @@ type cacheKey struct {
 	extra uintptr
 }
 
-// cacheGet looks for a type under the key k in the lookupCache.
-// If it finds one, it returns that type.
-// If not, it returns nil with the cache locked.
-// The caller is expected to use cachePut to unlock the cache.
-func cacheGet(k cacheKey) Type {
-	lookupCache.RLock()
-	t := lookupCache.m[k]
-	lookupCache.RUnlock()
-	if t != nil {
-		return t
-	}
-
-	lookupCache.Lock()
-	t = lookupCache.m[k]
-	if t != nil {
-		lookupCache.Unlock()
-		return t
-	}
-
-	if lookupCache.m == nil {
-		lookupCache.m = make(map[cacheKey]*rtype)
-	}
-
-	return nil
-}
-
-// cachePut stores the given type in the cache, unlocks the cache,
-// and returns the type. It is expected that the cache is locked
-// because cacheGet returned nil.
-func cachePut(k cacheKey, t *rtype) Type {
-	lookupCache.m[k] = t
-	lookupCache.Unlock()
-	return t
-}
-
 // The funcLookupCache caches FuncOf lookups.
 // FuncOf does not share the common lookupCache since cacheKey is not
 // sufficient to represent functions unambiguously.
 var funcLookupCache struct {
-	sync.RWMutex
-	m map[uint32][]*rtype // keyed by hash calculated in FuncOf
+	sync.Mutex // Guards stores (but not loads) on m.
+
+	// m is a map[uint32][]*rtype keyed by the hash calculated in FuncOf.
+	// Elements of m are append-only and thus safe for concurrent reading.
+	m sync.Map
 }
 
 // ChanOf returns the channel type with the given direction and element type.
@@ -1845,13 +1781,12 @@ func ChanOf(dir ChanDir, t Type) Type {
 
 	// Look in cache.
 	ckey := cacheKey{Chan, typ, nil, uintptr(dir)}
-	if ch := cacheGet(ckey); ch != nil {
-		return ch
+	if ch, ok := lookupCache.Load(ckey); ok {
+		return ch.(*rtype)
 	}
 
 	// This restriction is imposed by the gc compiler and the runtime.
 	if typ.size >= 1<<16 {
-		lookupCache.Unlock()
 		panic("reflect.ChanOf: element size too large")
 	}
 
@@ -1860,7 +1795,6 @@ func ChanOf(dir ChanDir, t Type) Type {
 	var s string
 	switch dir {
 	default:
-		lookupCache.Unlock()
 		panic("reflect.ChanOf: invalid dir")
 	case SendDir:
 		s = "chan<- " + typ.String()
@@ -1872,7 +1806,8 @@ func ChanOf(dir ChanDir, t Type) Type {
 	for _, tt := range typesByString(s) {
 		ch := (*chanType)(unsafe.Pointer(tt))
 		if ch.elem == typ && ch.dir == uintptr(dir) {
-			return cachePut(ckey, tt)
+			ti, _ := lookupCache.LoadOrStore(ckey, tt)
+			return ti.(Type)
 		}
 	}
 
@@ -1886,7 +1821,8 @@ func ChanOf(dir ChanDir, t Type) Type {
 	ch.hash = fnv1(typ.hash, 'c', byte(dir))
 	ch.elem = typ
 
-	return cachePut(ckey, &ch.rtype)
+	ti, _ := lookupCache.LoadOrStore(ckey, &ch.rtype)
+	return ti.(Type)
 }
 
 func ismapkey(*rtype) bool // implemented in runtime
@@ -1907,8 +1843,8 @@ func MapOf(key, elem Type) Type {
 
 	// Look in cache.
 	ckey := cacheKey{Map, ktyp, etyp, 0}
-	if mt := cacheGet(ckey); mt != nil {
-		return mt
+	if mt, ok := lookupCache.Load(ckey); ok {
+		return mt.(Type)
 	}
 
 	// Look in known types.
@@ -1916,7 +1852,8 @@ func MapOf(key, elem Type) Type {
 	for _, tt := range typesByString(s) {
 		mt := (*mapType)(unsafe.Pointer(tt))
 		if mt.key == ktyp && mt.elem == etyp {
-			return cachePut(ckey, tt)
+			ti, _ := lookupCache.LoadOrStore(ckey, tt)
+			return ti.(Type)
 		}
 	}
 
@@ -1948,7 +1885,8 @@ func MapOf(key, elem Type) Type {
 	mt.needkeyupdate = needKeyUpdate(ktyp)
 	mt.ptrToThis = 0
 
-	return cachePut(ckey, &mt.rtype)
+	ti, _ := lookupCache.LoadOrStore(ckey, &mt.rtype)
+	return ti.(Type)
 }
 
 type funcTypeFixed4 struct {
@@ -2053,42 +1991,46 @@ func FuncOf(in, out []Type, variadic bool) Type {
 	}
 
 	// Look in cache.
-	funcLookupCache.RLock()
-	for _, t := range funcLookupCache.m[hash] {
-		if haveIdenticalUnderlyingType(&ft.rtype, t, true) {
-			funcLookupCache.RUnlock()
-			return t
+	if ts, ok := funcLookupCache.m.Load(hash); ok {
+		for _, t := range ts.([]*rtype) {
+			if haveIdenticalUnderlyingType(&ft.rtype, t, true) {
+				return t
+			}
 		}
 	}
-	funcLookupCache.RUnlock()
 
 	// Not in cache, lock and retry.
 	funcLookupCache.Lock()
 	defer funcLookupCache.Unlock()
-	if funcLookupCache.m == nil {
-		funcLookupCache.m = make(map[uint32][]*rtype)
-	}
-	for _, t := range funcLookupCache.m[hash] {
-		if haveIdenticalUnderlyingType(&ft.rtype, t, true) {
-			return t
+	if ts, ok := funcLookupCache.m.Load(hash); ok {
+		for _, t := range ts.([]*rtype) {
+			if haveIdenticalUnderlyingType(&ft.rtype, t, true) {
+				return t
+			}
 		}
+	}
+
+	addToCache := func(tt *rtype) Type {
+		var rts []*rtype
+		if rti, ok := funcLookupCache.m.Load(hash); ok {
+			rts = rti.([]*rtype)
+		}
+		funcLookupCache.m.Store(hash, append(rts, tt))
+		return tt
 	}
 
 	// Look in known types for the same string representation.
 	str := funcStr(ft)
 	for _, tt := range typesByString(str) {
 		if haveIdenticalUnderlyingType(&ft.rtype, tt, true) {
-			funcLookupCache.m[hash] = append(funcLookupCache.m[hash], tt)
-			return tt
+			return addToCache(tt)
 		}
 	}
 
 	// Populate the remaining fields of ft and store in cache.
 	ft.str = resolveReflectName(newName(str, "", "", false))
 	ft.ptrToThis = 0
-	funcLookupCache.m[hash] = append(funcLookupCache.m[hash], &ft.rtype)
-
-	return &ft.rtype
+	return addToCache(&ft.rtype)
 }
 
 // funcStr builds a string representation of a funcType.
@@ -2205,9 +2147,6 @@ func bucketOf(ktyp, etyp *rtype) *rtype {
 	// Prepare GC data if any.
 	// A bucket is at most bucketSize*(1+maxKeySize+maxValSize)+2*ptrSize bytes,
 	// or 2072 bytes, or 259 pointer-size words, or 33 bytes of pointer bitmap.
-	// Normally the enforced limit on pointer maps is 16 bytes,
-	// but larger ones are acceptable, 33 bytes isn't too too big,
-	// and it's easier to generate a pointer bitmap than a GC program.
 	// Note that since the key and value are known to be <= 128 bytes,
 	// they're guaranteed to have bitmaps instead of GC programs.
 	var gcdata *byte
@@ -2234,7 +2173,7 @@ func bucketOf(ktyp, etyp *rtype) *rtype {
 				panic("reflect: unexpected GC program in MapOf")
 			}
 			kmask := (*[16]byte)(unsafe.Pointer(ktyp.gcdata))
-			for i := uintptr(0); i < ktyp.size/ptrSize; i++ {
+			for i := uintptr(0); i < ktyp.ptrdata/ptrSize; i++ {
 				if (kmask[i/8]>>(i%8))&1 != 0 {
 					for j := uintptr(0); j < bucketSize; j++ {
 						word := base + j*ktyp.size/ptrSize + i
@@ -2250,7 +2189,7 @@ func bucketOf(ktyp, etyp *rtype) *rtype {
 				panic("reflect: unexpected GC program in MapOf")
 			}
 			emask := (*[16]byte)(unsafe.Pointer(etyp.gcdata))
-			for i := uintptr(0); i < etyp.size/ptrSize; i++ {
+			for i := uintptr(0); i < etyp.ptrdata/ptrSize; i++ {
 				if (emask[i/8]>>(i%8))&1 != 0 {
 					for j := uintptr(0); j < bucketSize; j++ {
 						word := base + j*etyp.size/ptrSize + i
@@ -2295,8 +2234,8 @@ func SliceOf(t Type) Type {
 
 	// Look in cache.
 	ckey := cacheKey{Slice, typ, nil, 0}
-	if slice := cacheGet(ckey); slice != nil {
-		return slice
+	if slice, ok := lookupCache.Load(ckey); ok {
+		return slice.(Type)
 	}
 
 	// Look in known types.
@@ -2304,7 +2243,8 @@ func SliceOf(t Type) Type {
 	for _, tt := range typesByString(s) {
 		slice := (*sliceType)(unsafe.Pointer(tt))
 		if slice.elem == typ {
-			return cachePut(ckey, tt)
+			ti, _ := lookupCache.LoadOrStore(ckey, tt)
+			return ti.(Type)
 		}
 	}
 
@@ -2318,17 +2258,19 @@ func SliceOf(t Type) Type {
 	slice.elem = typ
 	slice.ptrToThis = 0
 
-	return cachePut(ckey, &slice.rtype)
+	ti, _ := lookupCache.LoadOrStore(ckey, &slice.rtype)
+	return ti.(Type)
 }
 
 // The structLookupCache caches StructOf lookups.
 // StructOf does not share the common lookupCache since we need to pin
 // the memory associated with *structTypeFixedN.
 var structLookupCache struct {
-	sync.RWMutex
-	m map[uint32][]interface {
-		common() *rtype
-	} // keyed by hash calculated in StructOf
+	sync.Mutex // Guards stores (but not loads) on m.
+
+	// m is a map[uint32][]Type keyed by the hash calculated in StructOf.
+	// Elements in m are append-only and thus safe for concurrent reading.
+	m sync.Map
 }
 
 type structTypeUncommon struct {
@@ -2582,40 +2524,32 @@ func StructOf(fields []StructField) Type {
 
 	var typ *structType
 	var ut *uncommonType
-	var typPin interface {
-		common() *rtype
-	} // structTypeFixedN
 
 	switch {
 	case len(methods) == 0:
 		t := new(structTypeUncommon)
 		typ = &t.structType
 		ut = &t.u
-		typPin = t
 	case len(methods) <= 4:
 		t := new(structTypeFixed4)
 		typ = &t.structType
 		ut = &t.u
 		copy(t.m[:], methods)
-		typPin = t
 	case len(methods) <= 8:
 		t := new(structTypeFixed8)
 		typ = &t.structType
 		ut = &t.u
 		copy(t.m[:], methods)
-		typPin = t
 	case len(methods) <= 16:
 		t := new(structTypeFixed16)
 		typ = &t.structType
 		ut = &t.u
 		copy(t.m[:], methods)
-		typPin = t
 	case len(methods) <= 32:
 		t := new(structTypeFixed32)
 		typ = &t.structType
 		ut = &t.u
 		copy(t.m[:], methods)
-		typPin = t
 	default:
 		panic("reflect.StructOf: too many methods")
 	}
@@ -2638,30 +2572,35 @@ func StructOf(fields []StructField) Type {
 	*typ = *prototype
 	typ.fields = fs
 
-	// Look in cache
-	structLookupCache.RLock()
-	for _, st := range structLookupCache.m[hash] {
-		t := st.common()
-		if haveIdenticalUnderlyingType(&typ.rtype, t, true) {
-			structLookupCache.RUnlock()
-			return t
+	// Look in cache.
+	if ts, ok := structLookupCache.m.Load(hash); ok {
+		for _, st := range ts.([]Type) {
+			t := st.common()
+			if haveIdenticalUnderlyingType(&typ.rtype, t, true) {
+				return t
+			}
 		}
 	}
-	structLookupCache.RUnlock()
 
-	// not in cache, lock and retry
+	// Not in cache, lock and retry.
 	structLookupCache.Lock()
 	defer structLookupCache.Unlock()
-	if structLookupCache.m == nil {
-		structLookupCache.m = make(map[uint32][]interface {
-			common() *rtype
-		})
-	}
-	for _, st := range structLookupCache.m[hash] {
-		t := st.common()
-		if haveIdenticalUnderlyingType(&typ.rtype, t, true) {
-			return t
+	if ts, ok := structLookupCache.m.Load(hash); ok {
+		for _, st := range ts.([]Type) {
+			t := st.common()
+			if haveIdenticalUnderlyingType(&typ.rtype, t, true) {
+				return t
+			}
 		}
+	}
+
+	addToCache := func(t Type) Type {
+		var ts []Type
+		if ti, ok := structLookupCache.m.Load(hash); ok {
+			ts = ti.([]Type)
+		}
+		structLookupCache.m.Store(hash, append(ts, t))
+		return t
 	}
 
 	// Look in known types.
@@ -2670,8 +2609,7 @@ func StructOf(fields []StructField) Type {
 			// even if 't' wasn't a structType with methods, we should be ok
 			// as the 'u uncommonType' field won't be accessed except when
 			// tflag&tflagUncommon is set.
-			structLookupCache.m[hash] = append(structLookupCache.m[hash], t)
-			return t
+			return addToCache(t)
 		}
 	}
 
@@ -2782,8 +2720,7 @@ func StructOf(fields []StructField) Type {
 		typ.kind &^= kindDirectIface
 	}
 
-	structLookupCache.m[hash] = append(structLookupCache.m[hash], typPin)
-	return &typ.rtype
+	return addToCache(&typ.rtype)
 }
 
 func runtimeStructField(field StructField) structField {
@@ -2847,15 +2784,11 @@ const maxPtrmaskBytes = 2048
 // ArrayOf panics.
 func ArrayOf(count int, elem Type) Type {
 	typ := elem.(*rtype)
-	// call SliceOf here as it calls cacheGet/cachePut.
-	// ArrayOf also calls cacheGet/cachePut and thus may modify the state of
-	// the lookupCache mutex.
-	slice := SliceOf(elem)
 
 	// Look in cache.
 	ckey := cacheKey{Array, typ, nil, uintptr(count)}
-	if array := cacheGet(ckey); array != nil {
-		return array
+	if array, ok := lookupCache.Load(ckey); ok {
+		return array.(Type)
 	}
 
 	// Look in known types.
@@ -2863,7 +2796,8 @@ func ArrayOf(count int, elem Type) Type {
 	for _, tt := range typesByString(s) {
 		array := (*arrayType)(unsafe.Pointer(tt))
 		if array.elem == typ {
-			return cachePut(ckey, tt)
+			ti, _ := lookupCache.LoadOrStore(ckey, tt)
+			return ti.(Type)
 		}
 	}
 
@@ -2871,6 +2805,7 @@ func ArrayOf(count int, elem Type) Type {
 	var iarray interface{} = [1]unsafe.Pointer{}
 	prototype := *(**arrayType)(unsafe.Pointer(&iarray))
 	array := *prototype
+	array.tflag = 0
 	array.str = resolveReflectName(newName(s, "", "", false))
 	array.hash = fnv1(typ.hash, '[')
 	for n := uint32(count); n > 0; n >>= 8 {
@@ -2879,9 +2814,11 @@ func ArrayOf(count int, elem Type) Type {
 	array.hash = fnv1(array.hash, ']')
 	array.elem = typ
 	array.ptrToThis = 0
-	max := ^uintptr(0) / typ.size
-	if uintptr(count) > max {
-		panic("reflect.ArrayOf: array size would exceed virtual address space")
+	if typ.size > 0 {
+		max := ^uintptr(0) / typ.size
+		if uintptr(count) > max {
+			panic("reflect.ArrayOf: array size would exceed virtual address space")
+		}
 	}
 	array.size = typ.size * uintptr(count)
 	if count > 0 && typ.ptrdata != 0 {
@@ -2890,7 +2827,7 @@ func ArrayOf(count int, elem Type) Type {
 	array.align = typ.align
 	array.fieldAlign = typ.fieldAlign
 	array.len = uintptr(count)
-	array.slice = slice.(*rtype)
+	array.slice = SliceOf(elem).(*rtype)
 
 	array.kind &^= kindNoPointers
 	switch {
@@ -3009,7 +2946,8 @@ func ArrayOf(count int, elem Type) Type {
 		array.kind &^= kindDirectIface
 	}
 
-	return cachePut(ckey, &array.rtype)
+	ti, _ := lookupCache.LoadOrStore(ckey, &array.rtype)
+	return ti.(Type)
 }
 
 func appendVarint(x []byte, v uintptr) []byte {
@@ -3045,10 +2983,7 @@ type layoutType struct {
 	framePool *sync.Pool
 }
 
-var layoutCache struct {
-	sync.RWMutex
-	m map[layoutKey]layoutType
-}
+var layoutCache sync.Map // map[layoutKey]layoutType
 
 // funcLayout computes a struct type representing the layout of the
 // function arguments and return values for the function type t.
@@ -3064,16 +2999,9 @@ func funcLayout(t *rtype, rcvr *rtype) (frametype *rtype, argSize, retOffset uin
 		panic("reflect: funcLayout with interface receiver " + rcvr.String())
 	}
 	k := layoutKey{t, rcvr}
-	layoutCache.RLock()
-	if x := layoutCache.m[k]; x.t != nil {
-		layoutCache.RUnlock()
-		return x.t, x.argSize, x.retOffset, x.stack, x.framePool
-	}
-	layoutCache.RUnlock()
-	layoutCache.Lock()
-	if x := layoutCache.m[k]; x.t != nil {
-		layoutCache.Unlock()
-		return x.t, x.argSize, x.retOffset, x.stack, x.framePool
+	if lti, ok := layoutCache.Load(k); ok {
+		lt := lti.(layoutType)
+		return lt.t, lt.argSize, lt.retOffset, lt.stack, lt.framePool
 	}
 
 	tt := (*funcType)(unsafe.Pointer(t))
@@ -3134,21 +3062,18 @@ func funcLayout(t *rtype, rcvr *rtype) (frametype *rtype, argSize, retOffset uin
 	x.str = resolveReflectName(newName(s, "", "", false))
 
 	// cache result for future callers
-	if layoutCache.m == nil {
-		layoutCache.m = make(map[layoutKey]layoutType)
-	}
 	framePool = &sync.Pool{New: func() interface{} {
 		return unsafe_New(x)
 	}}
-	layoutCache.m[k] = layoutType{
+	lti, _ := layoutCache.LoadOrStore(k, layoutType{
 		t:         x,
 		argSize:   argSize,
 		retOffset: retOffset,
 		stack:     ptrmap,
 		framePool: framePool,
-	}
-	layoutCache.Unlock()
-	return x, argSize, retOffset, ptrmap, framePool
+	})
+	lt := lti.(layoutType)
+	return lt.t, lt.argSize, lt.retOffset, lt.stack, lt.framePool
 }
 
 // ifaceIndir reports whether t is stored indirectly in an interface value.

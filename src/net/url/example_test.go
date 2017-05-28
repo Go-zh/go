@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 )
@@ -59,33 +57,6 @@ func ExampleURL_roundtrip() {
 	// https://example.com/foo%2fbar
 }
 
-func ExampleURL_opaque() {
-	// Sending a literal '%' in an HTTP request's Path
-	req := &http.Request{
-		Method: "GET",
-		Host:   "example.com", // takes precedence over URL.Host
-		URL: &url.URL{
-			Host:   "ignored",
-			Scheme: "https",
-			Opaque: "/%2f/",
-		},
-		Header: http.Header{
-			"User-Agent": {"godoc-example/0.1"},
-		},
-	}
-	out, err := httputil.DumpRequestOut(req, true)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(strings.Replace(string(out), "\r", "", -1))
-	// Output:
-	// GET /%2f/ HTTP/1.1
-	// Host: example.com
-	// User-Agent: godoc-example/0.1
-	// Accept-Encoding: gzip
-	//
-}
-
 func ExampleURL_ResolveReference() {
 	u, err := url.Parse("../../..//search?q=dotnet")
 	if err != nil {
@@ -108,6 +79,31 @@ func ExampleParseQuery() {
 	fmt.Println(toJSON(m))
 	// Output:
 	// {"x":["1"], "y":["2", "3"], "z":[""]}
+}
+
+func ExampleURL_Hostname() {
+	u, err := url.Parse("https://example.org:8000/path")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(u.Hostname())
+	u, err = url.Parse("https://[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:17000")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(u.Hostname())
+	// Output:
+	// example.org
+	// 2001:0db8:85a3:0000:0000:8a2e:0370:7334
+}
+
+func ExampleURL_RequestURI() {
+	u, err := url.Parse("https://example.org/path?foo=bar")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(u.RequestURI())
+	// Output: /path?foo=bar
 }
 
 func toJSON(m interface{}) string {

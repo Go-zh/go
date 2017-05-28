@@ -32,7 +32,7 @@ package ld
 
 import (
 	"bufio"
-	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"cmd/internal/sys"
 	"debug/elf"
 	"fmt"
@@ -42,7 +42,7 @@ import (
 type Symbol struct {
 	Name        string
 	Extname     string
-	Type        obj.SymKind
+	Type        SymKind
 	Version     int16
 	Attr        Attribute
 	Localentry  uint8
@@ -89,23 +89,59 @@ func (s *Symbol) ElfsymForReloc() int32 {
 	}
 }
 
+func (s *Symbol) Len() int64 {
+	return s.Size
+}
+
 // Attribute is a set of common symbol attributes.
 type Attribute int16
 
 const (
+	// AttrDuplicateOK marks a symbol that can be present in multiple object
+	// files.
 	AttrDuplicateOK Attribute = 1 << iota
+	// AttrExternal marks function symbols loaded from host object files.
 	AttrExternal
+	// AttrNoSplit marks functions that cannot split the stack; the linker
+	// cares because it checks that there are no call chains of nosplit
+	// functions that require more than StackLimit bytes (see
+	// lib.go:dostkcheck)
 	AttrNoSplit
+	// AttrReachable marks symbols that are transitively referenced from the
+	// entry points. Unreachable symbols are not written to the output.
 	AttrReachable
+	// AttrCgoExportDynamic and AttrCgoExportStatic mark symbols referenced
+	// by directives written by cgo (in response to //export directives in
+	// the source).
 	AttrCgoExportDynamic
 	AttrCgoExportStatic
+	// AttrSpecial marks symbols that do not have their address (i.e. Value)
+	// computed by the usual mechanism of data.go:dodata() &
+	// data.go:address().
 	AttrSpecial
+	// AttrStackCheck is used by dostkcheck to only check each NoSplit
+	// function's stack usage once.
 	AttrStackCheck
-	AttrHidden
+	// AttrNotInSymbolTable marks symbols that are not written to the symbol table.
+	AttrNotInSymbolTable
+	// AttrOnList marks symbols that are on some list (such as the list of
+	// all text symbols, or one of the lists of data symbols) and is
+	// consulted to avoid bugs where a symbol is put on a list twice.
 	AttrOnList
+	// AttrLocal marks symbols that are only visible within the module
+	// (exectuable or shared library) being linked. Only relevant when
+	// dynamically linking Go code.
 	AttrLocal
+	// AttrReflectMethod marks certain methods from the reflect package that
+	// can be used to call arbitrary methods. If no symbol with this bit set
+	// is marked as reachable, more dead code elimination can be done.
 	AttrReflectMethod
+	// AttrMakeTypelink Amarks types that should be added to the typelink
+	// table. See typelinks.go:typelinks().
 	AttrMakeTypelink
+	// AttrShared marks symbols compiled with the -shared option.
+	AttrShared
+	// 14 attributes defined so far.
 )
 
 func (a Attribute) DuplicateOK() bool      { return a&AttrDuplicateOK != 0 }
@@ -116,11 +152,12 @@ func (a Attribute) CgoExportDynamic() bool { return a&AttrCgoExportDynamic != 0 
 func (a Attribute) CgoExportStatic() bool  { return a&AttrCgoExportStatic != 0 }
 func (a Attribute) Special() bool          { return a&AttrSpecial != 0 }
 func (a Attribute) StackCheck() bool       { return a&AttrStackCheck != 0 }
-func (a Attribute) Hidden() bool           { return a&AttrHidden != 0 }
+func (a Attribute) NotInSymbolTable() bool { return a&AttrNotInSymbolTable != 0 }
 func (a Attribute) OnList() bool           { return a&AttrOnList != 0 }
 func (a Attribute) Local() bool            { return a&AttrLocal != 0 }
 func (a Attribute) ReflectMethod() bool    { return a&AttrReflectMethod != 0 }
 func (a Attribute) MakeTypelink() bool     { return a&AttrMakeTypelink != 0 }
+func (a Attribute) Shared() bool           { return a&AttrShared != 0 }
 
 func (a Attribute) CgoExport() bool {
 	return a.CgoExportDynamic() || a.CgoExportStatic()
@@ -146,15 +183,15 @@ func (a *Attribute) Set(flag Attribute, value bool) {
 //
 // Some relocations are created by cmd/link.
 type Reloc struct {
-	Off     int32         // offset to rewrite
-	Siz     uint8         // number of bytes to rewrite, 1, 2, or 4
-	Done    uint8         // set to 1 when relocation is complete
-	Variant RelocVariant  // variation on Type
-	Type    obj.RelocType // the relocation type
-	Add     int64         // addend
-	Xadd    int64         // addend passed to external linker
-	Sym     *Symbol       // symbol the relocation addresses
-	Xsym    *Symbol       // symbol passed to external linker
+	Off     int32            // offset to rewrite
+	Siz     uint8            // number of bytes to rewrite, 1, 2, or 4
+	Done    uint8            // set to 1 when relocation is complete
+	Variant RelocVariant     // variation on Type
+	Type    objabi.RelocType // the relocation type
+	Add     int64            // addend
+	Xadd    int64            // addend passed to external linker
+	Sym     *Symbol          // symbol the relocation addresses
+	Xsym    *Symbol          // symbol passed to external linker
 }
 
 type Auto struct {
@@ -240,10 +277,20 @@ type FuncInfo struct {
 	Pcsp        Pcdata
 	Pcfile      Pcdata
 	Pcline      Pcdata
+	Pcinline    Pcdata
 	Pcdata      []Pcdata
 	Funcdata    []*Symbol
 	Funcdataoff []int64
 	File        []*Symbol
+	InlTree     []InlinedCall
+}
+
+// InlinedCall is a node in a local inlining tree (FuncInfo.InlTree).
+type InlinedCall struct {
+	Parent int32   // index of parent in InlTree
+	File   *Symbol // file of the inlined call
+	Line   int32   // line number of the inlined call
+	Func   *Symbol // function that was inlined
 }
 
 type Pcdata struct {

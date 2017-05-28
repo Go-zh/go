@@ -44,6 +44,21 @@ func escapeTemplate(tmpl *Template, node parse.Node, name string) error {
 	return nil
 }
 
+// evalArgs formats the list of arguments into a string. It is equivalent to
+// fmt.Sprint(args...), except that it deferences all pointers.
+func evalArgs(args ...interface{}) string {
+	// Optimization for simple common case of a single string argument.
+	if len(args) == 1 {
+		if s, ok := args[0].(string); ok {
+			return s
+		}
+	}
+	for i, arg := range args {
+		args[i] = indirectToStringerOrError(arg)
+	}
+	return fmt.Sprint(args...)
+}
+
 // funcMap maps command names to functions that render their inputs safe.
 var funcMap = template.FuncMap{
 	"_html_template_attrescaper":     attrEscaper,
@@ -60,16 +75,7 @@ var funcMap = template.FuncMap{
 	"_html_template_urlescaper":      urlEscaper,
 	"_html_template_urlfilter":       urlFilter,
 	"_html_template_urlnormalizer":   urlNormalizer,
-}
-
-// equivEscapers matches contextual escapers to equivalent template builtins.
-var equivEscapers = map[string]string{
-	"_html_template_attrescaper":    "html",
-	"_html_template_htmlescaper":    "html",
-	"_html_template_nospaceescaper": "html",
-	"_html_template_rcdataescaper":  "html",
-	"_html_template_urlescaper":     "urlquery",
-	"_html_template_urlnormalizer":  "urlquery",
+	"_eval_args_":                    evalArgs,
 }
 
 // escaper collects type inferences about templates and changes needed to make
@@ -133,6 +139,20 @@ func (e *escaper) escape(c context, n parse.Node) context {
 	panic("escaping " + n.String() + " is unimplemented")
 }
 
+// allIdents returns the names of the identifiers under the Ident field of the node,
+// which might be a singleton (Identifier) or a slice (Field or Chain).
+func allIdents(node parse.Node) []string {
+	switch node := node.(type) {
+	case *parse.IdentifierNode:
+		return []string{node.Ident}
+	case *parse.FieldNode:
+		return node.Ident
+	case *parse.ChainNode:
+		return node.Field
+	}
+	return nil
+}
+
 // escapeAction escapes an action template node.
 func (e *escaper) escapeAction(c context, n *parse.ActionNode) context {
 	if len(n.Pipe.Decl) != 0 {
@@ -140,6 +160,20 @@ func (e *escaper) escapeAction(c context, n *parse.ActionNode) context {
 		return c
 	}
 	c = nudge(c)
+	// Check for disallowed use of predefined escapers in the pipeline.
+	for pos, idNode := range n.Pipe.Cmds {
+		for _, ident := range allIdents(idNode.Args[0]) {
+			if _, ok := predefinedEscapers[ident]; ok {
+				if pos < len(n.Pipe.Cmds)-1 ||
+					c.state == stateAttr && c.delim == delimSpaceOrTagEnd && ident == "html" {
+					return context{
+						state: stateError,
+						err:   errorf(ErrPredefinedEscaper, n, n.Line, "predefined escaper %q disallowed in template", ident),
+					}
+				}
+			}
+		}
+	}
 	s := make([]string, 0, 3)
 	switch c.state {
 	case stateError:
@@ -204,73 +238,96 @@ func (e *escaper) escapeAction(c context, n *parse.ActionNode) context {
 	return c
 }
 
-// allIdents returns the names of the identifiers under the Ident field of the node,
-// which might be a singleton (Identifier) or a slice (Field or Chain).
-func allIdents(node parse.Node) []string {
-	switch node := node.(type) {
-	case *parse.IdentifierNode:
-		return []string{node.Ident}
-	case *parse.FieldNode:
-		return node.Ident
-	case *parse.ChainNode:
-		return node.Field
-	}
-	return nil
-}
-
-// ensurePipelineContains ensures that the pipeline has commands with
-// the identifiers in s in order.
-// If the pipeline already has some of the sanitizers, do not interfere.
-// For example, if p is (.X | html) and s is ["escapeJSVal", "html"] then it
-// has one matching, "html", and one to insert, "escapeJSVal", to produce
-// (.X | escapeJSVal | html).
+// ensurePipelineContains ensures that the pipeline ends with the commands with
+// the identifiers in s in order. If the pipeline ends with a predefined escaper
+// (i.e. "html" or "urlquery"), merge it with the identifiers in s.
 func ensurePipelineContains(p *parse.PipeNode, s []string) {
 	if len(s) == 0 {
+		// Do not rewrite pipeline if we have no escapers to insert.
 		return
 	}
-	n := len(p.Cmds)
-	// Find the identifiers at the end of the command chain.
-	idents := p.Cmds
-	for i := n - 1; i >= 0; i-- {
-		if cmd := p.Cmds[i]; len(cmd.Args) != 0 {
-			if _, ok := cmd.Args[0].(*parse.IdentifierNode); ok {
-				continue
-			}
-		}
-		idents = p.Cmds[i+1:]
-	}
-	dups := 0
-	for _, idNode := range idents {
-		for _, ident := range allIdents(idNode.Args[0]) {
-			if escFnsEq(s[dups], ident) {
-				dups++
-				if dups == len(s) {
-					return
+	// Precondition: p.Cmds contains at most one predefined escaper and the
+	// escaper will be present at p.Cmds[len(p.Cmds)-1]. This precondition is
+	// always true because of the checks in escapeAction.
+	pipelineLen := len(p.Cmds)
+	if pipelineLen > 0 {
+		lastCmd := p.Cmds[pipelineLen-1]
+		if idNode, ok := lastCmd.Args[0].(*parse.IdentifierNode); ok {
+			if esc := idNode.Ident; predefinedEscapers[esc] {
+				// Pipeline ends with a predefined escaper.
+				if len(p.Cmds) == 1 && len(lastCmd.Args) > 1 {
+					// Special case: pipeline is of the form {{ esc arg1 arg2 ... argN }},
+					// where esc is the predefined escaper, and arg1...argN are its arguments.
+					// Convert this into the equivalent form
+					// {{ _eval_args_ arg1 arg2 ... argN | esc }}, so that esc can be easily
+					// merged with the escapers in s.
+					lastCmd.Args[0] = parse.NewIdentifier("_eval_args_").SetTree(nil).SetPos(lastCmd.Args[0].Position())
+					p.Cmds = appendCmd(p.Cmds, newIdentCmd(esc, p.Position()))
+					pipelineLen++
+				}
+				// If any of the commands in s that we are about to insert is equivalent
+				// to the predefined escaper, use the predefined escaper instead.
+				dup := false
+				for i, escaper := range s {
+					if escFnsEq(esc, escaper) {
+						s[i] = idNode.Ident
+						dup = true
+					}
+				}
+				if dup {
+					// The predefined escaper will already be inserted along with the
+					// escapers in s, so do not copy it to the rewritten pipeline.
+					pipelineLen--
 				}
 			}
 		}
 	}
-	newCmds := make([]*parse.CommandNode, n-len(idents), n+len(s)-dups)
+	// Rewrite the pipeline, creating the escapers in s at the end of the pipeline.
+	newCmds := make([]*parse.CommandNode, pipelineLen, pipelineLen+len(s))
 	copy(newCmds, p.Cmds)
-	// Merge existing identifier commands with the sanitizers needed.
-	for _, idNode := range idents {
-		pos := idNode.Args[0].Position()
-		for _, ident := range allIdents(idNode.Args[0]) {
-			i := indexOfStr(ident, s, escFnsEq)
-			if i != -1 {
-				for _, name := range s[:i] {
-					newCmds = appendCmd(newCmds, newIdentCmd(name, pos))
-				}
-				s = s[i+1:]
-			}
-		}
-		newCmds = appendCmd(newCmds, idNode)
-	}
-	// Create any remaining sanitizers.
 	for _, name := range s {
 		newCmds = appendCmd(newCmds, newIdentCmd(name, p.Position()))
 	}
 	p.Cmds = newCmds
+}
+
+// predefinedEscapers contains template predefined escapers that are equivalent
+// to some contextual escapers. Keep in sync with equivEscapers.
+var predefinedEscapers = map[string]bool{
+	"html":     true,
+	"urlquery": true,
+}
+
+// equivEscapers matches contextual escapers to equivalent predefined
+// template escapers.
+var equivEscapers = map[string]string{
+	// The following pairs of HTML escapers provide equivalent security
+	// guarantees, since they all escape '\000', '\'', '"', '&', '<', and '>'.
+	"_html_template_attrescaper":   "html",
+	"_html_template_htmlescaper":   "html",
+	"_html_template_rcdataescaper": "html",
+	// These two URL escapers produce URLs safe for embedding in a URL query by
+	// percent-encoding all the reserved characters specified in RFC 3986 Section
+	// 2.2
+	"_html_template_urlescaper": "urlquery",
+	// These two functions are not actually equivalent; urlquery is stricter as it
+	// escapes reserved characters (e.g. '#'), while _html_template_urlnormalizer
+	// does not. It is therefore only safe to replace _html_template_urlnormalizer
+	// with urlquery (this happens in ensurePipelineContains), but not the otherI've
+	// way around. We keep this entry around to preserve the behavior of templates
+	// written before Go 1.9, which might depend on this substitution taking place.
+	"_html_template_urlnormalizer": "urlquery",
+}
+
+// escFnsEq reports whether the two escaping functions are equivalent.
+func escFnsEq(a, b string) bool {
+	if e := equivEscapers[a]; e != "" {
+		a = e
+	}
+	if e := equivEscapers[b]; e != "" {
+		b = e
+	}
+	return a == b
 }
 
 // redundantFuncs[a][b] implies that funcMap[b](funcMap[a](x)) == funcMap[a](x)
@@ -316,17 +373,6 @@ func indexOfStr(s string, strs []string, eq func(a, b string) bool) int {
 		}
 	}
 	return -1
-}
-
-// escFnsEq reports whether the two escaping functions are equivalent.
-func escFnsEq(a, b string) bool {
-	if e := equivEscapers[a]; e != "" {
-		a = e
-	}
-	if e := equivEscapers[b]; e != "" {
-		b = e
-	}
-	return a == b
 }
 
 // newIdentCmd produces a command containing a single identifier node.
@@ -624,7 +670,7 @@ func (e *escaper) escapeText(c context, n *parse.TextNode) context {
 				// the entire comment is considered to be a
 				// LineTerminator for purposes of parsing by
 				// the syntactic grammar."
-				if bytes.IndexAny(s[written:i1], "\n\r\u2028\u2029") != -1 {
+				if bytes.ContainsAny(s[written:i1], "\n\r\u2028\u2029") {
 					b.WriteByte('\n')
 				} else {
 					b.WriteByte(' ')

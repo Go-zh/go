@@ -1037,7 +1037,7 @@ func BenchmarkRunningGoProgram(b *testing.B) {
 	defer os.RemoveAll(tmpdir)
 
 	src := filepath.Join(tmpdir, "main.go")
-	err = ioutil.WriteFile(src, []byte(benchmarkRunnigGoProgram), 0666)
+	err = ioutil.WriteFile(src, []byte(benchmarkRunningGoProgram), 0666)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1055,13 +1055,15 @@ func BenchmarkRunningGoProgram(b *testing.B) {
 		cmd := exec.Command(exe)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			b.Fatalf("runing main.exe failed: %v\n%s", err, out)
+			b.Fatalf("running main.exe failed: %v\n%s", err, out)
 		}
 	}
 }
 
-const benchmarkRunnigGoProgram = `
+const benchmarkRunningGoProgram = `
 package main
+
+import _ "os" // average Go program will use "os" package, do the same here
 
 func main() {
 }

@@ -22,6 +22,7 @@ func TestServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := ioutil.ReadAll(res.Body)
+	res.Body.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,4 +98,67 @@ func TestServerCloseClientConnections(t *testing.T) {
 		res.Body.Close()
 		t.Fatalf("Unexpected response: %#v", res)
 	}
+}
+
+// Tests that the Server.Client method works and returns an http.Client that can hit
+// NewTLSServer without cert warnings.
+func TestServerClient(t *testing.T) {
+	ts := NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("hello"))
+	}))
+	defer ts.Close()
+	client := ts.Client()
+	res, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ioutil.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("got %q, want hello", string(got))
+	}
+}
+
+// Tests that the Server.Client.Transport interface is implemented
+// by a *http.Transport.
+func TestServerClientTransportType(t *testing.T) {
+	ts := NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	}))
+	defer ts.Close()
+	client := ts.Client()
+	if _, ok := client.Transport.(*http.Transport); !ok {
+		t.Errorf("got %T, want *http.Transport", client.Transport)
+	}
+}
+
+// Tests that the TLS Server.Client.Transport interface is implemented
+// by a *http.Transport.
+func TestTLSServerClientTransportType(t *testing.T) {
+	ts := NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	}))
+	defer ts.Close()
+	client := ts.Client()
+	if _, ok := client.Transport.(*http.Transport); !ok {
+		t.Errorf("got %T, want *http.Transport", client.Transport)
+	}
+}
+
+type onlyCloseListener struct {
+	net.Listener
+}
+
+func (onlyCloseListener) Close() error { return nil }
+
+// Issue 19729: panic in Server.Close for values created directly
+// without a constructor (so the unexported client field is nil).
+func TestServerZeroValueClose(t *testing.T) {
+	ts := &Server{
+		Listener: onlyCloseListener{},
+		Config:   &http.Server{},
+	}
+
+	ts.Close() // tests that it doesn't panic
 }

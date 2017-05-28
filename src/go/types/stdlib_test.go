@@ -96,12 +96,23 @@ func testTestDir(t *testing.T, path string, ignore ...string) {
 		// get per-file instructions
 		expectErrors := false
 		filename := filepath.Join(path, f.Name())
-		if cmd := firstComment(filename); cmd != "" {
-			switch cmd {
+		if comment := firstComment(filename); comment != "" {
+			fields := strings.Fields(comment)
+			switch fields[0] {
 			case "skip", "compiledir":
 				continue // ignore this file
 			case "errorcheck":
 				expectErrors = true
+				for _, arg := range fields[1:] {
+					if arg == "-0" || arg == "-+" {
+						// Marked explicitly as not expected errors (-0),
+						// or marked as compiling_runtime, which is only done
+						// to trigger runtime-only error output.
+						// In both cases, the code should typecheck.
+						expectErrors = false
+						break
+					}
+				}
 			}
 		}
 
@@ -159,6 +170,8 @@ func TestStdFixed(t *testing.T) {
 		"issue16369.go", // go/types handles this correctly - not an issue
 		"issue18459.go", // go/types doesn't check validity of //go:xxx directives
 		"issue18882.go", // go/types doesn't check validity of //go:xxx directives
+		"issue20232.go", // go/types handles larger constants than gc
+		"issue20227.go", // go/types does not handle this yet
 	)
 }
 

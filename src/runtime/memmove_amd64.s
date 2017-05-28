@@ -64,8 +64,8 @@ tail:
 	JBE	move_129through256
 	// TODO: use branch table and BSR to make this just a single dispatch
 
-	TESTB	$1, runtime·useRepMovs(SB)
-	JZ	avxUnaligned
+	TESTB	$1, runtime·useAVXmemmove(SB)
+	JNZ	avxUnaligned
 
 /*
  * check and set for backwards
@@ -81,8 +81,8 @@ forward:
 	JLS	move_256through2048
 
 	// If REP MOVSB isn't fast, don't use it
-	TESTL	$(1<<9), runtime·cpuid_ebx7(SB) // erms, aka enhanced REP MOVSB/STOSB
-	JEQ	fwdBy8
+	CMPB	runtime·support_erms(SB), $1 // enhanced REP MOVSB/STOSB
+	JNE	fwdBy8
 
 	// Check alignment
 	MOVL	SI, AX
@@ -407,7 +407,7 @@ gobble_big_data_fwd:
 gobble_mem_fwd_loop:
 	PREFETCHNTA 0x1C0(SI)
 	PREFETCHNTA 0x280(SI)
-	// Prefetch values were choosen empirically.
+	// Prefetch values were chosen empirically.
 	// Approach for prefetch usage as in 7.6.6 of [1]
 	// [1] 64-ia-32-architectures-optimization-manual.pdf
 	// http://www.intel.ru/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-optimization-manual.pdf

@@ -13,7 +13,7 @@
 
 #include "textflag.h"
 
-// SHA1 block routine. See sha1block.go for Go equivalent.
+// SHA-1 block routine. See sha1block.go for Go equivalent.
 //
 // There are 80 rounds of 4 types:
 //   - rounds 0-15 are type 1 and load data (ROUND1 macro).
@@ -1456,23 +1456,6 @@ TEXT ·blockAVX2(SB),$1408-32
 	MOVQ	$K_XMM_AR<>(SB), R8 //restore R8
 
 	CALC // RET is inside macros
-
-
-// func checkAVX2() bool
-// returns whether AVX2, BMI1 and BMI2 are supported
-TEXT ·checkAVX2(SB),NOSPLIT,$0
-	CMPB runtime·support_avx2(SB), $0
-	JE   noavx2
-	CMPB runtime·support_bmi1(SB), $0  // check for ANDNL instruction
-	JE   noavx2
-	CMPB runtime·support_bmi2(SB), $0  // check for RORXL instruction
-	JE   noavx2
-        MOVB    $1, ret+0(FP)
-	RET
-noavx2:
-        MOVB    $0, ret+0(FP)
-	RET
-
 
 DATA K_XMM_AR<>+0x00(SB)/4,$0x5a827999
 DATA K_XMM_AR<>+0x04(SB)/4,$0x5a827999

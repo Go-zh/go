@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:generate go run make_tables.go
+
 // Package bits implements bit counting and manipulation
 // functions for the predeclared unsigned integer types.
 package bits
+
+const uintSize = 32 << (^uint(0) >> 32 & 1) // 32 or 64
 
 // UintSize is the size of a uint in bits.
 const UintSize = uintSize
@@ -12,36 +16,88 @@ const UintSize = uintSize
 // --- LeadingZeros ---
 
 // LeadingZeros returns the number of leading zero bits in x; the result is UintSize for x == 0.
-func LeadingZeros(x uint) int { return UintSize - blen(uint64(x)) }
+func LeadingZeros(x uint) int { return UintSize - Len(x) }
 
 // LeadingZeros8 returns the number of leading zero bits in x; the result is 8 for x == 0.
-func LeadingZeros8(x uint8) int { return 8 - blen(uint64(x)) }
+func LeadingZeros8(x uint8) int { return 8 - Len8(x) }
 
 // LeadingZeros16 returns the number of leading zero bits in x; the result is 16 for x == 0.
-func LeadingZeros16(x uint16) int { return 16 - blen(uint64(x)) }
+func LeadingZeros16(x uint16) int { return 16 - Len16(x) }
 
 // LeadingZeros32 returns the number of leading zero bits in x; the result is 32 for x == 0.
-func LeadingZeros32(x uint32) int { return 32 - blen(uint64(x)) }
+func LeadingZeros32(x uint32) int { return 32 - Len32(x) }
 
 // LeadingZeros64 returns the number of leading zero bits in x; the result is 64 for x == 0.
-func LeadingZeros64(x uint64) int { return 64 - blen(uint64(x)) }
+func LeadingZeros64(x uint64) int { return 64 - Len64(x) }
 
 // --- TrailingZeros ---
 
-// TrailingZeros returns the number of trailing zero bits in x; the result is 0 for x == 0.
-func TrailingZeros(x uint) int { return ntz(x) }
+// See http://supertech.csail.mit.edu/papers/debruijn.pdf
+const deBruijn32 = 0x077CB531
 
-// TrailingZeros8 returns the number of trailing zero bits in x; the result is 0 for x == 0.
-func TrailingZeros8(x uint8) int { return ntz8(x) }
+var deBruijn32tab = [32]byte{
+	0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8,
+	31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9,
+}
 
-// TrailingZeros16 returns the number of trailing zero bits in x; the result is 0 for x == 0.
-func TrailingZeros16(x uint16) int { return ntz16(x) }
+const deBruijn64 = 0x03f79d71b4ca8b09
 
-// TrailingZeros32 returns the number of trailing zero bits in x; the result is 0 for x == 0.
-func TrailingZeros32(x uint32) int { return ntz32(x) }
+var deBruijn64tab = [64]byte{
+	0, 1, 56, 2, 57, 49, 28, 3, 61, 58, 42, 50, 38, 29, 17, 4,
+	62, 47, 59, 36, 45, 43, 51, 22, 53, 39, 33, 30, 24, 18, 12, 5,
+	63, 55, 48, 27, 60, 41, 37, 16, 46, 35, 44, 21, 52, 32, 23, 11,
+	54, 26, 40, 15, 34, 20, 31, 10, 25, 14, 19, 9, 13, 8, 7, 6,
+}
 
-// TrailingZeros64 returns the number of trailing zero bits in x; the result is 0 for x == 0.
-func TrailingZeros64(x uint64) int { return ntz64(x) }
+// TrailingZeros returns the number of trailing zero bits in x; the result is UintSize for x == 0.
+func TrailingZeros(x uint) int {
+	if UintSize == 32 {
+		return TrailingZeros32(uint32(x))
+	}
+	return TrailingZeros64(uint64(x))
+}
+
+// TrailingZeros8 returns the number of trailing zero bits in x; the result is 8 for x == 0.
+func TrailingZeros8(x uint8) int {
+	return int(ntz8tab[x])
+}
+
+// TrailingZeros16 returns the number of trailing zero bits in x; the result is 16 for x == 0.
+func TrailingZeros16(x uint16) (n int) {
+	if x == 0 {
+		return 16
+	}
+	// see comment in TrailingZeros64
+	return int(deBruijn32tab[uint32(x&-x)*deBruijn32>>(32-5)])
+}
+
+// TrailingZeros32 returns the number of trailing zero bits in x; the result is 32 for x == 0.
+func TrailingZeros32(x uint32) int {
+	if x == 0 {
+		return 32
+	}
+	// see comment in TrailingZeros64
+	return int(deBruijn32tab[(x&-x)*deBruijn32>>(32-5)])
+}
+
+// TrailingZeros64 returns the number of trailing zero bits in x; the result is 64 for x == 0.
+func TrailingZeros64(x uint64) int {
+	if x == 0 {
+		return 64
+	}
+	// If popcount is fast, replace code below with return popcount(^x & (x - 1)).
+	//
+	// x & -x leaves only the right-most bit set in the word. Let k be the
+	// index of that bit. Since only a single bit is set, the value is two
+	// to the power of k. Multiplying by a power of two is equivalent to
+	// left shifting, in this case by k bits. The de Bruijn (64 bit) constant
+	// is such that all six bit, consecutive substrings are distinct.
+	// Therefore, if we have a left shifted version of this constant we can
+	// find by how many bits it was shifted by looking at which six bit
+	// substring ended up at the top of the word.
+	// (Knuth, volume 4, section 7.3.1)
+	return int(deBruijn64tab[(x&-x)*deBruijn64>>(64-6)])
+}
 
 // --- OnesCount ---
 
@@ -61,32 +117,17 @@ func OnesCount(x uint) int {
 
 // OnesCount8 returns the number of one bits ("population count") in x.
 func OnesCount8(x uint8) int {
-	const m = 1<<8 - 1
-	x = x>>1&(m0&m) + x&(m0&m)
-	x = x>>2&(m1&m) + x&(m1&m)
-	x += x >> 4
-	return int(x) & (1<<4 - 1)
+	return int(pop8tab[x])
 }
 
 // OnesCount16 returns the number of one bits ("population count") in x.
 func OnesCount16(x uint16) int {
-	const m = 1<<16 - 1
-	x = x>>1&(m0&m) + x&(m0&m)
-	x = x>>2&(m1&m) + x&(m1&m)
-	x = (x>>4 + x) & (m2 & m)
-	x += x >> 8
-	return int(x) & (1<<5 - 1)
+	return int(pop8tab[x>>8] + pop8tab[x&0xff])
 }
 
 // OnesCount32 returns the number of one bits ("population count") in x.
 func OnesCount32(x uint32) int {
-	const m = 1<<32 - 1
-	x = x>>1&(m0&m) + x&(m0&m)
-	x = x>>2&(m1&m) + x&(m1&m)
-	x = (x>>4 + x) & (m2 & m)
-	x += x >> 8
-	x += x >> 16
-	return int(x) & (1<<6 - 1)
+	return int(pop8tab[x>>24] + pop8tab[x>>16&0xff] + pop8tab[x>>8&0xff] + pop8tab[x&0xff])
 }
 
 // OnesCount64 returns the number of one bits ("population count") in x.
@@ -122,7 +163,8 @@ func OnesCount64(x uint64) int {
 
 // --- RotateLeft ---
 
-// RotateLeft returns the value of x rotated left by k bits; k must not be negative.
+// RotateLeft returns the value of x rotated left by (k mod UintSize) bits.
+// To rotate x right by k bits, call RotateLeft(x, -k).
 func RotateLeft(x uint, k int) uint {
 	if UintSize == 32 {
 		return uint(RotateLeft32(uint32(x), k))
@@ -130,94 +172,36 @@ func RotateLeft(x uint, k int) uint {
 	return uint(RotateLeft64(uint64(x), k))
 }
 
-// RotateLeft8 returns the value of x rotated left by k bits; k must not be negative.
+// RotateLeft8 returns the value of x rotated left by (k mod 8) bits.
+// To rotate x right by k bits, call RotateLeft8(x, -k).
 func RotateLeft8(x uint8, k int) uint8 {
-	if k < 0 {
-		panic("negative rotation count")
-	}
 	const n = 8
 	s := uint(k) & (n - 1)
 	return x<<s | x>>(n-s)
 }
 
-// RotateLeft16 returns the value of x rotated left by k bits; k must not be negative.
+// RotateLeft16 returns the value of x rotated left by (k mod 16) bits.
+// To rotate x right by k bits, call RotateLeft16(x, -k).
 func RotateLeft16(x uint16, k int) uint16 {
-	if k < 0 {
-		panic("negative rotation count")
-	}
 	const n = 16
 	s := uint(k) & (n - 1)
 	return x<<s | x>>(n-s)
 }
 
-// RotateLeft32 returns the value of x rotated left by k bits; k must not be negative.
+// RotateLeft32 returns the value of x rotated left by (k mod 32) bits.
+// To rotate x right by k bits, call RotateLeft32(x, -k).
 func RotateLeft32(x uint32, k int) uint32 {
-	if k < 0 {
-		panic("negative rotation count")
-	}
 	const n = 32
 	s := uint(k) & (n - 1)
 	return x<<s | x>>(n-s)
 }
 
-// RotateLeft64 returns the value of x rotated left by k bits; k must not be negative.
+// RotateLeft64 returns the value of x rotated left by (k mod 64) bits.
+// To rotate x right by k bits, call RotateLeft64(x, -k).
 func RotateLeft64(x uint64, k int) uint64 {
-	if k < 0 {
-		panic("negative rotation count")
-	}
 	const n = 64
 	s := uint(k) & (n - 1)
 	return x<<s | x>>(n-s)
-}
-
-// --- RotateRight ---
-
-// RotateRight returns the value of x rotated left by k bits; k must not be negative.
-func RotateRight(x uint, k int) uint {
-	if UintSize == 32 {
-		return uint(RotateRight32(uint32(x), k))
-	}
-	return uint(RotateRight64(uint64(x), k))
-}
-
-// RotateRight8 returns the value of x rotated left by k bits; k must not be negative.
-func RotateRight8(x uint8, k int) uint8 {
-	if k < 0 {
-		panic("negative rotation count")
-	}
-	const n = 8
-	s := uint(k) & (n - 1)
-	return x<<(n-s) | x>>s
-}
-
-// RotateRight16 returns the value of x rotated left by k bits; k must not be negative.
-func RotateRight16(x uint16, k int) uint16 {
-	if k < 0 {
-		panic("negative rotation count")
-	}
-	const n = 16
-	s := uint(k) & (n - 1)
-	return x<<(n-s) | x>>s
-}
-
-// RotateRight32 returns the value of x rotated left by k bits; k must not be negative.
-func RotateRight32(x uint32, k int) uint32 {
-	if k < 0 {
-		panic("negative rotation count")
-	}
-	const n = 32
-	s := uint(k) & (n - 1)
-	return x<<(n-s) | x>>s
-}
-
-// RotateRight64 returns the value of x rotated left by k bits; k must not be negative.
-func RotateRight64(x uint64, k int) uint64 {
-	if k < 0 {
-		panic("negative rotation count")
-	}
-	const n = 64
-	s := uint(k) & (n - 1)
-	return x<<(n-s) | x>>s
 }
 
 // --- Reverse ---
@@ -232,19 +216,12 @@ func Reverse(x uint) uint {
 
 // Reverse8 returns the value of x with its bits in reversed order.
 func Reverse8(x uint8) uint8 {
-	const m = 1<<8 - 1
-	x = x>>1&(m0&m) | x&(m0&m)<<1
-	x = x>>2&(m1&m) | x&(m1&m)<<2
-	return x>>4 | x<<4
+	return rev8tab[x]
 }
 
 // Reverse16 returns the value of x with its bits in reversed order.
 func Reverse16(x uint16) uint16 {
-	const m = 1<<16 - 1
-	x = x>>1&(m0&m) | x&(m0&m)<<1
-	x = x>>2&(m1&m) | x&(m1&m)<<2
-	x = x>>4&(m2&m) | x&(m2&m)<<4
-	return x>>8 | x<<8
+	return uint16(rev8tab[x>>8]) | uint16(rev8tab[x&0xff])<<8
 }
 
 // Reverse32 returns the value of x with its bits in reversed order.
@@ -301,16 +278,53 @@ func ReverseBytes64(x uint64) uint64 {
 // --- Len ---
 
 // Len returns the minimum number of bits required to represent x; the result is 0 for x == 0.
-func Len(x uint) int { return blen(uint64(x)) }
+func Len(x uint) int {
+	if UintSize == 32 {
+		return Len32(uint32(x))
+	}
+	return Len64(uint64(x))
+}
 
 // Len8 returns the minimum number of bits required to represent x; the result is 0 for x == 0.
-func Len8(x uint8) int { return blen(uint64(x)) }
+func Len8(x uint8) int {
+	return int(len8tab[x])
+}
 
 // Len16 returns the minimum number of bits required to represent x; the result is 0 for x == 0.
-func Len16(x uint16) int { return blen(uint64(x)) }
+func Len16(x uint16) (n int) {
+	if x >= 1<<8 {
+		x >>= 8
+		n = 8
+	}
+	return n + int(len8tab[x])
+}
 
 // Len32 returns the minimum number of bits required to represent x; the result is 0 for x == 0.
-func Len32(x uint32) int { return blen(uint64(x)) }
+func Len32(x uint32) (n int) {
+	if x >= 1<<16 {
+		x >>= 16
+		n = 16
+	}
+	if x >= 1<<8 {
+		x >>= 8
+		n += 8
+	}
+	return n + int(len8tab[x])
+}
 
 // Len64 returns the minimum number of bits required to represent x; the result is 0 for x == 0.
-func Len64(x uint64) int { return blen(uint64(x)) }
+func Len64(x uint64) (n int) {
+	if x >= 1<<32 {
+		x >>= 32
+		n = 32
+	}
+	if x >= 1<<16 {
+		x >>= 16
+		n += 16
+	}
+	if x >= 1<<8 {
+		x >>= 8
+		n += 8
+	}
+	return n + int(len8tab[x])
+}

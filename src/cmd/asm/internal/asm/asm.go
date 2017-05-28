@@ -13,6 +13,7 @@ import (
 	"cmd/asm/internal/flags"
 	"cmd/asm/internal/lex"
 	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"cmd/internal/sys"
 )
 
@@ -151,7 +152,7 @@ func (p *Parser) asmText(word string, operands [][]lex.Token) {
 		frameSize = -frameSize
 	}
 	op = op[1:]
-	argSize := int64(obj.ArgsSizeUnknown)
+	argSize := int64(objabi.ArgsSizeUnknown)
 	if len(op) > 0 {
 		// There is an argument size. It must be a minus sign followed by a non-negative integer literal.
 		if len(op) != 2 || op[0].ScanToken != '-' || op[1].ScanToken != scanner.Int {
@@ -160,23 +161,20 @@ func (p *Parser) asmText(word string, operands [][]lex.Token) {
 		}
 		argSize = p.positiveAtoi(op[1].String())
 	}
+	p.ctxt.InitTextSym(nameAddr.Sym, int(flag))
 	prog := &obj.Prog{
 		Ctxt: p.ctxt,
 		As:   obj.ATEXT,
 		Pos:  p.pos(),
 		From: nameAddr,
-		From3: &obj.Addr{
-			Type:   obj.TYPE_CONST,
-			Offset: flag,
-		},
 		To: obj.Addr{
 			Type:   obj.TYPE_TEXTSIZE,
 			Offset: frameSize,
 			// Argsize set below.
 		},
 	}
+	nameAddr.Sym.Func.Text = prog
 	prog.To.Val = int32(argSize)
-
 	p.append(prog, "", true)
 }
 
@@ -388,6 +386,18 @@ func (p *Parser) asmJump(op obj.As, cond string, a []obj.Addr) {
 				// Compare register with immediate and jump.
 				prog.From3 = newAddr(a[1])
 			}
+			break
+		}
+		if p.arch.Family == sys.ARM64 {
+			// Special 3-operand jumps.
+			// a[0] must be immediate constant; a[1] is a register.
+			if a[0].Type != obj.TYPE_CONST {
+				p.errorf("%s: expected immediate constant; found %s", op, obj.Dconv(prog, &a[0]))
+				return
+			}
+			prog.From = a[0]
+			prog.Reg = p.getRegister(prog, op, &a[1])
+			target = &a[2]
 			break
 		}
 
@@ -613,12 +623,11 @@ func (p *Parser) asmInstruction(op obj.As, cond string, a []obj.Addr) {
 				return
 			}
 		case sys.S390X:
-			if arch.IsS390xWithLength(op) || arch.IsS390xWithIndex(op) {
-				prog.From = a[1]
-				prog.From3 = newAddr(a[0])
-			} else {
+			prog.From = a[0]
+			if a[1].Type == obj.TYPE_REG {
 				prog.Reg = p.getRegister(prog, op, &a[1])
-				prog.From = a[0]
+			} else {
+				prog.From3 = newAddr(a[1])
 			}
 			prog.To = a[2]
 		default:
@@ -630,12 +639,12 @@ func (p *Parser) asmInstruction(op obj.As, cond string, a []obj.Addr) {
 			// All must be registers.
 			p.getRegister(prog, op, &a[0])
 			r1 := p.getRegister(prog, op, &a[1])
-			p.getRegister(prog, op, &a[2])
-			r3 := p.getRegister(prog, op, &a[3])
+			r2 := p.getRegister(prog, op, &a[2])
+			p.getRegister(prog, op, &a[3])
 			prog.From = a[0]
-			prog.To = a[2]
+			prog.To = a[3]
 			prog.To.Type = obj.TYPE_REGREG2
-			prog.To.Offset = int64(r3)
+			prog.To.Offset = int64(r2)
 			prog.Reg = r1
 			break
 		}
@@ -701,9 +710,13 @@ func (p *Parser) asmInstruction(op obj.As, cond string, a []obj.Addr) {
 			}
 		}
 		if p.arch.Family == sys.S390X {
-			prog.From = a[1]
-			prog.Reg = p.getRegister(prog, op, &a[2])
-			prog.From3 = newAddr(a[0])
+			if a[1].Type != obj.TYPE_REG {
+				p.errorf("second operand must be a register in %s instruction", op)
+				return
+			}
+			prog.From = a[0]
+			prog.Reg = p.getRegister(prog, op, &a[1])
+			prog.From3 = newAddr(a[2])
 			prog.To = a[3]
 			break
 		}

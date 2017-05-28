@@ -209,12 +209,13 @@
 //
 // Usage:
 //
-// 	go doc [-u] [-c] [package|[package.]symbol[.method]]
+// 	go doc [-u] [-c] [package|[package.]symbol[.methodOrField]]
 //
 // Doc prints the documentation comments associated with the item identified by its
-// arguments (a package, const, func, type, var, or method) followed by a one-line
-// summary of each of the first-level items "under" that item (package-level
-// declarations for a package, methods for a type, etc.).
+// arguments (a package, const, func, type, var, method, or struct field)
+// followed by a one-line summary of each of the first-level items "under"
+// that item (package-level declarations for a package, methods for a type,
+// etc.).
 //
 // Doc accepts zero, one, or two arguments.
 //
@@ -232,9 +233,9 @@
 // which is schematically one of these:
 //
 // 	go doc <pkg>
-// 	go doc <sym>[.<method>]
-// 	go doc [<pkg>.]<sym>[.<method>]
-// 	go doc [<pkg>.][<sym>.]<method>
+// 	go doc <sym>[.<methodOrField>]
+// 	go doc [<pkg>.]<sym>[.<methodOrField>]
+// 	go doc [<pkg>.][<sym>.]<methodOrField>
 //
 // The first item in this list matched by the argument is the one whose documentation
 // is printed. (See the examples below.) However, if the argument starts with a capital
@@ -254,10 +255,10 @@
 // elements like . and ... are not implemented by go doc.
 //
 // When run with two arguments, the first must be a full package path (not just a
-// suffix), and the second is a symbol or symbol and method; this is similar to the
-// syntax accepted by godoc:
+// suffix), and the second is a symbol, or symbol with method or struct field.
+// This is similar to the syntax accepted by godoc:
 //
-// 	go doc <pkg> <sym>[.<method>]
+// 	go doc <pkg> <sym>[.<methodOrField>]
 //
 // In all forms, when matching symbols, lower-case letters in the argument match
 // either case but upper-case letters match exactly. This means that there may be
@@ -308,14 +309,14 @@
 // 		when showing the package's top-level documentation.
 // 	-u
 // 		Show documentation for unexported as well as exported
-// 		symbols and methods.
+// 		symbols, methods, and fields.
 //
 //
 // Print Go environment information
 //
 // Usage:
 //
-// 	go env [var ...]
+// 	go env [-json] [var ...]
 //
 // Env prints Go environment information.
 //
@@ -323,6 +324,9 @@
 // (on Windows, a batch file).  If one or more variable
 // names is given as arguments,  env prints the value of
 // each named variable on its own line.
+//
+// The -json flag prints the environment in JSON format
+// instead of as a shell script.
 //
 //
 // Start a bug report
@@ -794,14 +798,12 @@
 //
 // Usage:
 //
-// 	go vet [-n] [-x] [build flags] [packages]
+// 	go vet [-n] [-x] [build flags] [vet flags] [packages]
 //
 // Vet runs the Go vet command on the packages named by the import paths.
 //
-// For more about vet, see 'go doc cmd/vet'.
+// For more about vet and its flags, see 'go doc cmd/vet'.
 // For more about specifying packages, see 'go help packages'.
-//
-// To run the vet tool with specific options, run 'go tool vet'.
 //
 // The -n flag prints commands that would be executed.
 // The -x flag prints commands as they are executed.
@@ -1360,8 +1362,19 @@
 // each of which can match any string, including the empty string and
 // strings containing slashes.  Such a pattern expands to all package
 // directories found in the GOPATH trees with names matching the
-// patterns.  As a special case, x/... matches x as well as x's subdirectories.
-// For example, net/... expands to net and packages in its subdirectories.
+// patterns.
+//
+// To make common patterns more convenient, there are two special cases.
+// First, /... at the end of the pattern can match an empty string,
+// so that net/... matches both net and packages in its subdirectories, like net/http.
+// Second, any slash-separated pattern element containing a wildcard never
+// participates in a match of the "vendor" element in the path of a vendored
+// package, so that ./... does not match packages in subdirectories of
+// ./vendor or ./mycode/vendor, but ./vendor/... and ./mycode/vendor/... do.
+// Note, however, that a directory named vendor that itself contains code
+// is not a vendored package: cmd/vendor would be a command named vendor,
+// and the pattern cmd/... matches it.
+// See golang.org/s/go15vendor for more about vendoring.
 //
 // An import path can also name a package to be downloaded from
 // a remote repository.  Run 'go help importpath' for details.
@@ -1424,6 +1437,9 @@
 // 	-cover
 // 	    Enable coverage analysis.
 //
+// 	    BUG: If a compilation or test fails with coverage enabled,
+// 	    the reported line numbers may be incorrect.
+//
 // 	-covermode set,count,atomic
 // 	    Set the mode for coverage analysis for the package[s]
 // 	    being tested. The default is "set" unless -race is enabled,
@@ -1445,6 +1461,11 @@
 // 	    Specify a list of GOMAXPROCS values for which the tests or
 // 	    benchmarks should be executed.  The default is the current value
 // 	    of GOMAXPROCS.
+//
+// 	-list regexp
+// 	    List tests, benchmarks, or examples matching the regular expression.
+// 	    No tests, benchmarks or examples will be run. This will only
+// 	    list top-level tests. No subtest or subbenchmarks will be shown.
 //
 // 	-parallel n
 // 	    Allow parallel execution of test functions that call t.Parallel.

@@ -16,7 +16,7 @@ func (file *File) Stat() (FileInfo, error) {
 	if file == nil {
 		return nil, ErrInvalid
 	}
-	if file == nil || file.pfd.Sysfd < 0 {
+	if file == nil {
 		return nil, syscall.EINVAL
 	}
 	if file.isdir() {
@@ -61,22 +61,101 @@ func (file *File) Stat() (FileInfo, error) {
 // Stat returns a FileInfo structure describing the named file.
 // If there is an error, it will be of type *PathError.
 func Stat(name string) (FileInfo, error) {
-	var fi FileInfo
-	var err error
-	for i := 0; i < 255; i++ {
-		fi, err = Lstat(name)
-		if err != nil {
-			return fi, err
+	if len(name) == 0 {
+		return nil, &PathError{"Stat", name, syscall.Errno(syscall.ERROR_PATH_NOT_FOUND)}
+	}
+	if name == DevNull {
+		return &devNullStat, nil
+	}
+	namep, err := syscall.UTF16PtrFromString(fixLongPath(name))
+	if err != nil {
+		return nil, &PathError{"Stat", name, err}
+	}
+	// Apparently (see https://github.com/golang/go/issues/19922#issuecomment-300031421)
+	// GetFileAttributesEx is fastest approach to get file info.
+	// It does not work for symlinks. But symlinks are rare,
+	// so try GetFileAttributesEx first.
+	var fs fileStat
+	err = syscall.GetFileAttributesEx(namep, syscall.GetFileExInfoStandard, (*byte)(unsafe.Pointer(&fs.sys)))
+	if err == nil && fs.sys.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+		fs.path = name
+		if !isAbs(fs.path) {
+			fs.path, err = syscall.FullPath(fs.path)
+			if err != nil {
+				return nil, &PathError{"FullPath", name, err}
+			}
 		}
-		if fi.Mode()&ModeSymlink == 0 {
-			return fi, nil
+		fs.name = basename(name)
+		return &fs, nil
+	}
+	// Use Windows I/O manager to dereference the symbolic link, as per
+	// https://blogs.msdn.microsoft.com/oldnewthing/20100212-00/?p=14963/
+	h, err := syscall.CreateFile(namep, 0, 0, nil,
+		syscall.OPEN_EXISTING, syscall.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		if err == windows.ERROR_SHARING_VIOLATION {
+			// try FindFirstFile now that CreateFile failed
+			return statWithFindFirstFile(name, namep)
 		}
-		name, err = Readlink(name)
+		return nil, &PathError{"CreateFile", name, err}
+	}
+	defer syscall.CloseHandle(h)
+
+	var d syscall.ByHandleFileInformation
+	err = syscall.GetFileInformationByHandle(h, &d)
+	if err != nil {
+		return nil, &PathError{"GetFileInformationByHandle", name, err}
+	}
+	return &fileStat{
+		name: basename(name),
+		sys: syscall.Win32FileAttributeData{
+			FileAttributes: d.FileAttributes,
+			CreationTime:   d.CreationTime,
+			LastAccessTime: d.LastAccessTime,
+			LastWriteTime:  d.LastWriteTime,
+			FileSizeHigh:   d.FileSizeHigh,
+			FileSizeLow:    d.FileSizeLow,
+		},
+		vol:   d.VolumeSerialNumber,
+		idxhi: d.FileIndexHigh,
+		idxlo: d.FileIndexLow,
+		// fileStat.path is used by os.SameFile to decide if it needs
+		// to fetch vol, idxhi and idxlo. But these are already set,
+		// so set fileStat.path to "" to prevent os.SameFile doing it again.
+		// Also do not set fileStat.filetype, because it is only used for
+		// console and stdin/stdout. But you cannot call os.Stat for these.
+	}, nil
+}
+
+// statWithFindFirstFile is used by Stat to handle special case of statting
+// c:\pagefile.sys. We might discover that other files need similar treatment.
+func statWithFindFirstFile(name string, namep *uint16) (FileInfo, error) {
+	var fd syscall.Win32finddata
+	h, err := syscall.FindFirstFile(namep, &fd)
+	if err != nil {
+		return nil, &PathError{"FindFirstFile", name, err}
+	}
+	syscall.FindClose(h)
+
+	fullpath := name
+	if !isAbs(fullpath) {
+		fullpath, err = syscall.FullPath(fullpath)
 		if err != nil {
-			return fi, err
+			return nil, &PathError{"FullPath", name, err}
 		}
 	}
-	return nil, &PathError{"Stat", name, syscall.ELOOP}
+	return &fileStat{
+		name: basename(name),
+		path: fullpath,
+		sys: syscall.Win32FileAttributeData{
+			FileAttributes: fd.FileAttributes,
+			CreationTime:   fd.CreationTime,
+			LastAccessTime: fd.LastAccessTime,
+			LastWriteTime:  fd.LastWriteTime,
+			FileSizeHigh:   fd.FileSizeHigh,
+			FileSizeLow:    fd.FileSizeLow,
+		},
+	}, nil
 }
 
 // Lstat returns the FileInfo structure describing the named file.
@@ -101,25 +180,13 @@ func Lstat(name string) (FileInfo, error) {
 			return nil, &PathError{"GetFileAttributesEx", name, e}
 		}
 		// try FindFirstFile now that GetFileAttributesEx failed
-		var fd syscall.Win32finddata
-		h, e2 := syscall.FindFirstFile(namep, &fd)
-		if e2 != nil {
-			return nil, &PathError{"FindFirstFile", name, e}
-		}
-		syscall.FindClose(h)
-
-		fs.sys.FileAttributes = fd.FileAttributes
-		fs.sys.CreationTime = fd.CreationTime
-		fs.sys.LastAccessTime = fd.LastAccessTime
-		fs.sys.LastWriteTime = fd.LastWriteTime
-		fs.sys.FileSizeHigh = fd.FileSizeHigh
-		fs.sys.FileSizeLow = fd.FileSizeLow
+		return statWithFindFirstFile(name, namep)
 	}
 	fs.path = name
 	if !isAbs(fs.path) {
 		fs.path, e = syscall.FullPath(fs.path)
 		if e != nil {
-			return nil, e
+			return nil, &PathError{"FullPath", name, e}
 		}
 	}
 	return fs, nil

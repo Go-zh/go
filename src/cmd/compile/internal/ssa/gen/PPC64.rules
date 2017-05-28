@@ -49,10 +49,6 @@
 (Hmul64u  x y) -> (MULHDU x y)
 (Hmul32  x y) -> (MULHW  x y)
 (Hmul32u  x y) -> (MULHWU x y)
-(Hmul16 x y) -> (SRAWconst (MULLW <config.fe.TypeInt32()> (SignExt16to32 x) (SignExt16to32 y)) [16])
-(Hmul16u x y) -> (SRWconst (MULLW <config.fe.TypeUInt32()> (ZeroExt16to32 x) (ZeroExt16to32 y)) [16])
-(Hmul8 x y) -> (SRAWconst (MULLW <config.fe.TypeInt16()> (SignExt8to32 x) (SignExt8to32 y)) [8])
-(Hmul8u x y) -> (SRWconst (MULLW <config.fe.TypeUInt16()> (ZeroExt8to32 x) (ZeroExt8to32 y)) [8])
 
 (Mul32F x y) -> (FMULS x y)
 (Mul64F x y) -> (FMUL x y)
@@ -74,6 +70,9 @@
 (Cvt32Fto64F x) -> x // Note x will have the wrong type for patterns dependent on Float32/Float64
 (Cvt64Fto32F x) -> (FRSP x)
 
+(Round32F x) -> (LoweredRound32F x)
+(Round64F x) -> (LoweredRound64F x)
+
 (Sqrt x) -> (FSQRT x)
 
 // Lowering constants
@@ -85,6 +84,15 @@
 (Const64F [val]) -> (FMOVDconst [val])
 (ConstNil) -> (MOVDconst [0])
 (ConstBool [b]) -> (MOVDconst [b])
+
+// Rotate generation
+(ADD (SLDconst x [c]) (SRDconst x [d])) && d == 64-c -> (ROTLconst [c] x)
+( OR (SLDconst x [c]) (SRDconst x [d])) && d == 64-c -> (ROTLconst [c] x)
+(XOR (SLDconst x [c]) (SRDconst x [d])) && d == 64-c -> (ROTLconst [c] x)
+
+(ADD (SLWconst x [c]) (SRWconst x [d])) && d == 32-c -> (ROTLWconst [c] x)
+( OR (SLWconst x [c]) (SRWconst x [d])) && d == 32-c -> (ROTLWconst [c] x)
+(XOR (SLWconst x [c]) (SRWconst x [d])) && d == 32-c -> (ROTLWconst [c] x)
 
 (Lsh64x64  x (Const64 [c])) && uint64(c) < 64 -> (SLDconst x [c])
 (Rsh64x64  x (Const64 [c])) && uint64(c) < 64 -> (SRADconst x [c])
@@ -155,72 +163,72 @@
 (Rsh8x32   x (MOVDconst [c])) && uint32(c) < 8  -> (SRAWconst (SignExt8to32  x) [c])
 (Rsh8Ux32  x (MOVDconst [c])) && uint32(c) < 8  -> (SRWconst (ZeroExt8to32  x) [c])
 
-(Rsh64x64 x y)  -> (SRAD x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] y))))
-(Rsh64Ux64 x y) -> (SRD  x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] y))))
-(Lsh64x64 x y)  -> (SLD  x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] y))))
+(Rsh64x64 x y)  -> (SRAD x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] y))))
+(Rsh64Ux64 x y) -> (SRD  x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] y))))
+(Lsh64x64 x y)  -> (SLD  x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] y))))
 
-(Rsh32x64 x y)  -> (SRAW x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] y))))
-(Rsh32Ux64 x y) -> (SRW  x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] y))))
-(Lsh32x64 x y)  -> (SLW  x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] y))))
+(Rsh32x64 x y)  -> (SRAW x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] y))))
+(Rsh32Ux64 x y) -> (SRW  x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] y))))
+(Lsh32x64 x y)  -> (SLW  x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] y))))
 
-(Rsh16x64 x y)  -> (SRAW (SignExt16to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] y))))
-(Rsh16Ux64 x y) -> (SRW  (ZeroExt16to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] y))))
-(Lsh16x64 x y)  -> (SLW  x                 (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] y))))
+(Rsh16x64 x y)  -> (SRAW (SignExt16to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] y))))
+(Rsh16Ux64 x y) -> (SRW  (ZeroExt16to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] y))))
+(Lsh16x64 x y)  -> (SLW  x                 (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] y))))
 
-(Rsh8x64 x y)  -> (SRAW (SignExt8to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] y))))
-(Rsh8Ux64 x y) -> (SRW  (ZeroExt8to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] y))))
-(Lsh8x64 x y)  -> (SLW  x                (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] y))))
-
-
-(Rsh64x32 x y)  -> (SRAD x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt32to64 y)))))
-(Rsh64Ux32 x y) -> (SRD x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt32to64 y)))))
-(Lsh64x32 x y)  -> (SLD x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt32to64 y)))))
-
-(Rsh32x32 x y)  -> (SRAW x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt32to64 y)))))
-(Rsh32Ux32 x y) -> (SRW x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt32to64 y)))))
-(Lsh32x32 x y)  -> (SLW x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt32to64 y)))))
-
-(Rsh16x32 x y)  -> (SRAW (SignExt16to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt32to64 y)))))
-(Rsh16Ux32 x y) -> (SRW  (ZeroExt16to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt32to64 y)))))
-(Lsh16x32 x y)  -> (SLW  x                 (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt32to64 y)))))
-
-(Rsh8x32 x y)  -> (SRAW (SignExt8to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt32to64 y)))))
-(Rsh8Ux32 x y) -> (SRW  (ZeroExt8to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt32to64 y)))))
-(Lsh8x32 x y)  -> (SLW  x                (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt32to64 y)))))
+(Rsh8x64 x y)  -> (SRAW (SignExt8to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] y))))
+(Rsh8Ux64 x y) -> (SRW  (ZeroExt8to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] y))))
+(Lsh8x64 x y)  -> (SLW  x                (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] y))))
 
 
-(Rsh64x16 x y)  -> (SRAD x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt16to64 y)))))
-(Rsh64Ux16 x y) -> (SRD x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt16to64 y)))))
-(Lsh64x16 x y)  -> (SLD x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt16to64 y)))))
+(Rsh64x32 x y)  -> (SRAD x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt32to64 y)))))
+(Rsh64Ux32 x y) -> (SRD x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt32to64 y)))))
+(Lsh64x32 x y)  -> (SLD x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt32to64 y)))))
 
-(Rsh32x16 x y)  -> (SRAW x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt16to64 y)))))
-(Rsh32Ux16 x y) -> (SRW x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt16to64 y)))))
-(Lsh32x16 x y)  -> (SLW x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt16to64 y)))))
+(Rsh32x32 x y)  -> (SRAW x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt32to64 y)))))
+(Rsh32Ux32 x y) -> (SRW x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt32to64 y)))))
+(Lsh32x32 x y)  -> (SLW x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt32to64 y)))))
 
-(Rsh16x16 x y)  -> (SRAW (SignExt16to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt16to64 y)))))
-(Rsh16Ux16 x y) -> (SRW  (ZeroExt16to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt16to64 y)))))
-(Lsh16x16 x y)  -> (SLW  x                 (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt16to64 y)))))
+(Rsh16x32 x y)  -> (SRAW (SignExt16to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt32to64 y)))))
+(Rsh16Ux32 x y) -> (SRW  (ZeroExt16to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt32to64 y)))))
+(Lsh16x32 x y)  -> (SLW  x                 (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt32to64 y)))))
 
-(Rsh8x16 x y)  -> (SRAW (SignExt8to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt16to64 y)))))
-(Rsh8Ux16 x y) -> (SRW  (ZeroExt8to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt16to64 y)))))
-(Lsh8x16 x y)  -> (SLW  x                (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt16to64 y)))))
+(Rsh8x32 x y)  -> (SRAW (SignExt8to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt32to64 y)))))
+(Rsh8Ux32 x y) -> (SRW  (ZeroExt8to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt32to64 y)))))
+(Lsh8x32 x y)  -> (SLW  x                (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt32to64 y)))))
 
 
-(Rsh64x8 x y)  -> (SRAD x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt8to64 y)))))
-(Rsh64Ux8 x y) -> (SRD x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt8to64 y)))))
-(Lsh64x8 x y)  -> (SLD x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt8to64 y)))))
+(Rsh64x16 x y)  -> (SRAD x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt16to64 y)))))
+(Rsh64Ux16 x y) -> (SRD x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt16to64 y)))))
+(Lsh64x16 x y)  -> (SLD x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt16to64 y)))))
 
-(Rsh32x8 x y)  -> (SRAW x (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt8to64 y)))))
-(Rsh32Ux8 x y) -> (SRW x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt8to64 y)))))
-(Lsh32x8 x y)  -> (SLW x  (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt8to64 y)))))
+(Rsh32x16 x y)  -> (SRAW x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt16to64 y)))))
+(Rsh32Ux16 x y) -> (SRW x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt16to64 y)))))
+(Lsh32x16 x y)  -> (SLW x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt16to64 y)))))
 
-(Rsh16x8 x y)  -> (SRAW (SignExt16to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt8to64 y)))))
-(Rsh16Ux8 x y) -> (SRW  (ZeroExt16to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt8to64 y)))))
-(Lsh16x8 x y)  -> (SLW  x                 (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt8to64 y)))))
+(Rsh16x16 x y)  -> (SRAW (SignExt16to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt16to64 y)))))
+(Rsh16Ux16 x y) -> (SRW  (ZeroExt16to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt16to64 y)))))
+(Lsh16x16 x y)  -> (SLW  x                 (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt16to64 y)))))
 
-(Rsh8x8 x y)  -> (SRAW (SignExt8to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt8to64 y)))))
-(Rsh8Ux8 x y) -> (SRW  (ZeroExt8to32 x) (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt8to64 y)))))
-(Lsh8x8 x y)  -> (SLW  x                (ORN y <config.fe.TypeInt64()> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt8to64 y)))))
+(Rsh8x16 x y)  -> (SRAW (SignExt8to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt16to64 y)))))
+(Rsh8Ux16 x y) -> (SRW  (ZeroExt8to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt16to64 y)))))
+(Lsh8x16 x y)  -> (SLW  x                (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt16to64 y)))))
+
+
+(Rsh64x8 x y)  -> (SRAD x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt8to64 y)))))
+(Rsh64Ux8 x y) -> (SRD x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt8to64 y)))))
+(Lsh64x8 x y)  -> (SLD x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-64] (ZeroExt8to64 y)))))
+
+(Rsh32x8 x y)  -> (SRAW x (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt8to64 y)))))
+(Rsh32Ux8 x y) -> (SRW x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt8to64 y)))))
+(Lsh32x8 x y)  -> (SLW x  (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-32] (ZeroExt8to64 y)))))
+
+(Rsh16x8 x y)  -> (SRAW (SignExt16to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt8to64 y)))))
+(Rsh16Ux8 x y) -> (SRW  (ZeroExt16to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt8to64 y)))))
+(Lsh16x8 x y)  -> (SLW  x                 (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-16] (ZeroExt8to64 y)))))
+
+(Rsh8x8 x y)  -> (SRAW (SignExt8to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt8to64 y)))))
+(Rsh8Ux8 x y) -> (SRW  (ZeroExt8to32 x) (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt8to64 y)))))
+(Lsh8x8 x y)  -> (SLW  x                (ORN y <typ.Int64> (MaskIfNotCarry (ADDconstForCarry [-8] (ZeroExt8to64 y)))))
 
 // Cleaning up shift ops when input is masked
 (MaskIfNotCarry (ADDconstForCarry [c] (ANDconst [d] _))) && c < 0 && d > 0 && c + d < 0 -> (MOVDconst [-1])
@@ -234,7 +242,18 @@
 
 (Addr {sym} base) -> (MOVDaddr {sym} base)
 // (Addr {sym} base) -> (ADDconst {sym} base)
-(OffPtr [off] ptr) -> (ADD (MOVDconst <config.Frontend().TypeInt64()> [off]) ptr)
+(OffPtr [off] ptr) -> (ADD (MOVDconst <typ.Int64> [off]) ptr)
+
+(Ctz64 x) -> (POPCNTD (ANDN <typ.Int64> (ADDconst <typ.Int64> [-1] x) x))
+(Ctz32 x) -> (POPCNTW (MOVWZreg (ANDN <typ.Int> (ADDconst <typ.Int> [-1] x) x)))
+
+(BitLen64 x) -> (SUB (MOVDconst [64]) (CNTLZD <typ.Int> x))
+(BitLen32 x) -> (SUB (MOVDconst [32]) (CNTLZW <typ.Int> x))
+
+(PopCount64 x) -> (POPCNTD x)
+(PopCount32 x) -> (POPCNTW (MOVWZreg x))
+(PopCount16 x) -> (POPCNTW (MOVHZreg x))
+(PopCount8 x) -> (POPCNTB (MOVBreg x))
 
 (And64 x y) -> (AND x y)
 (And32 x y) -> (AND x y)
@@ -478,119 +497,121 @@
 (Load <t> ptr mem) && is32BitFloat(t) -> (FMOVSload ptr mem)
 (Load <t> ptr mem) && is64BitFloat(t) -> (FMOVDload ptr mem)
 
-(Store [8] ptr val mem) && is64BitFloat(val.Type) -> (FMOVDstore ptr val mem)
-(Store [8] ptr val mem) && is32BitFloat(val.Type) -> (FMOVDstore ptr val mem) // glitch from (Cvt32Fto64F x) -> x -- type is wrong
-(Store [4] ptr val mem) && is32BitFloat(val.Type) -> (FMOVSstore ptr val mem)
-(Store [8] ptr val mem) && (is64BitInt(val.Type) || isPtr(val.Type)) -> (MOVDstore ptr val mem)
-(Store [4] ptr val mem) && is32BitInt(val.Type) -> (MOVWstore ptr val mem)
-(Store [2] ptr val mem) -> (MOVHstore ptr val mem)
-(Store [1] ptr val mem) -> (MOVBstore ptr val mem)
+(Store {t} ptr val mem) && t.(*types.Type).Size() == 8 && is64BitFloat(val.Type) -> (FMOVDstore ptr val mem)
+(Store {t} ptr val mem) && t.(*types.Type).Size() == 8 && is32BitFloat(val.Type) -> (FMOVDstore ptr val mem) // glitch from (Cvt32Fto64F x) -> x -- type is wrong
+(Store {t} ptr val mem) && t.(*types.Type).Size() == 4 && is32BitFloat(val.Type) -> (FMOVSstore ptr val mem)
+(Store {t} ptr val mem) && t.(*types.Type).Size() == 8 && (is64BitInt(val.Type) || isPtr(val.Type)) -> (MOVDstore ptr val mem)
+(Store {t} ptr val mem) && t.(*types.Type).Size() == 4 && is32BitInt(val.Type) -> (MOVWstore ptr val mem)
+(Store {t} ptr val mem) && t.(*types.Type).Size() == 2 -> (MOVHstore ptr val mem)
+(Store {t} ptr val mem) && t.(*types.Type).Size() == 1 -> (MOVBstore ptr val mem)
 
-(Zero [s] _ mem) && SizeAndAlign(s).Size() == 0 -> mem
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 1 -> (MOVBstorezero destptr mem)
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 2 && SizeAndAlign(s).Align()%2 == 0 ->
+// Using Zero instead of LoweredZero allows the
+// target address to be folded where possible.
+(Zero [0] _ mem) -> mem
+(Zero [1] destptr mem) -> (MOVBstorezero destptr mem)
+(Zero [2] destptr mem) ->
 	(MOVHstorezero destptr mem)
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 2 ->
-	(MOVBstorezero [1] destptr
-		(MOVBstorezero [0] destptr mem))
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 4 && SizeAndAlign(s).Align()%4 == 0 ->
-	(MOVWstorezero destptr mem)
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 4 && SizeAndAlign(s).Align()%2 == 0 ->
-	(MOVHstorezero [2] destptr
-		(MOVHstorezero [0] destptr mem))
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 4 ->
-	(MOVBstorezero [3] destptr
-		(MOVBstorezero [2] destptr
-			(MOVBstorezero [1] destptr
-				(MOVBstorezero [0] destptr mem))))
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 8 && SizeAndAlign(s).Align()%8 == 0 ->
-	(MOVDstorezero [0] destptr mem)
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 8 && SizeAndAlign(s).Align()%4 == 0 ->
-	(MOVWstorezero [4] destptr
-		(MOVWstorezero [0] destptr mem))
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 8 && SizeAndAlign(s).Align()%2 == 0 ->
-	(MOVHstorezero [6] destptr
-		(MOVHstorezero [4] destptr
-			(MOVHstorezero [2] destptr
-				(MOVHstorezero [0] destptr mem))))
-
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 3 ->
+(Zero [3] destptr mem) ->
 	(MOVBstorezero [2] destptr
-		(MOVBstorezero [1] destptr
-			(MOVBstorezero [0] destptr mem)))
+		(MOVHstorezero destptr mem))
+(Zero [4] destptr mem) ->
+	(MOVWstorezero destptr mem)
+(Zero [5] destptr mem) ->
+	(MOVBstorezero [4] destptr
+        	(MOVWstorezero destptr mem))
+(Zero [6] destptr mem) ->
+	(MOVHstorezero [4] destptr
+		(MOVWstorezero destptr mem))
+(Zero [7] destptr mem) ->
+	(MOVBstorezero [6] destptr
+		(MOVHstorezero [4] destptr
+			(MOVWstorezero destptr mem)))
+(Zero [8] destptr mem) ->
+	(MOVDstorezero destptr mem)
 
 // Zero small numbers of words directly.
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 16 && SizeAndAlign(s).Align()%8 == 0 ->
+(Zero [12] destptr mem) ->
+        (MOVWstorezero [8] destptr
+                (MOVDstorezero [0] destptr mem))
+(Zero [16] destptr mem) ->
 	(MOVDstorezero [8] destptr
                 (MOVDstorezero [0] destptr mem))
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 24 && SizeAndAlign(s).Align()%8 == 0 ->
+(Zero [24] destptr mem) ->
 	(MOVDstorezero [16] destptr
 		(MOVDstorezero [8] destptr
 			(MOVDstorezero [0] destptr mem)))
-(Zero [s] destptr mem) && SizeAndAlign(s).Size() == 32 && SizeAndAlign(s).Align()%8 == 0 ->
+(Zero [32] destptr mem) ->
 	(MOVDstorezero [24] destptr
 		(MOVDstorezero [16] destptr
 			(MOVDstorezero [8] destptr
 				(MOVDstorezero [0] destptr mem))))
 
-// Large zeroing uses a loop
-(Zero [s] ptr mem)
-	&& (SizeAndAlign(s).Size() > 512 || config.noDuffDevice) || SizeAndAlign(s).Align()%8 != 0 ->
-	(LoweredZero [SizeAndAlign(s).Align()]
-		ptr
-		(ADDconst <ptr.Type> ptr [SizeAndAlign(s).Size()-moveSize(SizeAndAlign(s).Align(), config)])
-		mem)
+(Zero [40] destptr mem) ->
+	(MOVDstorezero [32] destptr
+		(MOVDstorezero [24] destptr
+			(MOVDstorezero [16] destptr
+				(MOVDstorezero [8] destptr
+					(MOVDstorezero [0] destptr mem)))))
+
+(Zero [48] destptr mem) ->
+	(MOVDstorezero [40] destptr
+		(MOVDstorezero [32] destptr
+			(MOVDstorezero [24] destptr
+				(MOVDstorezero [16] destptr
+					(MOVDstorezero [8] destptr
+						(MOVDstorezero [0] destptr mem))))))
+
+(Zero [56] destptr mem) ->
+	(MOVDstorezero [48] destptr
+		(MOVDstorezero [40] destptr
+			(MOVDstorezero [32] destptr
+				(MOVDstorezero [24] destptr
+					(MOVDstorezero [16] destptr
+						(MOVDstorezero [8] destptr
+							(MOVDstorezero [0] destptr mem)))))))
+
+// Handle cases not handled above
+(Zero [s] ptr mem) -> (LoweredZero [s] ptr mem)
 
 // moves
-(Move [s] _ _ mem) && SizeAndAlign(s).Size() == 0 -> mem
-(Move [s] dst src mem) && SizeAndAlign(s).Size() == 1 -> (MOVBstore dst (MOVBZload src mem) mem)
-(Move [s] dst src mem) && SizeAndAlign(s).Size() == 2 && SizeAndAlign(s).Align()%2 == 0 ->
-	(MOVHstore dst (MOVHZload src mem) mem)
-(Move [s] dst src mem) && SizeAndAlign(s).Size() == 2 ->
-	(MOVBstore [1] dst (MOVBZload [1] src mem)
-		(MOVBstore dst (MOVBZload src mem) mem))
-(Move [s] dst src mem) && SizeAndAlign(s).Size() == 4 && SizeAndAlign(s).Align()%4 == 0 ->
-	(MOVWstore dst (MOVWload src mem) mem)
-(Move [s] dst src mem) && SizeAndAlign(s).Size() == 4 && SizeAndAlign(s).Align()%2 == 0 ->
-	(MOVHstore [2] dst (MOVHZload [2] src mem)
-		(MOVHstore dst (MOVHZload src mem) mem))
-(Move [s] dst src mem) && SizeAndAlign(s).Size() == 4 ->
-	(MOVBstore [3] dst (MOVBZload [3] src mem)
-		(MOVBstore [2] dst (MOVBZload [2] src mem)
-			(MOVBstore [1] dst (MOVBZload [1] src mem)
-				(MOVBstore dst (MOVBZload src mem) mem))))
-
-(Move [s] dst src mem) && SizeAndAlign(s).Size() == 8 && SizeAndAlign(s).Align()%8 == 0 ->
+// Only the MOVD and MOVW instructions require 4 byte
+// alignment in the offset field.  The other MOVx instructions
+// allow any alignment.
+(Move [0] _ _ mem) -> mem
+(Move [1] dst src mem) -> (MOVBstore dst (MOVBZload src mem) mem)
+(Move [2] dst src mem) ->
+        (MOVHstore dst (MOVHZload src mem) mem)
+(Move [4] dst src mem) ->
+	(MOVWstore dst (MOVWZload src mem) mem)
+// MOVD for load and store must have offsets that are multiple of 4
+(Move [8] {t} dst src mem) && t.(*types.Type).Alignment()%4 == 0 ->
 	(MOVDstore dst (MOVDload src mem) mem)
-(Move [s] dst src mem) && SizeAndAlign(s).Size() == 8 && SizeAndAlign(s).Align()%4 == 0 ->
+(Move [8] dst src mem) ->
 	(MOVWstore [4] dst (MOVWZload [4] src mem)
 		(MOVWstore dst (MOVWZload src mem) mem))
-(Move [s] dst src mem) && SizeAndAlign(s).Size() == 8 && SizeAndAlign(s).Align()%2 == 0->
-	(MOVHstore [6] dst (MOVHZload [6] src mem)
-		(MOVHstore [4] dst (MOVHZload [4] src mem)
-			(MOVHstore [2] dst (MOVHZload [2] src mem)
-				(MOVHstore dst (MOVHZload src mem) mem))))
+(Move [3] dst src mem) ->
+        (MOVBstore [2] dst (MOVBZload [2] src mem)
+                (MOVHstore dst (MOVHload src mem) mem))
+(Move [5] dst src mem) ->
+        (MOVBstore [4] dst (MOVBZload [4] src mem)
+                (MOVWstore dst (MOVWZload src mem) mem))
+(Move [6] dst src mem) ->
+        (MOVHstore [4] dst (MOVHZload [4] src mem)
+                (MOVWstore dst (MOVWZload src mem) mem))
+(Move [7] dst src mem) ->
+        (MOVBstore [6] dst (MOVBZload [6] src mem)
+                (MOVHstore [4] dst (MOVHZload [4] src mem)
+                        (MOVWstore dst (MOVWZload src mem) mem)))
 
-(Move [s] dst src mem) && SizeAndAlign(s).Size() == 3 ->
-	(MOVBstore [2] dst (MOVBZload [2] src mem)
-		(MOVBstore [1] dst (MOVBZload [1] src mem)
-			(MOVBstore dst (MOVBZload src mem) mem)))
-
-// Large move uses a loop
-(Move [s] dst src mem)
-	&& (SizeAndAlign(s).Size() > 512 || config.noDuffDevice) || SizeAndAlign(s).Align()%8 != 0 ->
-	(LoweredMove [SizeAndAlign(s).Align()]
-		dst
-		src
-		(ADDconst <src.Type> src [SizeAndAlign(s).Size()-moveSize(SizeAndAlign(s).Align(), config)])
-		mem)
+// Large move uses a loop. Since the address is computed and the
+// offset is zero, any alignment can be used.
+(Move [s] dst src mem) && s > 8 ->
+        (LoweredMove [s] dst src mem)
 
 // Calls
 // Lowering calls
 (StaticCall [argwid] {target} mem) -> (CALLstatic [argwid] {target} mem)
 (ClosureCall [argwid] entry closure mem) -> (CALLclosure [argwid] entry closure mem)
-(DeferCall [argwid] mem) -> (CALLdefer [argwid] mem)
-(GoCall [argwid] mem) -> (CALLgo [argwid] mem)
 (InterCall [argwid] entry mem) -> (CALLinter [argwid] entry mem)
 
 // Miscellaneous
@@ -614,9 +635,6 @@
 (AND x (MOVDconst [c])) && isU16Bit(c) -> (ANDconst [c] x)
 (XOR x (MOVDconst [c])) && isU32Bit(c) -> (XORconst [c] x)
 (OR x (MOVDconst [c])) && isU32Bit(c) -> (ORconst [c] x)
-(AND (MOVDconst [c]) x) && isU16Bit(c) -> (ANDconst [c] x)
-(XOR (MOVDconst [c]) x) && isU32Bit(c) -> (XORconst [c] x)
-(OR (MOVDconst [c]) x) && isU32Bit(c) -> (ORconst [c] x)
 
 // Simplify consts
 (ANDconst [c] (ANDconst [d] x)) -> (ANDconst [c&d] x)
@@ -682,7 +700,6 @@
 
 // Arithmetic constant ops
 
-(ADD (MOVDconst [c]) x) && is32Bit(c) -> (ADDconst [c] x)
 (ADD x (MOVDconst [c])) && is32Bit(c) -> (ADDconst [c] x)
 (ADDconst [c] (ADDconst [d] x)) && is32Bit(c+d) -> (ADDconst [c+d] x)
 (ADDconst [0] x) -> x
@@ -768,6 +785,27 @@
 (MOVBstorezero [off1] {sym1} (MOVDaddr [off2] {sym2} x) mem) && canMergeSym(sym1,sym2) ->
     (MOVBstorezero [off1+off2] {mergeSym(sym1,sym2)} x mem)
 
+// atomic intrinsics
+(AtomicLoad32  ptr mem) -> (LoweredAtomicLoad32 ptr mem)
+(AtomicLoad64  ptr mem) -> (LoweredAtomicLoad64 ptr mem)
+(AtomicLoadPtr ptr mem) -> (LoweredAtomicLoadPtr ptr mem)
+
+(AtomicStore32      ptr val mem) -> (LoweredAtomicStore32 ptr val mem)
+(AtomicStore64      ptr val mem) -> (LoweredAtomicStore64 ptr val mem)
+//(AtomicStorePtrNoWB ptr val mem) -> (STLR  ptr val mem)
+
+(AtomicExchange32 ptr val mem) -> (LoweredAtomicExchange32 ptr val mem)
+(AtomicExchange64 ptr val mem) -> (LoweredAtomicExchange64 ptr val mem)
+
+(AtomicAdd32 ptr val mem) -> (LoweredAtomicAdd32 ptr val mem)
+(AtomicAdd64 ptr val mem) -> (LoweredAtomicAdd64 ptr val mem)
+
+(AtomicCompareAndSwap32 ptr old new_ mem) -> (LoweredAtomicCas32 ptr old new_ mem)
+(AtomicCompareAndSwap64 ptr old new_ mem) -> (LoweredAtomicCas64 ptr old new_ mem)
+
+(AtomicAnd8 ptr val mem) -> (LoweredAtomicAnd8 ptr val mem)
+(AtomicOr8  ptr val mem) -> (LoweredAtomicOr8  ptr val mem)
+
 // Lowering extension
 // Note: we always extend to 64 bits even though some ops don't need that many result bits.
 (SignExt8to16  x) -> (MOVBreg x)
@@ -831,3 +869,9 @@
 // A particular pattern seen in cgo code:
 (AND (MOVDconst [c]) x:(MOVBZload _ _)) -> (ANDconst [c&0xFF] x)
 (AND x:(MOVBZload _ _) (MOVDconst [c])) -> (ANDconst [c&0xFF] x)
+
+// floating-point fused multiply-add/sub
+(FADD (FMUL x y) z) -> (FMADD x y z)
+(FSUB (FMUL x y) z) -> (FMSUB x y z)
+(FADDS (FMULS x y) z) -> (FMADDS x y z)
+(FSUBS (FMULS x y) z) -> (FMSUBS x y z)
