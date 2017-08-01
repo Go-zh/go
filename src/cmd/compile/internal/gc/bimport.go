@@ -285,7 +285,7 @@ func (p *importer) pkg() *types.Pkg {
 	}
 
 	// we should never see a bad import path
-	if isbadimport(path) {
+	if isbadimport(path, true) {
 		p.formatErrorf("bad package path %q for package %s", path, name)
 	}
 
@@ -420,12 +420,9 @@ func (p *importer) pos() src.XPos {
 }
 
 func (p *importer) path() string {
-	if p.debugFormat {
-		p.marker('p')
-	}
 	// if the path was seen before, i is its index (>= 0)
 	// (the empty string is at index 0)
-	i := p.rawInt64()
+	i := p.int()
 	if i >= 0 {
 		return p.pathList[i]
 	}

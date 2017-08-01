@@ -79,8 +79,8 @@ const (
 	MAXVALSIZE = 128
 )
 
-func structfieldSize() int             { return 3 * Widthptr } // Sizeof(runtime.structfield{})
-func imethodSize() int                 { return 4 + 4 }        // Sizeof(runtime.imethod{})
+func structfieldSize() int { return 3 * Widthptr } // Sizeof(runtime.structfield{})
+func imethodSize() int     { return 4 + 4 }        // Sizeof(runtime.imethod{})
 func uncommonSize(t *types.Type) int { // Sizeof(runtime.uncommontype{})
 	if t.Sym == nil && len(methods(t)) == 0 {
 		return 0
@@ -582,7 +582,11 @@ func dname(name, tag string, pkg *types.Pkg, exported bool) *obj.LSym {
 				sname += "-noname-unexported." + tag
 			}
 		} else {
-			sname += name + "." + tag
+			if exported {
+				sname += name + "." + tag
+			} else {
+				sname += name + "-" + tag
+			}
 		}
 	} else {
 		sname = fmt.Sprintf(`%s"".%d`, sname, dnameCount)

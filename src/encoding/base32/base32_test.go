@@ -44,6 +44,7 @@ var bigtest = testpair{
 }
 
 func testEqual(t *testing.T, msg string, args ...interface{}) bool {
+	t.Helper()
 	if args[len(args)-2] != args[len(args)-1] {
 		t.Errorf(msg, args...)
 		return false
@@ -283,10 +284,14 @@ func TestDecoderBuffering(t *testing.T) {
 		decoder := NewDecoder(StdEncoding, strings.NewReader(bigtest.encoded))
 		buf := make([]byte, len(bigtest.decoded)+12)
 		var total int
-		for total = 0; total < len(bigtest.decoded); {
-			n, err := decoder.Read(buf[total : total+bs])
-			testEqual(t, "Read from %q at pos %d = %d, %v, want _, %v", bigtest.encoded, total, n, err, error(nil))
+		var n int
+		var err error
+		for total = 0; total < len(bigtest.decoded) && err == nil; {
+			n, err = decoder.Read(buf[total : total+bs])
 			total += n
+		}
+		if err != nil && err != io.EOF {
+			t.Errorf("Read from %q at pos %d = %d, unexpected error %v", bigtest.encoded, total, n, err)
 		}
 		testEqual(t, "Decoding/%d of %q = %q, want %q", bs, bigtest.encoded, string(buf[0:total]), bigtest.decoded)
 	}
@@ -483,5 +488,93 @@ func TestWithoutPadding(t *testing.T) {
 		if testcase.encoded != defaultPadding {
 			t.Errorf("Expected %s, got %s", testcase.encoded, defaultPadding)
 		}
+	}
+}
+
+func TestDecodeWithPadding(t *testing.T) {
+	encodings := []*Encoding{
+		StdEncoding,
+		StdEncoding.WithPadding('-'),
+		StdEncoding.WithPadding(NoPadding),
+	}
+
+	for i, enc := range encodings {
+		for _, pair := range pairs {
+
+			input := pair.decoded
+			encoded := enc.EncodeToString([]byte(input))
+
+			decoded, err := enc.DecodeString(encoded)
+			if err != nil {
+				t.Errorf("DecodeString Error for encoding %d (%q): %v", i, input, err)
+			}
+
+			if input != string(decoded) {
+				t.Errorf("Unexpected result for encoding %d: got %q; want %q", i, decoded, input)
+			}
+		}
+	}
+}
+
+func TestDecodeWithWrongPadding(t *testing.T) {
+	encoded := StdEncoding.EncodeToString([]byte("foobar"))
+
+	_, err := StdEncoding.WithPadding('-').DecodeString(encoded)
+	if err == nil {
+		t.Error("expected error")
+	}
+
+	_, err = StdEncoding.WithPadding(NoPadding).DecodeString(encoded)
+	if err == nil {
+		t.Error("expected error")
+	}
+}
+
+func TestEncodedDecodedLen(t *testing.T) {
+	type test struct {
+		in      int
+		wantEnc int
+		wantDec int
+	}
+	data := bytes.Repeat([]byte("x"), 100)
+	for _, test := range []struct {
+		name  string
+		enc   *Encoding
+		cases []test
+	}{
+		{"StdEncoding", StdEncoding, []test{
+			{0, 0, 0},
+			{1, 8, 5},
+			{5, 8, 5},
+			{6, 16, 10},
+			{10, 16, 10},
+		}},
+		{"NoPadding", StdEncoding.WithPadding(NoPadding), []test{
+			{0, 0, 0},
+			{1, 2, 1},
+			{2, 4, 2},
+			{5, 8, 5},
+			{6, 10, 6},
+			{7, 12, 7},
+			{10, 16, 10},
+			{11, 18, 11},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, tc := range test.cases {
+				encLen := test.enc.EncodedLen(tc.in)
+				decLen := test.enc.DecodedLen(encLen)
+				enc := test.enc.EncodeToString(data[:tc.in])
+				if len(enc) != encLen {
+					t.Fatalf("EncodedLen(%d) = %d but encoded to %q (%d)", tc.in, encLen, enc, len(enc))
+				}
+				if encLen != tc.wantEnc {
+					t.Fatalf("EncodedLen(%d) = %d; want %d", tc.in, encLen, tc.wantEnc)
+				}
+				if decLen != tc.wantDec {
+					t.Fatalf("DecodedLen(%d) = %d; want %d", encLen, decLen, tc.wantDec)
+				}
+			}
+		})
 	}
 }

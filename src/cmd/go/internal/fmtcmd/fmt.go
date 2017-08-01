@@ -25,7 +25,7 @@ var CmdFmt = &base.Command{
 	Short:     "run gofmt on package sources",
 	Long: `
 Fmt runs the command 'gofmt -l -w' on the packages named
-by the import paths.  It prints the names of the files that are modified.
+by the import paths. It prints the names of the files that are modified.
 
 For more about gofmt, see 'go doc cmd/gofmt'.
 For more about specifying packages, see 'go help packages'.
@@ -45,7 +45,8 @@ func runFmt(cmd *base.Command, args []string) {
 		// Use pkg.gofiles instead of pkg.Dir so that
 		// the command only applies to this package,
 		// not to packages in subdirectories.
-		base.Run(str.StringList(gofmt, "-l", "-w", base.RelPaths(pkg.Internal.AllGoFiles)))
+		files := base.FilterDotUnderscoreFiles(base.RelPaths(pkg.Internal.AllGoFiles))
+		base.Run(str.StringList(gofmt, "-l", "-w", files))
 	}
 }
 

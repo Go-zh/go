@@ -220,14 +220,18 @@ type Link struct {
 
 	Loaded bool // set after all inputs have been loaded as symbols
 
-	Tlsg       *Symbol
-	Libdir     []string
-	Library    []*Library
-	Shlibs     []Shlib
-	Tlsoffset  int
-	Textp      []*Symbol
-	Filesyms   []*Symbol
-	Moduledata *Symbol
+	Tlsg         *Symbol
+	Libdir       []string
+	Library      []*Library
+	LibraryByPkg map[string]*Library
+	Shlibs       []Shlib
+	Tlsoffset    int
+	Textp        []*Symbol
+	Filesyms     []*Symbol
+	Moduledata   *Symbol
+
+	PackageFile  map[string]string
+	PackageShlib map[string]string
 
 	tramps []*Symbol // trampolines
 }

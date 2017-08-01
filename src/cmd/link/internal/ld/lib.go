@@ -333,6 +333,19 @@ func errorexit() {
 }
 
 func loadinternal(ctxt *Link, name string) *Library {
+	if *FlagLinkshared && ctxt.PackageShlib != nil {
+		if shlibname := ctxt.PackageShlib[name]; shlibname != "" {
+			return addlibpath(ctxt, "internal", "internal", "", name, shlibname)
+		}
+	}
+	if ctxt.PackageFile != nil {
+		if pname := ctxt.PackageFile[name]; pname != "" {
+			return addlibpath(ctxt, "internal", "internal", pname, name, "")
+		}
+		ctxt.Logf("loadinternal: cannot find %s\n", name)
+		return nil
+	}
+
 	for i := 0; i < len(ctxt.Libdir); i++ {
 		if *FlagLinkshared {
 			shlibname := filepath.Join(ctxt.Libdir[i], name+".shlibname")
@@ -1239,16 +1252,23 @@ func (l *Link) hostlink() {
 	// toolchain if it is supported.
 	if Buildmode == BuildmodeExe {
 		src := filepath.Join(*flagTmpdir, "trivial.c")
-		if err := ioutil.WriteFile(src, []byte{}, 0666); err != nil {
+		if err := ioutil.WriteFile(src, []byte("int main() { return 0; }"), 0666); err != nil {
 			Errorf(nil, "WriteFile trivial.c failed: %v", err)
 		}
-		cmd := exec.Command(argv[0], "-c", "-no-pie", "trivial.c")
-		cmd.Dir = *flagTmpdir
-		cmd.Env = append([]string{"LC_ALL=C"}, os.Environ()...)
-		out, err := cmd.CombinedOutput()
-		supported := err == nil && !bytes.Contains(out, []byte("unrecognized"))
-		if supported {
-			argv = append(argv, "-no-pie")
+
+		// GCC uses -no-pie, clang uses -nopie.
+		for _, nopie := range []string{"-no-pie", "-nopie"} {
+			cmd := exec.Command(argv[0], nopie, "trivial.c")
+			cmd.Dir = *flagTmpdir
+			cmd.Env = append([]string{"LC_ALL=C"}, os.Environ()...)
+			out, err := cmd.CombinedOutput()
+			// GCC says "unrecognized command line option ‘-no-pie’"
+			// clang says "unknown argument: '-no-pie'"
+			supported := err == nil && !bytes.Contains(out, []byte("unrecognized")) && !bytes.Contains(out, []byte("unknown"))
+			if supported {
+				argv = append(argv, nopie)
+				break
+			}
 		}
 	}
 

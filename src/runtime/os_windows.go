@@ -270,6 +270,12 @@ var useLoadLibraryEx bool
 
 var timeBeginPeriodRetValue uint32
 
+// osRelaxMinNS indicates that sysmon shouldn't osRelax if the next
+// timer is less than 60 ms from now. Since osRelaxing may reduce
+// timer resolution to 15.6 ms, this keeps timer error under roughly 1
+// part in 4.
+const osRelaxMinNS = 60 * 1e6
+
 // osRelax is called by the scheduler when transitioning to and from
 // all Ps being idle.
 //
@@ -616,7 +622,9 @@ func semacreate(mp *m) {
 //go:nosplit
 func newosproc(mp *m, stk unsafe.Pointer) {
 	const _STACK_SIZE_PARAM_IS_A_RESERVATION = 0x00010000
-	thandle := stdcall6(_CreateThread, 0, 0x20000,
+	// stackSize must match SizeOfStackReserve in cmd/link/internal/ld/pe.go.
+	const stackSize = 0x00200000*_64bit + 0x00020000*(1-_64bit)
+	thandle := stdcall6(_CreateThread, 0, stackSize,
 		funcPC(tstart_stdcall), uintptr(unsafe.Pointer(mp)),
 		_STACK_SIZE_PARAM_IS_A_RESERVATION, 0)
 
@@ -654,6 +662,11 @@ func msigsave(mp *m) {
 
 //go:nosplit
 func msigrestore(sigmask sigset) {
+}
+
+//go:nosplit
+//go:nowritebarrierrec
+func clearSignalHandlers() {
 }
 
 //go:nosplit

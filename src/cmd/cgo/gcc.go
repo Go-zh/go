@@ -367,10 +367,17 @@ func (p *Package) guessKinds(f *File) []*Name {
 		notDeclared
 		notSignedIntConst
 	)
+	sawUnmatchedErrors := false
 	for _, line := range strings.Split(stderr, "\n") {
-		if !strings.Contains(line, ": error:") {
-			// we only care about errors.
-			// we tried to turn off warnings on the command line, but one never knows.
+		// Ignore warnings and random comments, with one
+		// exception: newer GCC versions will sometimes emit
+		// an error on a macro #define with a note referring
+		// to where the expansion occurs. We care about where
+		// the expansion occurs, so in that case treat the note
+		// as an error.
+		isError := strings.Contains(line, ": error:")
+		isErrorNote := strings.Contains(line, ": note:") && sawUnmatchedErrors
+		if !isError && !isErrorNote {
 			continue
 		}
 
@@ -388,6 +395,9 @@ func (p *Package) guessKinds(f *File) []*Name {
 		i, _ := strconv.Atoi(line[c1+1 : c2])
 		i--
 		if i < 0 || i >= len(names) {
+			if isError {
+				sawUnmatchedErrors = true
+			}
 			continue
 		}
 
@@ -411,7 +421,14 @@ func (p *Package) guessKinds(f *File) []*Name {
 			sniff[i] |= notStrLiteral
 		case "not-signed-int-const":
 			sniff[i] |= notSignedIntConst
+		default:
+			if isError {
+				sawUnmatchedErrors = true
+			}
+			continue
 		}
+
+		sawUnmatchedErrors = false
 	}
 
 	if !completed {
@@ -421,7 +438,14 @@ func (p *Package) guessKinds(f *File) []*Name {
 	for i, n := range names {
 		switch sniff[i] &^ notSignedIntConst {
 		default:
-			error_(token.NoPos, "could not determine kind of name for C.%s", fixGo(n.Go))
+			var tpos token.Pos
+			for _, ref := range f.Ref {
+				if ref.Name == n {
+					tpos = ref.Pos()
+					break
+				}
+			}
+			error_(tpos, "could not determine kind of name for C.%s", fixGo(n.Go))
 		case notStrLiteral | notType:
 			if sniff[i]&notSignedIntConst != 0 {
 				n.Kind = "uconst"
@@ -2262,7 +2286,7 @@ func (c *typeConv) FuncType(dtype *dwarf.FuncType, pos token.Pos) *FuncType {
 	}
 	var r *Type
 	var gr []*ast.Field
-	if _, ok := dtype.ReturnType.(*dwarf.VoidType); ok {
+	if _, ok := base(dtype.ReturnType).(*dwarf.VoidType); ok {
 		gr = []*ast.Field{{Type: c.goVoid}}
 	} else if dtype.ReturnType != nil {
 		r = c.Type(unqual(dtype.ReturnType), pos)

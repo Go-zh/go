@@ -104,10 +104,10 @@ func testTestDir(t *testing.T, path string, ignore ...string) {
 			case "errorcheck":
 				expectErrors = true
 				for _, arg := range fields[1:] {
-					if arg == "-0" || arg == "-+" {
+					if arg == "-0" || arg == "-+" || arg == "-std" {
 						// Marked explicitly as not expected errors (-0),
-						// or marked as compiling_runtime, which is only done
-						// to trigger runtime-only error output.
+						// or marked as compiling runtime/stdlib, which is only done
+						// to trigger runtime/stdlib-only error output.
 						// In both cases, the code should typecheck.
 						expectErrors = false
 						break
@@ -171,7 +171,7 @@ func TestStdFixed(t *testing.T) {
 		"issue18459.go", // go/types doesn't check validity of //go:xxx directives
 		"issue18882.go", // go/types doesn't check validity of //go:xxx directives
 		"issue20232.go", // go/types handles larger constants than gc
-		"issue20227.go", // go/types does not handle this yet
+		"issue20529.go", // go/types does not have constraints on stack size
 	)
 }
 

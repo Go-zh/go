@@ -568,3 +568,49 @@ func TestPanicInlined(t *testing.T) {
 	pt := new(point)
 	pt.negate()
 }
+
+// Test for issues #3934 and #20018.
+// We want to delay exiting until a panic print is complete.
+func TestPanicRace(t *testing.T) {
+	testenv.MustHaveGoRun(t)
+
+	exe, err := buildTestProg(t, "testprog")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The test is intentionally racy, and in my testing does not
+	// produce the expected output about 0.05% of the time.
+	// So run the program in a loop and only fail the test if we
+	// get the wrong output ten times in a row.
+	const tries = 10
+retry:
+	for i := 0; i < tries; i++ {
+		got, err := testEnv(exec.Command(exe, "PanicRace")).CombinedOutput()
+		if err == nil {
+			t.Logf("try %d: program exited successfully, should have failed", i+1)
+			continue
+		}
+
+		if i > 0 {
+			t.Logf("try %d:\n", i+1)
+		}
+		t.Logf("%s\n", got)
+
+		wants := []string{
+			"panic: crash",
+			"PanicRace",
+			"created by ",
+		}
+		for _, want := range wants {
+			if !bytes.Contains(got, []byte(want)) {
+				t.Logf("did not find expected string %q", want)
+				continue retry
+			}
+		}
+
+		// Test generated expected output.
+		return
+	}
+	t.Errorf("test ran %d times without producing expected output", tries)
+}

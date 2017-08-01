@@ -30,6 +30,25 @@ You must go through the following process <em>prior to contributing</em>.
 You only need to do this once per Google Account.
 </p>
 
+<h2 id="go-contrib-init">Automatically set up &amp; diagnose your development environment</h3>
+<p>
+  The <code>go-contrib-init</code> tool configures and debugs your Go
+  development environment, automatically performing many of the steps
+  on this page, or telling you what you need to do next. If you wish
+  to use it, run:
+</p>
+
+<pre>
+$ go get -u golang.org/x/tools/cmd/go-contrib-init
+$ cd /code/to/edit
+$ go-contrib-init
+</pre>
+
+<p>
+  The tool will either set things up, tell you that everything is
+  configured, or tell you what steps you need to do manually.
+</p>
+
 <h2 id="auth">Configure Git to use Gerrit</h2>
 <p>
 You'll need a web browser and a command line terminal.
@@ -477,7 +496,7 @@ Fixes #159
 
 <p>
 The commented section of the file lists all the modified files in your client.
-It is best to keep unrelated changes in different change lists,
+It is best to keep unrelated changes in different commits,
 so if you see a file listed that should not be included, abort
 the command and move that file to a different branch.
 </p>
@@ -637,7 +656,7 @@ $ git mail
 
 <p>
 Unless explicitly told otherwise, such as in the discussion leading
-up to sending in the change list, it's better not to specify a reviewer.
+up to sending in the change, it's better not to specify a reviewer.
 All changes are automatically CC'ed to the
 <a href="https://groups.google.com/group/golang-codereviews">golang-codereviews@googlegroups.com</a>
 mailing list. If this is your first ever change, there may be a moderation
@@ -685,7 +704,7 @@ You must respond to review comments through the web interface.
 When you have revised the code and are ready for another round of review,
 stage those changes and use <code>git</code> <code>change</code> to update the
 commit.
-To send the update change list for another round of review,
+To send the updated change for another round of review,
 run <code>git</code> <code>mail</code> again.
 </p>
 

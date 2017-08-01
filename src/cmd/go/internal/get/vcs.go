@@ -302,15 +302,20 @@ func svnRemoteRepo(vcsSvn *vcsCmd, rootDir string) (remoteRepo string, err error
 	out := string(outb)
 
 	// Expect:
-	// ...
-	// Repository Root: <URL>
-	// ...
-
-	i := strings.Index(out, "\nRepository Root: ")
+	//
+	//	 ...
+	// 	URL: <URL>
+	// 	...
+	//
+	// Note that we're not using the Repository Root line,
+	// because svn allows checking out subtrees.
+	// The URL will be the URL of the subtree (what we used with 'svn co')
+	// while the Repository Root may be a much higher parent.
+	i := strings.Index(out, "\nURL: ")
 	if i < 0 {
 		return "", fmt.Errorf("unable to parse output of svn info")
 	}
-	out = out[i+len("\nRepository Root: "):]
+	out = out[i+len("\nURL: "):]
 	i = strings.Index(out, "\n")
 	if i < 0 {
 		return "", fmt.Errorf("unable to parse output of svn info")
@@ -324,7 +329,7 @@ func (v *vcsCmd) String() string {
 }
 
 // run runs the command line cmd in the given directory.
-// keyval is a list of key, value pairs.  run expands
+// keyval is a list of key, value pairs. run expands
 // instances of {key} in cmd into value, but only after
 // splitting cmd into individual arguments.
 // If an error occurs, run prints the command line and the
@@ -688,7 +693,7 @@ func repoRootForImportDynamic(importPath string, security web.SecurityMode) (*re
 	// prefix was "uni.edu" and the RepoRoot was "evilroot.com",
 	// make sure we don't trust Bob and check out evilroot.com to
 	// "uni.edu" yet (possibly overwriting/preempting another
-	// non-evil student).  Instead, first verify the root and see
+	// non-evil student). Instead, first verify the root and see
 	// if it matches Bob's claim.
 	if mmi.Prefix != importPath {
 		if cfg.BuildV {

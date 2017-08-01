@@ -1341,12 +1341,13 @@ OpSwitch:
 
 		break OpSwitch
 
-	case OCAP, OLEN, OREAL, OIMAG:
+	case OCAP, OLEN:
 		ok |= Erv
 		if !onearg(n, "%v", n.Op) {
 			n.Type = nil
 			return n
 		}
+
 		n.Left = typecheck(n.Left, Erv)
 		n.Left = defaultlit(n.Left, nil)
 		n.Left = implicitstar(n.Left)
@@ -1356,51 +1357,35 @@ OpSwitch:
 			n.Type = nil
 			return n
 		}
-		switch n.Op {
-		case OCAP:
-			if !okforcap[t.Etype] {
-				goto badcall1
-			}
 
-		case OLEN:
-			if !okforlen[t.Etype] {
-				goto badcall1
-			}
-
-		case OREAL, OIMAG:
-			if !t.IsComplex() {
-				goto badcall1
-			}
-			if Isconst(l, CTCPLX) {
-				r := n
-				if n.Op == OREAL {
-					n = nodfltconst(&l.Val().U.(*Mpcplx).Real)
-				} else {
-					n = nodfltconst(&l.Val().U.(*Mpcplx).Imag)
-				}
-				n.Orig = r
-			}
-
-			n.Type = types.Types[cplxsubtype(t.Etype)]
-			break OpSwitch
+		var ok bool
+		if n.Op == OLEN {
+			ok = okforlen[t.Etype]
+		} else {
+			ok = okforcap[t.Etype]
+		}
+		if !ok {
+			yyerror("invalid argument %L for %v", l, n.Op)
+			n.Type = nil
+			return n
 		}
 
-		// might be constant
+		// result might be constant
+		var res int64 = -1 // valid if >= 0
 		switch t.Etype {
 		case TSTRING:
 			if Isconst(l, CTSTR) {
-				var r Node
-				nodconst(&r, types.Types[TINT], int64(len(l.Val().U.(string))))
-				r.Orig = n
-				n = &r
+				res = int64(len(l.Val().U.(string)))
 			}
 
 		case TARRAY:
-			if callrecv(l) { // has call or receive
-				break
+			if !callrecv(l) {
+				res = t.NumElem()
 			}
+		}
+		if res >= 0 {
 			var r Node
-			nodconst(&r, types.Types[TINT], t.NumElem())
+			nodconst(&r, types.Types[TINT], res)
 			r.Orig = n
 			n = &r
 		}
@@ -1408,10 +1393,73 @@ OpSwitch:
 		n.Type = types.Types[TINT]
 		break OpSwitch
 
-	badcall1:
-		yyerror("invalid argument %L for %v", n.Left, n.Op)
-		n.Type = nil
-		return n
+	case OREAL, OIMAG:
+		ok |= Erv
+		if !onearg(n, "%v", n.Op) {
+			n.Type = nil
+			return n
+		}
+
+		n.Left = typecheck(n.Left, Erv)
+		l := n.Left
+		t := l.Type
+		if t == nil {
+			n.Type = nil
+			return n
+		}
+
+		if t.Etype != TIDEAL && !t.IsComplex() {
+			yyerror("invalid argument %L for %v", l, n.Op)
+			n.Type = nil
+			return n
+		}
+
+		// if the argument is a constant, the result is a constant
+		// (any untyped numeric constant can be represented as a
+		// complex number)
+		if l.Op == OLITERAL {
+			var re, im *Mpflt
+			switch consttype(l) {
+			case CTINT, CTRUNE:
+				re = newMpflt()
+				re.SetInt(l.Val().U.(*Mpint))
+				// im = 0
+			case CTFLT:
+				re = l.Val().U.(*Mpflt)
+				// im = 0
+			case CTCPLX:
+				re = &l.Val().U.(*Mpcplx).Real
+				im = &l.Val().U.(*Mpcplx).Imag
+			default:
+				yyerror("invalid argument %L for %v", l, n.Op)
+				n.Type = nil
+				return n
+			}
+			if n.Op == OIMAG {
+				if im == nil {
+					im = newMpflt()
+				}
+				re = im
+			}
+			orig := n
+			n = nodfltconst(re)
+			n.Orig = orig
+		}
+
+		// determine result type
+		et := t.Etype
+		switch et {
+		case TIDEAL:
+			// result is ideal
+		case TCOMPLEX64:
+			et = TFLOAT32
+		case TCOMPLEX128:
+			et = TFLOAT64
+		default:
+			Fatalf("unexpected Etype: %v\n", et)
+		}
+		n.Type = types.Types[et]
+		break OpSwitch
 
 	case OCOMPLEX:
 		ok |= Erv
@@ -2213,7 +2261,7 @@ func checksliceindex(l *Node, r *Node, tp *types.Type) bool {
 		if r.Int64() < 0 {
 			yyerror("invalid slice index %v (index must be non-negative)", r)
 			return false
-		} else if tp != nil && tp.NumElem() > 0 && r.Int64() > tp.NumElem() {
+		} else if tp != nil && tp.NumElem() >= 0 && r.Int64() > tp.NumElem() {
 			yyerror("invalid slice index %v (out of bounds for %d-element array)", r, tp.NumElem())
 			return false
 		} else if Isconst(l, CTSTR) && r.Int64() > int64(len(l.Val().U.(string))) {
@@ -3240,10 +3288,10 @@ func checkassign(stmt *Node, n *Node) {
 
 	if n.Op == ODOT && n.Left.Op == OINDEXMAP {
 		yyerror("cannot assign to struct field %v in map", n)
-		return
+	} else {
+		yyerror("cannot assign to %v", n)
 	}
-
-	yyerror("cannot assign to %v", n)
+	n.Type = nil
 }
 
 func checkassignlist(stmt *Node, l Nodes) {

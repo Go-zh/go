@@ -50,7 +50,7 @@ func supportsIPv4map() bool {
 // An addrList represents a list of network endpoint addresses.
 type addrList []Addr
 
-// isIPv4 returns true if the Addr contains an IPv4 address.
+// isIPv4 reports whether addr contains an IPv4 address.
 func isIPv4(addr Addr) bool {
 	switch addr := addr.(type) {
 	case *TCPAddr:
@@ -61,6 +61,28 @@ func isIPv4(addr Addr) bool {
 		return addr.IP.To4() != nil
 	}
 	return false
+}
+
+// isNotIPv4 reports whether addr does not contain an IPv4 address.
+func isNotIPv4(addr Addr) bool { return !isIPv4(addr) }
+
+// forResolve returns the most appropriate address in address for
+// a call to ResolveTCPAddr, ResolveUDPAddr, or ResolveIPAddr.
+// IPv4 is preferred, unless addr contains an IPv6 literal.
+func (addrs addrList) forResolve(network, addr string) Addr {
+	var want6 bool
+	switch network {
+	case "ip":
+		// IPv6 literal (addr does NOT contain a port)
+		want6 = count(addr, ':') > 0
+	case "tcp", "udp":
+		// IPv6 literal. (addr contains a port, so look for '[')
+		want6 = count(addr, '[') > 0
+	}
+	if want6 {
+		return addrs.first(isNotIPv4)
+	}
+	return addrs.first(isIPv4)
 }
 
 // first returns the first address which satisfies strategy, or if
@@ -127,6 +149,9 @@ func ipv6only(addr IPAddr) bool {
 //
 // A literal IPv6 address in hostport must be enclosed in square
 // brackets, as in "[::1]:80", "[::1%lo0]:80".
+//
+// See func Dial for a description of the hostport parameter, and host
+// and port results.
 func SplitHostPort(hostport string) (host, port string, err error) {
 	const (
 		missingPort   = "missing port in address"
@@ -194,8 +219,10 @@ func splitHostZone(s string) (host, zone string) {
 }
 
 // JoinHostPort combines host and port into a network address of the
-// form "host:port" or "host%zone:port", if host is a literal IPv6
-// address, "[host]:port" or [host%zone]:port.
+// form "host:port". If host contains a colon, as found in literal
+// IPv6 addresses, then JoinHostPort returns "[host]:port".
+//
+// See func Dial for a description of the host and port parameters.
 func JoinHostPort(host, port string) string {
 	// We assume that host is a literal IPv6 address if host has
 	// colons.
@@ -254,6 +281,13 @@ func (r *Resolver) internetAddrList(ctx context.Context, net, addr string) (addr
 		ips = []IPAddr{{IP: ip}}
 	} else if ip, zone := parseIPv6(host, true); ip != nil {
 		ips = []IPAddr{{IP: ip, Zone: zone}}
+		// Issue 18806: if the machine has halfway configured
+		// IPv6 such that it can bind on "::" (IPv6unspecified)
+		// but not connect back to that same address, fall
+		// back to dialing 0.0.0.0.
+		if ip.Equal(IPv6unspecified) {
+			ips = append(ips, IPAddr{IP: IPv4zero})
+		}
 	} else {
 		// Try as a DNS name.
 		ips, err = r.LookupIPAddr(ctx, host)

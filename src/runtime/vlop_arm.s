@@ -28,26 +28,10 @@
 #include "funcdata.h"
 #include "textflag.h"
 
-/* replaced use of R10 by R11 because the former can be the data segment base register */
-
-TEXT _mulv(SB), NOSPLIT, $0
-	MOVW	l0+0(FP), R2	/* l0 */
-	MOVW	h0+4(FP), R11	/* h0 */
-	MOVW	l1+8(FP), R4	/* l1 */
-	MOVW	h1+12(FP), R5	/* h1 */
-	MULLU	R4, R2, (R7,R6)
-	MUL	R11, R4, R8
-	ADD	R8, R7
-	MUL	R2, R5, R8
-	ADD	R8, R7
-	MOVW	R6, ret_lo+16(FP)
-	MOVW	R7, ret_hi+20(FP)
-	RET
-
 // trampoline for _sfloat2. passes LR as arg0 and
 // saves registers R0-R13 and CPSR on the stack. R0-R12 and CPSR flags can
 // be changed by _sfloat2.
-TEXT _sfloat(SB), NOSPLIT, $68-0 // 4 arg + 14*4 saved regs + cpsr + return value
+TEXT runtime·_sfloat(SB), NOSPLIT, $68-0 // 4 arg + 14*4 saved regs + cpsr + return value
 	MOVW	R14, 4(R13)
 	MOVW	R0, 8(R13)
 	MOVW	$12(R13), R0
@@ -220,7 +204,7 @@ GLOBL fast_udiv_tab<>(SB), RODATA, $64
 // The linker expects the result in RTMP
 #define RTMP R11
 
-TEXT _divu(SB), NOSPLIT, $16-0
+TEXT runtime·_divu(SB), NOSPLIT, $16-0
 	// It's not strictly true that there are no local pointers.
 	// It could be that the saved registers Rq, Rr, Rs, and Rm
 	// contain pointers. However, the only way this can matter
@@ -249,7 +233,7 @@ TEXT _divu(SB), NOSPLIT, $16-0
 	MOVW	16(R13), RM
 	RET
 
-TEXT _modu(SB), NOSPLIT, $16-0
+TEXT runtime·_modu(SB), NOSPLIT, $16-0
 	NO_LOCAL_POINTERS
 	MOVW	Rq, 4(R13)
 	MOVW	Rr, 8(R13)
@@ -267,7 +251,7 @@ TEXT _modu(SB), NOSPLIT, $16-0
 	MOVW	16(R13), RM
 	RET
 
-TEXT _div(SB),NOSPLIT,$16-0
+TEXT runtime·_div(SB),NOSPLIT,$16-0
 	NO_LOCAL_POINTERS
 	MOVW	Rq, 4(R13)
 	MOVW	Rr, 8(R13)
@@ -300,7 +284,7 @@ out1:
 	MOVW	16(R13), RM
 	RET
 
-TEXT _mod(SB),NOSPLIT,$16-0
+TEXT runtime·_mod(SB),NOSPLIT,$16-0
 	NO_LOCAL_POINTERS
 	MOVW	Rq, 4(R13)
 	MOVW	Rr, 8(R13)

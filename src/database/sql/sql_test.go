@@ -877,7 +877,7 @@ func TestStatementClose(t *testing.T) {
 		msg  string
 	}{
 		{&Stmt{stickyErr: want}, "stickyErr not propagated"},
-		{&Stmt{tx: &Tx{}, txds: &driverStmt{Locker: &sync.Mutex{}, si: stubDriverStmt{want}}}, "driverStmt.Close() error not propagated"},
+		{&Stmt{cg: &Tx{}, cgds: &driverStmt{Locker: &sync.Mutex{}, si: stubDriverStmt{want}}}, "driverStmt.Close() error not propagated"},
 	}
 	for _, test := range tests {
 		if err := test.stmt.Close(); err != want {
@@ -2467,6 +2467,71 @@ func TestManyErrBadConn(t *testing.T) {
 	}
 }
 
+// TestIssue20575 ensures the Rows from query does not block
+// closing a transaction. Ensure Rows is closed while closing a trasaction.
+func TestIssue20575(t *testing.T) {
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err = tx.QueryContext(ctx, "SELECT|people|age,name|")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Do not close Rows from QueryContext.
+	err = tx.Rollback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	default:
+	case <-ctx.Done():
+		t.Fatal("timeout: failed to rollback query without closing rows:", ctx.Err())
+	}
+}
+
+// TestIssue20622 tests closing the transaction before rows is closed, requires
+// the race detector to fail.
+func TestIssue20622(t *testing.T) {
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := tx.Query("SELECT|people|age,name|")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := 0
+	for rows.Next() {
+		count++
+		var age int
+		var name string
+		if err := rows.Scan(&age, &name); err != nil {
+			t.Fatal("scan failed", err)
+		}
+
+		if count == 1 {
+			cancel()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	rows.Close()
+	tx.Commit()
+}
+
 // golang.org/issue/5718
 func TestErrBadConnReconnect(t *testing.T) {
 	db := newTestDB(t, "foo")
@@ -3166,16 +3231,62 @@ func TestIssue18719(t *testing.T) {
 	cancel()
 }
 
+func TestIssue20647(t *testing.T) {
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	stmt, err := conn.PrepareContext(ctx, "SELECT|people|name|")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+
+	rows1, err := stmt.QueryContext(ctx)
+	if err != nil {
+		t.Fatal("rows1", err)
+	}
+	defer rows1.Close()
+
+	rows2, err := stmt.QueryContext(ctx)
+	if err != nil {
+		t.Fatal("rows2", err)
+	}
+	defer rows2.Close()
+
+	if rows1.dc != rows2.dc {
+		t.Fatal("stmt prepared on Conn does not use same connection")
+	}
+}
+
 func TestConcurrency(t *testing.T) {
-	doConcurrentTest(t, new(concurrentDBQueryTest))
-	doConcurrentTest(t, new(concurrentDBExecTest))
-	doConcurrentTest(t, new(concurrentStmtQueryTest))
-	doConcurrentTest(t, new(concurrentStmtExecTest))
-	doConcurrentTest(t, new(concurrentTxQueryTest))
-	doConcurrentTest(t, new(concurrentTxExecTest))
-	doConcurrentTest(t, new(concurrentTxStmtQueryTest))
-	doConcurrentTest(t, new(concurrentTxStmtExecTest))
-	doConcurrentTest(t, new(concurrentRandomTest))
+	list := []struct {
+		name string
+		ct   concurrentTest
+	}{
+		{"Query", new(concurrentDBQueryTest)},
+		{"Exec", new(concurrentDBExecTest)},
+		{"StmtQuery", new(concurrentStmtQueryTest)},
+		{"StmtExec", new(concurrentStmtExecTest)},
+		{"TxQuery", new(concurrentTxQueryTest)},
+		{"TxExec", new(concurrentTxExecTest)},
+		{"TxStmtQuery", new(concurrentTxStmtQueryTest)},
+		{"TxStmtExec", new(concurrentTxStmtExecTest)},
+		{"Random", new(concurrentRandomTest)},
+	}
+	for _, item := range list {
+		t.Run(item.name, func(t *testing.T) {
+			doConcurrentTest(t, item.ct)
+		})
+	}
 }
 
 func TestConnectionLeak(t *testing.T) {

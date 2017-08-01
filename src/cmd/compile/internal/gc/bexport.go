@@ -367,9 +367,10 @@ func export(out *bufio.Writer, trace bool) int {
 	}
 
 	// write inlineable function bodies
+	// Don't use range since funcList may grow.
 	objcount = 0
-	for i, f := range p.funcList {
-		if f != nil {
+	for i := 0; i < len(p.funcList); i++ {
+		if f := p.funcList[i]; f != nil {
 			// function has inlineable body:
 			// write index and body
 			if p.trace {
@@ -505,6 +506,13 @@ func (p *exporter) obj(sym *types.Sym) {
 			var f *Func
 			if inlineable {
 				f = asNode(sym.Def).Func
+				// TODO(gri) re-examine reexportdeplist:
+				// Because we can trivially export types
+				// in-place, we don't need to collect types
+				// inside function bodies in the exportlist.
+				// With an adjusted reexportdeplist used only
+				// by the binary exporter, we can also avoid
+				// the global exportlist.
 				reexportdeplist(f.Inl)
 			}
 			p.funcList = append(p.funcList, f)
@@ -556,7 +564,12 @@ func (p *exporter) pos(n *Node) {
 
 func (p *exporter) path(s string) {
 	if i, ok := p.pathIndex[s]; ok {
-		p.index('p', i) // i >= 0
+		// Note: Using p.index(i) here requires the use of p.tag(-len(c)) below
+		//       to get matching debug markers ('t'). But in trace mode p.tag
+		//       assumes that the tag argument is a valid tag that can be looked
+		//       up in the tagString list, rather then some arbitrary slice length.
+		//       Use p.int instead.
+		p.int(i) // i >= 0
 		return
 	}
 	p.pathIndex[s] = len(p.pathIndex)
@@ -697,7 +710,7 @@ func (p *exporter) typ(t *types.Type) {
 			var f *Func
 			if inlineable {
 				f = mfn.Func
-				reexportdeplist(f.Inl)
+				reexportdeplist(mfn.Func.Inl)
 			}
 			p.funcList = append(p.funcList, f)
 		}

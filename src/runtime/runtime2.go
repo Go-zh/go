@@ -453,9 +453,10 @@ type p struct {
 	id          int32
 	status      uint32 // one of pidle/prunning/...
 	link        puintptr
-	schedtick   uint32   // incremented on every scheduler call
-	syscalltick uint32   // incremented on every system call
-	m           muintptr // back-link to associated m (nil if idle)
+	schedtick   uint32     // incremented on every scheduler call
+	syscalltick uint32     // incremented on every system call
+	sysmontick  sysmontick // last tick observed by sysmon
+	m           muintptr   // back-link to associated m (nil if idle)
 	mcache      *mcache
 	racectx     uintptr
 
@@ -518,7 +519,7 @@ type p struct {
 const (
 	// The max value of GOMAXPROCS.
 	// There are no fundamental restrictions on the value.
-	_MaxGomaxprocs = 1 << 8
+	_MaxGomaxprocs = 1 << 10
 )
 
 type schedt struct {
@@ -720,7 +721,6 @@ var (
 	allm        *m
 	allp        [_MaxGomaxprocs + 1]*p
 	gomaxprocs  int32
-	panicking   uint32
 	ncpu        int32
 	forcegc     forcegcstate
 	sched       schedt

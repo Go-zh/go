@@ -6,7 +6,7 @@
 
 <!--{
 	"Title": "The Go Programming Language Specification",
-	"Subtitle": "Version of May 9, 2017",
+	"Subtitle": "Version of June 28, 2017",
 	"Path": "/ref/spec"
 }-->
 
@@ -6583,7 +6583,7 @@ to the type of the other operand.
 <div class="english">
 <p>
 The right operand in a shift expression must have unsigned integer type
-or be an untyped constant that can be converted to unsigned integer type.
+or be an untyped constant representable by a value of type <code>uint</code>.
 If the left operand of a non-constant shift expression is an untyped constant,
 it is first converted to the type it would assume if the shift expression were
 replaced by its left operand alone.
@@ -9712,8 +9712,8 @@ a single byte in the string.
 <li>
 The iteration order over maps is not specified
 and is not guaranteed to be the same from one iteration to the next.
-If map entries that have not yet been reached are removed during iteration,
-the corresponding iteration values will not be produced. If map entries are
+If a map entry that has not yet been reached is removed during iteration,
+the corresponding iteration value will not be produced. If a map entry is
 created during iteration, that entry may be produced during the iteration or
 may be skipped. The choice may vary for each entry created and from one
 iteration to the next.

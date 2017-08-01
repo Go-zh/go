@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package bufio implements buffered I/O.  It wraps an io.Reader or io.Writer
+// Package bufio implements buffered I/O. It wraps an io.Reader or io.Writer
 // object, creating another object (Reader or Writer) that also implements
 // the interface but provides buffering and some help for textual I/O.
 package bufio
@@ -458,6 +458,7 @@ func (b *Reader) ReadString(delim byte) (string, error) {
 }
 
 // WriteTo implements io.WriterTo.
+// This may make multiple calls to the Read method of the underlying Reader.
 func (b *Reader) WriteTo(w io.Writer) (n int64, err error) {
 	n, err = b.writeBuf(w)
 	if err != nil {

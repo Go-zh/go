@@ -262,7 +262,7 @@ var (
 	mutexProfile         = flag.String("test.mutexprofile", "", "write a mutex contention profile to the named file after execution")
 	mutexProfileFraction = flag.Int("test.mutexprofilefraction", 1, "if >= 0, calls runtime.SetMutexProfileFraction()")
 	traceFile            = flag.String("test.trace", "", "write an execution trace to `file`")
-	timeout              = flag.Duration("test.timeout", 0, "fail test binary execution after duration `d` (0 means unlimited)")
+	timeout              = flag.Duration("test.timeout", 0, "panic test binary after duration `d` (0 means unlimited)")
 	cpuListStr           = flag.String("test.cpu", "", "comma-separated `list` of cpu counts to run each test with")
 	parallel             = flag.Int("test.parallel", runtime.GOMAXPROCS(0), "run at most `n` tests in parallel")
 
@@ -748,14 +748,15 @@ func tRunner(t *T, fn func(t *T)) {
 	t.finished = true
 }
 
-// Run runs f as a subtest of t called name. It reports whether f succeeded.
-// Run will block until all its parallel subtests have completed.
+// Run runs f as a subtest of t called name. It reports whether f succeeded. Run
+// runs f in a separate goroutine and will block until all its parallel subtests
+// have completed.
 //
-// Run may be called simultaneously from multiple goroutines, but all such
-// calls must happen before the outer test function for t returns.
+// Run may be called simultaneously from multiple goroutines, but all such calls
+// must return before the outer test function for t returns.
 func (t *T) Run(name string, f func(t *T)) bool {
 	atomic.StoreInt32(&t.hasSub, 1)
-	testName, ok := t.context.match.fullName(&t.common, name)
+	testName, ok, _ := t.context.match.fullName(&t.common, name)
 	if !ok {
 		return true
 	}

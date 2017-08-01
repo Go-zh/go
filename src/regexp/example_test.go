@@ -39,11 +39,11 @@ func ExampleMatchString() {
 }
 
 func ExampleRegexp_FindString() {
-	re := regexp.MustCompile("fo.?")
-	fmt.Printf("%q\n", re.FindString("seafood"))
+	re := regexp.MustCompile("foo.?")
+	fmt.Printf("%q\n", re.FindString("seafood fool"))
 	fmt.Printf("%q\n", re.FindString("meat"))
 	// Output:
-	// "foo"
+	// "food"
 	// ""
 }
 
@@ -107,6 +107,17 @@ func ExampleRegexp_FindAllStringSubmatchIndex() {
 	// [[1 3 2 2] [4 7 5 6]]
 	// [[1 5 2 4] [6 8 7 7]]
 	// []
+}
+
+func ExampleRegexp_MatchString() {
+	re := regexp.MustCompile("(gopher){2}")
+	fmt.Println(re.MatchString("gopher"))
+	fmt.Println(re.MatchString("gophergopher"))
+	fmt.Println(re.MatchString("gophergophergopher"))
+	// Output:
+	// false
+	// true
+	// true
 }
 
 func ExampleRegexp_ReplaceAllLiteralString() {

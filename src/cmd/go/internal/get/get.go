@@ -46,7 +46,7 @@ The -t flag instructs get to also download the packages required to build
 the tests for the specified packages.
 
 The -u flag instructs get to use the network to update the named packages
-and their dependencies.  By default, get uses the network to check out
+and their dependencies. By default, get uses the network to check out
 missing packages but does not use it to look for updates to existing packages.
 
 The -v flag enables verbose progress and debug output.
@@ -60,8 +60,8 @@ get uses the first one. For more details see: 'go help gopath'.
 When checking out or updating a package, get looks for a branch or tag
 that matches the locally installed version of Go. The most important
 rule is that if the local installation is running version "go1", get
-searches for a branch or tag named "go1". If no such version exists it
-retrieves the most recent version of the package.
+searches for a branch or tag named "go1". If no such version exists
+it retrieves the default branch of the package.
 
 When go get checks out or updates a Git repository,
 it also updates any git submodules referenced by the repository.
@@ -90,6 +90,9 @@ func init() {
 }
 
 func runGet(cmd *base.Command, args []string) {
+	work.InstrumentInit()
+	work.BuildModeInit()
+
 	if *getF && !*getU {
 		base.Fatalf("go get: cannot use -f flag without -u")
 	}
@@ -121,7 +124,7 @@ func runGet(cmd *base.Command, args []string) {
 		os.Setenv("GIT_SSH_COMMAND", "ssh -o ControlMaster=no")
 	}
 
-	// Phase 1.  Download/update.
+	// Phase 1. Download/update.
 	var stk load.ImportStack
 	mode := 0
 	if *getT {
@@ -151,7 +154,7 @@ func runGet(cmd *base.Command, args []string) {
 	args = load.ImportPaths(args)
 	load.PackagesForBuild(args)
 
-	// Phase 3.  Install.
+	// Phase 3. Install.
 	if *getD {
 		// Download only.
 		// Check delayed until now so that importPaths
@@ -298,7 +301,8 @@ func download(arg string, parent *load.Package, stk *load.ImportStack, mode int)
 	// due to wildcard expansion.
 	for _, p := range pkgs {
 		if *getFix {
-			base.Run(cfg.BuildToolexec, str.StringList(base.Tool("fix"), base.RelPaths(p.Internal.AllGoFiles)))
+			files := base.FilterDotUnderscoreFiles(base.RelPaths(p.Internal.AllGoFiles))
+			base.Run(cfg.BuildToolexec, str.StringList(base.Tool("fix"), files))
 
 			// The imports might have changed, so reload again.
 			p = load.ReloadPackage(arg, stk)
@@ -513,7 +517,7 @@ func downloadPackage(p *load.Package) error {
 // Version "weekly.YYYY-MM-DD" matches tags like "go.weekly.YYYY-MM-DD".
 //
 // NOTE(rsc): Eventually we will need to decide on some logic here.
-// For now, there is only "go1".  This matches the docs in go help get.
+// For now, there is only "go1". This matches the docs in go help get.
 func selectTag(goVersion string, tags []string) (match string) {
 	for _, t := range tags {
 		if t == "go1" {

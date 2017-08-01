@@ -154,8 +154,11 @@ var optab = []Optab{
 	{AMVN, C_SCON, C_NONE, C_REG, 13, 8, 0, 0, 0},
 	{ACMP, C_SCON, C_REG, C_NONE, 13, 8, 0, 0, 0},
 	{AADD, C_RCON2A, C_REG, C_REG, 106, 8, 0, 0, 0},
+	{AADD, C_RCON2A, C_NONE, C_REG, 106, 8, 0, 0, 0},
 	{AORR, C_RCON2A, C_REG, C_REG, 106, 8, 0, 0, 0},
+	{AORR, C_RCON2A, C_NONE, C_REG, 106, 8, 0, 0, 0},
 	{AADD, C_RCON2S, C_REG, C_REG, 107, 8, 0, 0, 0},
+	{AADD, C_RCON2S, C_NONE, C_REG, 107, 8, 0, 0, 0},
 	{AADD, C_LCON, C_REG, C_REG, 13, 8, 0, LFROM, 0},
 	{AADD, C_LCON, C_NONE, C_REG, 13, 8, 0, LFROM, 0},
 	{AAND, C_LCON, C_REG, C_REG, 13, 8, 0, LFROM, 0},
@@ -1063,7 +1066,7 @@ func immrot2a(v uint32) (uint32, uint32) {
 // such that the encoded constants y, x satisfy y-x==v, y&x==0.
 // Returns 0,0 if no such decomposition of v exists.
 func immrot2s(v uint32) (uint32, uint32) {
-	if immrot(v) == 0 {
+	if immrot(v) != 0 {
 		return v, 0
 	}
 	// suppose v in the form of {leading 00, upper effective bits, lower 8 effective bits, trailing 00}
@@ -1259,11 +1262,15 @@ func (c *ctxt5) aclass(a *obj.Addr) int {
 			if uint32(c.instoffset) <= 0xffff && objabi.GOARM == 7 {
 				return C_SCON
 			}
-			if x, y := immrot2a(uint32(c.instoffset)); x != 0 && y != 0 {
-				return C_RCON2A
-			}
-			if y, x := immrot2s(uint32(c.instoffset)); x != 0 && y != 0 {
-				return C_RCON2S
+			if c.ctxt.Headtype != objabi.Hnacl {
+				// Don't split instructions on NaCl. The validator is not
+				// happy with it. See Issue 20595.
+				if x, y := immrot2a(uint32(c.instoffset)); x != 0 && y != 0 {
+					return C_RCON2A
+				}
+				if y, x := immrot2s(uint32(c.instoffset)); x != 0 && y != 0 {
+					return C_RCON2S
+				}
 			}
 			return C_LCON
 
@@ -1334,6 +1341,27 @@ func (c *ctxt5) oplook(p *obj.Prog) *Optab {
 		default:
 			c.ctxt.Diag("invalid register in %v", p)
 		}
+	}
+
+	// check illegal base register
+	switch a1 {
+	case C_SHIFT:
+		if p.From.Reg == 0 { // no base register
+			break
+		}
+		fallthrough
+	case C_SOREG, C_LOREG, C_HOREG, C_FOREG, C_ROREG, C_HFOREG, C_SROREG:
+		if p.From.Reg < REG_R0 || REG_R15 < p.From.Reg {
+			c.ctxt.Diag("illegal base register: %v", p)
+		}
+	default:
+	}
+	switch a3 {
+	case C_SOREG, C_LOREG, C_HOREG, C_FOREG, C_ROREG, C_HFOREG, C_SROREG, C_SHIFT:
+		if p.To.Reg < REG_R0 || REG_R15 < p.To.Reg {
+			c.ctxt.Diag("illegal base register: %v", p)
+		}
+	default:
 	}
 
 	// If current instruction has a .S suffix (flags update),
@@ -1473,10 +1501,10 @@ func buildop(ctxt *obj.Link) {
 
 	deferreturn = ctxt.Lookup("runtime.deferreturn")
 
-	symdiv = ctxt.Lookup("_div")
-	symdivu = ctxt.Lookup("_divu")
-	symmod = ctxt.Lookup("_mod")
-	symmodu = ctxt.Lookup("_modu")
+	symdiv = ctxt.Lookup("runtime._div")
+	symdivu = ctxt.Lookup("runtime._divu")
+	symmod = ctxt.Lookup("runtime._mod")
+	symmodu = ctxt.Lookup("runtime._modu")
 
 	var n int
 
@@ -1717,6 +1745,9 @@ func (c *ctxt5) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		c.aclass(&p.From)
 		r := int(p.Reg)
 		rt := int(p.To.Reg)
+		if r == 0 {
+			r = rt
+		}
 		x, y := immrot2a(uint32(c.instoffset))
 		var as2 obj.As
 		switch p.As {
@@ -1744,6 +1775,9 @@ func (c *ctxt5) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		c.aclass(&p.From)
 		r := int(p.Reg)
 		rt := int(p.To.Reg)
+		if r == 0 {
+			r = rt
+		}
 		y, x := immrot2s(uint32(c.instoffset))
 		var as2 obj.As
 		switch p.As {
@@ -2053,7 +2087,7 @@ func (c *ctxt5) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		o1 |= (uint32(p.To.Reg) & 15) << 12
 
 	case 36: /* mov R,PSR */
-		o1 = 2<<23 | 0x29f<<12 | 0<<4
+		o1 = 2<<23 | 0x2cf<<12 | 0<<4
 
 		if p.Scond&C_FBIT != 0 {
 			o1 ^= 0x010 << 12
@@ -2065,7 +2099,7 @@ func (c *ctxt5) asmout(p *obj.Prog, o *Optab, out []uint32) {
 	case 37: /* mov $con,PSR */
 		c.aclass(&p.From)
 
-		o1 = 2<<23 | 0x29f<<12 | 0<<4
+		o1 = 2<<23 | 0x2cf<<12 | 0<<4
 		if p.Scond&C_FBIT != 0 {
 			o1 ^= 0x010 << 12
 		}
@@ -2188,14 +2222,14 @@ func (c *ctxt5) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		o1 |= (uint32(rf)&15)<<0 | (uint32(rt)&15)<<12
 
 	case 56: /* move to FP[CS]R */
-		o1 = ((uint32(p.Scond)&C_SCOND)^C_SCOND_XOR)<<28 | 0xe<<24 | 1<<8 | 1<<4
+		o1 = ((uint32(p.Scond)&C_SCOND)^C_SCOND_XOR)<<28 | 0xee1<<16 | 0xa1<<4
 
-		o1 |= ((uint32(p.To.Reg)&1)+1)<<21 | (uint32(p.From.Reg)&15)<<12
+		o1 |= (uint32(p.From.Reg) & 15) << 12
 
 	case 57: /* move from FP[CS]R */
-		o1 = ((uint32(p.Scond)&C_SCOND)^C_SCOND_XOR)<<28 | 0xe<<24 | 1<<8 | 1<<4
+		o1 = ((uint32(p.Scond)&C_SCOND)^C_SCOND_XOR)<<28 | 0xef1<<16 | 0xa1<<4
 
-		o1 |= ((uint32(p.From.Reg)&1)+1)<<21 | (uint32(p.To.Reg)&15)<<12 | 1<<20
+		o1 |= (uint32(p.To.Reg) & 15) << 12
 
 	case 58: /* movbu R,R */
 		o1 = c.oprrr(p, AAND, int(p.Scond))
@@ -2236,10 +2270,13 @@ func (c *ctxt5) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		}
 
 		if p.From.Offset&(^0xf) != 0 {
-			c.ctxt.Diag("bad shift in LDRSB")
+			c.ctxt.Diag("bad shift: %v", p)
 		}
 		o1 = c.olhrr(int(p.From.Offset), int(p.From.Reg), int(p.To.Reg), int(p.Scond))
 		o1 ^= 1<<5 | 1<<6
+		if p.Scond&C_UBIT != 0 {
+			o1 &^= 1 << 23
+		}
 
 	case 61: /* movw/b/bu R,R<<[IR](R) -> str indexed */
 		if p.To.Reg == 0 {
@@ -2850,7 +2887,7 @@ func (c *ctxt5) oprrr(p *obj.Prog, a obj.As, sc int) uint32 {
 		return o&(0xf<<28) | 0x12<<20 | 0xa<<4
 
 	case AMULBB:
-		return o&(0xf<<28) | 0x16<<20 | 0xf<<12 | 0x8<<4
+		return o&(0xf<<28) | 0x16<<20 | 0x8<<4
 
 	case AMULAWT:
 		return o&(0xf<<28) | 0x12<<20 | 0xc<<4

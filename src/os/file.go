@@ -279,3 +279,40 @@ func (f *File) wrapErr(op string, err error) error {
 	}
 	return &PathError{op, f.name, err}
 }
+
+// TempDir returns the default directory to use for temporary files.
+//
+// On Unix systems, it returns $TMPDIR if non-empty, else /tmp.
+// On Windows, it uses GetTempPath, returning the first non-empty
+// value from %TMP%, %TEMP%, %USERPROFILE%, or the Windows directory.
+// On Plan 9, it returns /tmp.
+//
+// The directory is neither guaranteed to exist nor have accessible
+// permissions.
+func TempDir() string {
+	return tempDir()
+}
+
+// Chmod changes the mode of the named file to mode.
+// If the file is a symbolic link, it changes the mode of the link's target.
+// If there is an error, it will be of type *PathError.
+//
+// A different subset of the mode bits are used, depending on the
+// operating system.
+//
+// On Unix, the mode's permission bits, ModeSetuid, ModeSetgid, and
+// ModeSticky are used.
+//
+// On Windows, the mode must be non-zero but otherwise only the 0200
+// bit (owner writable) of mode is used; it controls whether the
+// file's read-only attribute is set or cleared. attribute. The other
+// bits are currently unused. Use mode 0400 for a read-only file and
+// 0600 for a readable+writable file.
+//
+// On Plan 9, the mode's permission bits, ModeAppend, ModeExclusive,
+// and ModeTemporary are used.
+func Chmod(name string, mode FileMode) error { return chmod(name, mode) }
+
+// Chmod changes the mode of the file to mode.
+// If there is an error, it will be of type *PathError.
+func (f *File) Chmod(mode FileMode) error { return f.chmod(mode) }

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"internal/testenv"
 	"io"
+	"io/ioutil"
 	"math/big"
 	"os"
 	"os/exec"
@@ -20,6 +21,7 @@ import (
 	"runtime/pprof/internal/profile"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -542,6 +544,10 @@ func blockMutex() {
 		time.Sleep(blockDelay)
 		mu.Unlock()
 	}()
+	// Note: Unlock releases mu before recording the mutex event,
+	// so it's theoretically possible for this to proceed and
+	// capture the profile before the event is recorded. As long
+	// as this is blocked before the unlock happens, it's okay.
 	mu.Lock()
 }
 
@@ -560,7 +566,6 @@ func blockCond() {
 }
 
 func TestMutexProfile(t *testing.T) {
-	testenv.SkipFlaky(t, 19139)
 	old := runtime.SetMutexProfileFraction(1)
 	defer runtime.SetMutexProfileFraction(old)
 	if old != 0 {
@@ -709,4 +714,33 @@ func TestCPUProfileLabel(t *testing.T) {
 			cpuHogger(cpuHog1, dur)
 		})
 	})
+}
+
+// Check that there is no deadlock when the program receives SIGPROF while in
+// 64bit atomics' critical section. Used to happen on mips{,le}. See #20146.
+func TestAtomicLoadStore64(t *testing.T) {
+	f, err := ioutil.TempFile("", "profatomic")
+	if err != nil {
+		t.Fatalf("TempFile: %v", err)
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	if err := StartCPUProfile(f); err != nil {
+		t.Fatal(err)
+	}
+	defer StopCPUProfile()
+
+	var flag uint64
+	done := make(chan bool, 1)
+
+	go func() {
+		for atomic.LoadUint64(&flag) == 0 {
+			runtime.Gosched()
+		}
+		done <- true
+	}()
+	time.Sleep(50 * time.Millisecond)
+	atomic.StoreUint64(&flag, 1)
+	<-done
 }
