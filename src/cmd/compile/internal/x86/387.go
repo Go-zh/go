@@ -46,6 +46,9 @@ func ssaGenValue387(s *gc.SSAGenState, v *ssa.Value) {
 		case ssa.Op386MOVSSloadidx1, ssa.Op386MOVSDloadidx1:
 			p.From.Scale = 1
 			p.From.Index = v.Args[1].Reg()
+			if p.From.Index == x86.REG_SP {
+				p.From.Reg, p.From.Index = p.From.Index, p.From.Reg
+			}
 		case ssa.Op386MOVSSloadidx4:
 			p.From.Scale = 4
 			p.From.Index = v.Args[1].Reg()
@@ -95,6 +98,9 @@ func ssaGenValue387(s *gc.SSAGenState, v *ssa.Value) {
 		case ssa.Op386MOVSSstoreidx1, ssa.Op386MOVSDstoreidx1:
 			p.To.Scale = 1
 			p.To.Index = v.Args[1].Reg()
+			if p.To.Index == x86.REG_SP {
+				p.To.Reg, p.To.Index = p.To.Index, p.To.Reg
+			}
 		case ssa.Op386MOVSSstoreidx4:
 			p.To.Scale = 4
 			p.To.Index = v.Args[1].Reg()
@@ -120,7 +126,7 @@ func ssaGenValue387(s *gc.SSAGenState, v *ssa.Value) {
 			p = s.Prog(x86.AFLDCW)
 			p.From.Type = obj.TYPE_MEM
 			p.From.Name = obj.NAME_EXTERN
-			p.From.Sym = gc.Sysfunc("controlWord32")
+			p.From.Sym = gc.ControlWord32
 		}
 
 		var op obj.As
@@ -210,7 +216,7 @@ func ssaGenValue387(s *gc.SSAGenState, v *ssa.Value) {
 		p = s.Prog(x86.AFLDCW)
 		p.From.Type = obj.TYPE_MEM
 		p.From.Name = obj.NAME_EXTERN
-		p.From.Sym = gc.Sysfunc("controlWord64trunc")
+		p.From.Sym = gc.ControlWord64trunc
 
 		// Now do the conversion.
 		p = s.Prog(x86.AFMOVLP)

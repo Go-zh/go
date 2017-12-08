@@ -6,7 +6,7 @@
 
 <!--{
 	"Title": "The Go Programming Language Specification",
-	"Subtitle": "Version of June 28, 2017",
+	"Subtitle": "Version of October 25, 2017",
 	"Path": "/ref/spec"
 }-->
 
@@ -34,8 +34,7 @@ Go is a general-purpose language designed with systems programming
 in mind. It is strongly typed and garbage-collected and has explicit
 support for concurrent programming.  Programs are constructed from
 <i>packages</i>, whose properties allow efficient management of
-dependencies. The existing implementations use a traditional
-compile/link model to generate executable binaries.
+dependencies.
 </p>
 </div>
 
@@ -1177,11 +1176,7 @@ or <a href="#Conversions">conversion</a>, or implicitly when used in a
 <a href="#Assignments">assignment</a> or as an
 operand in an <a href="#Expressions">expression</a>.
 It is an error if the constant value
-cannot be represented as a value of the respective type.
-For instance, <code>3.0</code> can be given any integer or any
-floating-point type, while <code>2147483648.0</code> (equal to <code>1&lt;&lt;31</code>)
-can be given the types <code>float32</code>, <code>float64</code>, or <code>uint32</code> but
-not <code>int32</code> or <code>string</code>.
+cannot be <a href="#Representability">represented</a> as a value of the respective type.
 </p>
 </div>
 
@@ -1527,7 +1522,8 @@ using a receiver of that type.
 <p>
 A <i>boolean type</i> represents the set of Boolean truth values
 denoted by the predeclared constants <code>true</code>
-and <code>false</code>. The predeclared boolean type is <code>bool</code>.
+and <code>false</code>. The predeclared boolean type is <code>bool</code>;
+it is a <a href="#Type_definitions">defined type</a>.
 </p>
 </div>
 
@@ -1632,8 +1628,9 @@ uintptr  大到足以存储指针值无解释位的无符号整数
 
 <div class="english">
 <p>
-To avoid portability issues all numeric types are distinct except
-<code>byte</code>, which is an alias for <code>uint8</code>, and
+To avoid portability issues all numeric types are <a href="#Type_definitions">defined
+types</a> and thus distinct except
+<code>byte</code>, which is an <a href="#Alias_declarations">alias</a> for <code>uint8</code>, and
 <code>rune</code>, which is an alias for <code>int32</code>.
 Conversions
 are required when different numeric types are mixed in an expression
@@ -1663,7 +1660,8 @@ A <i>string type</i> represents the set of string values.
 A string value is a (possibly empty) sequence of bytes.
 Strings are immutable: once created,
 it is impossible to change the contents of a string.
-The predeclared string type is <code>string</code>.
+The predeclared string type is <code>string</code>;
+it is a <a href="#Type_definitions">defined type</a>.
 </p>
 </div>
 
@@ -1728,7 +1726,8 @@ ElementType = Type .
 <div class="english">
 <p>
 The length is part of the array's type; it must evaluate to a
-non-negative <a href="#Constants">constant</a> representable by a value
+non-negative <a href="#Constants">constant</a>
+<a href="#Representability">representable</a> by a value
 of type <code>int</code>.
 The length of array <code>a</code> can be discovered
 using the built-in function <a href="#Length_and_capacity"><code>len</code></a>.
@@ -2978,7 +2977,7 @@ are different because <code>B0</code> is different from <code>[]string</code>.
 <div class="english">
 <p>
 A value <code>x</code> is <i>assignable</i> to a <a href="#Variables">variable</a> of type <code>T</code>
-("<code>x</code> is assignable to <code>T</code>") in any of these cases:
+("<code>x</code> is assignable to <code>T</code>") if one of the following conditions applies:
 </p>
 
 <ul>
@@ -3004,7 +3003,8 @@ and at least one of <code>V</code> or <code>T</code> is not a defined type.
 is a pointer, function, slice, map, channel, or interface type.
 </li>
 <li>
-<code>x</code> is an untyped <a href="#Constants">constant</a> representable
+<code>x</code> is an untyped <a href="#Constants">constant</a>
+<a href="#Representability">representable</a>
 by a value of type <code>T</code>.
 </li>
 </ul>
@@ -3048,6 +3048,119 @@ Any value may be assigned to the <a href="#Blank_identifier">blank identifier</a
 <p>
 任何类型都可赋予<a href="#空白标识符">空白标识符</a>.
 </p>
+
+
+<div class="english">
+<h3 id="Representability">Representability</h3>
+</div>
+
+<h3 id="可表示性">可表示性</h3>
+
+<div class="english">
+<p>
+A <a href="#Constants">constant</a> <code>x</code> is <i>representable</i>
+by a value of type <code>T</code> if one of the following conditions applies:
+</p>
+
+<ul>
+<li>
+<code>x</code> is in the set of values <a href="#Types">determined</a> by <code>T</code>.
+</li>
+
+<li>
+<code>T</code> is a floating-point type and <code>x</code> can be rounded to <code>T</code>'s
+precision without overflow. Rounding uses IEEE 754 round-to-even rules but with an IEEE
+negative zero further simplified to an unsigned zero. Note that constant values never result
+in an IEEE negative zero, NaN, or infinity.
+</li>
+
+<li>
+<code>T</code> is a complex type, and <code>x</code>'s
+<a href="#Complex_numbers">components</a> <code>real(x)</code> and <code>imag(x)</code>
+are representable by values of <code>T</code>'s component type (<code>float32</code> or
+<code>float64</code>).
+</li>
+</ul>
+</div>
+
+<p>
+若满足以下条件，则<a href="#常量">常量</a> <code>x</code> <b>可表示</b> 为
+<code>T</code> 类型的值：
+</p>
+
+<ul>
+<li>
+<code>x</code> 在由 <code>T</code> 所<a href="#类型">确定</a>的值的集合中。
+</li>
+
+<li>
+<code>T</code> 为浮点类型且 <code>x</code> 可被舍入到 <code>T</code> 的精度而不会溢出。
+舍入遵循 IEEE 754 「舍入到偶数」规则，不过 IEEE 负零会进一步简化为无符号零。
+注意常量值永远不会产生 IEEE 负零、NaN 或无限。
+</li>
+
+<li>
+<code>T</code> 为复数类型，且 <code>x</code> 的<a href="#复数">实虚部</a>
+<code>real(x)</code> 和 <code>imag(x)</code> 可被表示为 <code>T</code>
+的部分类型（<code>float32</code> 或 <code>float64</code>）的值。
+</li>
+</ul>
+
+<div class="english">
+<pre>
+x                   T           x is representable by a value of T because
+
+'a'                 byte        97 is in the set of byte values
+97                  rune        rune is an alias for int32, and 97 is in the set of 32-bit integers
+"foo"               string      "foo" is in the set of string values
+1024                int16       1024 is in the set of 16-bit integers
+42.0                byte        42 is in the set of unsigned 8-bit integers
+1e10                uint64      10000000000 is in the set of unsigned 64-bit integers
+2.718281828459045   float32     2.718281828459045 rounds to 2.7182817 which is in the set of float32 values
+-1e-1000            float64     -1e-1000 rounds to IEEE -0.0 which is further simplified to 0.0
+0i                  int         0 is an integer value
+(42 + 0i)           float32     42.0 (with zero imaginary part) is in the set of float32 values
+</pre>
+
+<pre>
+x                   T           x is not representable by a value of T because
+
+0                   bool        0 is not in the set of boolean values
+'a'                 string      'a' is a rune, it is not in the set of string values
+1024                byte        1024 is not in the set of unsigned 8-bit integers
+-1                  uint16      -1 is not in the set of unsigned 16-bit integers
+1.1                 int         1.1 is not an integer value
+42i                 float32     (0 + 42i) is not in the set of float32 values
+1e1000              float64     1e1000 overflows to IEEE +Inf after rounding
+</pre>
+</div>
+
+<pre>
+x                   T           x 可表示为一个 T 类型的值，因为
+
+'a'                 byte        97 属于 byte 值的集合
+97                  rune        rune 是 int32 的别名，且 97 属于 32 位整数值的集合
+"foo"               string      "foo" 属于 string 值的集合
+1024                int16       1024 属于 16 位整数的集合
+42.0                byte        42 属于无符号 8 位整数的集合
+1e10                uint64      10000000000 属于 64 位无符号整数的集合
+2.718281828459045   float32     2.718281828459045 舍入到 2.7182817，它属于 float32 值的集合
+-1e-1000            float64     -1e-1000 舍入到 IEEE -0.0，它进一步简化为 0.0
+0i                  int         0 是一个整数值
+(42 + 0i)           float32     42.0（实部为零）属于 float32 值的集合
+</pre>
+
+<pre>
+x                   T           x 无法表示为一个 T 类型的值，因为
+
+0                   bool        0 不属于布尔值的集合
+'a'                 string      'a' 是一个 rune，它不属于 string 值的集合
+1024                byte        1024 不属于无符号 8 位整数的集合
+-1                  uint16      -1 不属于 16 位无符号整数的集合
+1.1                 int         1.1 不是一个整数值
+42i                 float32     (0 + 42i) 不属于 float32 值的集合
+1e1000              float64     1e1000 舍入后溢出到 IEEE +Inf
+</pre>
 
 
 <div class="english">
@@ -3515,7 +3628,7 @@ const u, v float32 = 0, 3    // u = 0.0, v = 3.0
 <div class="english">
 <p>
 Within a parenthesized <code>const</code> declaration list the
-expression list may be omitted from any but the first declaration.
+expression list may be omitted from any but the first ConstSpec.
 Such an empty list is equivalent to the textual substitution of the
 first preceding non-empty expression list and its type if any.
 Omitting the list of expressions is therefore equivalent to
@@ -3540,7 +3653,7 @@ const (
 </div>
 
 <p>
-在 <code>const</code> 后括号中的声明列表，除第一句声明外，任何表达式列表都可省略。
+在 <code>const</code> 后括号中的声明列表中，除第一个 ConstSpec 外，任何表达式列表都可省略。
 若前面第一个非空表达式有类型，那么这样的空列表等价于该表达式原文和类型的代换。
 因此，省略表达式的列表等价于重复前面的列表。其标识符的数量必须与上一个表达式的数量相等。
 连同 <a href="#Iota"><code>iota</code> 常量生成器</a>，该机制允许轻量级连续值声明：
@@ -3566,33 +3679,33 @@ const (
 <p>
 Within a <a href="#Constant_declarations">constant declaration</a>, the predeclared identifier
 <code>iota</code> represents successive untyped integer <a href="#Constants">
-constants</a>. It is reset to 0 whenever the reserved word <code>const</code>
-appears in the source and increments after each <a href="#ConstSpec">ConstSpec</a>.
+constants</a>. Its value is the index of the respective <a href="#ConstSpec">ConstSpec</a>
+in that constant declaration, starting at zero.
 It can be used to construct a set of related constants:
 </p>
 
 <pre>
-const ( // iota is reset to 0
+const (
 	c0 = iota  // c0 == 0
 	c1 = iota  // c1 == 1
 	c2 = iota  // c2 == 2
 )
 
-const ( // iota is reset to 0
-	a = 1 &lt;&lt; iota  // a == 1
-	b = 1 &lt;&lt; iota  // b == 2
-	c = 3          // c == 3  (iota is not used but still incremented)
-	d = 1 &lt;&lt; iota  // d == 8
+const (
+	a = 1 &lt;&lt; iota  // a == 1  (iota == 0)
+	b = 1 &lt;&lt; iota  // b == 2  (iota == 1)
+	c = 3          // c == 3  (iota == 2, unused)
+	d = 1 &lt;&lt; iota  // d == 8  (iota == 3)
 )
 
-const ( // iota is reset to 0
+const (
 	u         = iota * 42  // u == 0     (untyped integer constant)
 	v float64 = iota * 42  // v == 42.0  (float64 constant)
 	w         = iota * 42  // w == 84    (untyped integer constant)
 )
 
-const x = iota  // x == 0  (iota has been reset)
-const y = iota  // y == 0  (iota has been reset)
+const x = iota  // x == 0
+const y = iota  // y == 0
 </pre>
 </div>
 
@@ -3628,16 +3741,15 @@ const y = iota  // y == 0  （iota 已重置）
 
 <div class="english">
 <p>
-Within an ExpressionList, the value of each <code>iota</code> is the same because
-it is only incremented after each ConstSpec:
+By definition, multiple uses of <code>iota</code> in the same ConstSpec all have the same value:
 </p>
 
 <pre>
 const (
-	bit0, mask0 = 1 &lt;&lt; iota, 1&lt;&lt;iota - 1  // bit0 == 1, mask0 == 0
-	bit1, mask1                           // bit1 == 2, mask1 == 1
-	_, _                                  // skips iota == 2
-	bit3, mask3                           // bit3 == 8, mask3 == 7
+	bit0, mask0 = 1 &lt;&lt; iota, 1&lt;&lt;iota - 1  // bit0 == 1, mask0 == 0  (iota == 0)
+	bit1, mask1                           // bit1 == 2, mask1 == 1  (iota == 1)
+	_, _                                  //                        (iota == 2, unused)
+	bit3, mask3                           // bit3 == 8, mask3 == 7  (iota == 3)
 )
 </pre>
 </div>
@@ -3657,8 +3769,8 @@ const (
 
 <div class="english">
 <p>
-This last example exploits the implicit repetition of the
-last non-empty expression list.
+This last example exploits the <a href="#Constant_declarations">implicit repetition</a>
+of the last non-empty expression list.
 </p>
 </div>
 
@@ -3772,7 +3884,7 @@ func (m *Mutex) Unlock()  { /* Unlock implementation */ }
 // NewMutex has the same composition as Mutex but its method set is empty.
 type NewMutex Mutex
 
-// The method set of the <a href="#Pointer_types">base type</a> of PtrMutex remains unchanged,
+// The method set of PtrMutex's underlying type *Mutex remains unchanged,
 // but the method set of PtrMutex is empty.
 type PtrMutex *Mutex
 
@@ -4332,7 +4444,6 @@ non-<a href="#Blank_identifier">blank</a> identifier denoting a
 <a href="#Constant_declarations">constant</a>,
 <a href="#Variable_declarations">variable</a>, or
 <a href="#Function_declarations">function</a>,
-a <a href="#Method_expressions">method expression</a> yielding a function,
 or a parenthesized expression.
 </p>
 
@@ -4342,7 +4453,7 @@ operand only on the left-hand side of an <a href="#Assignments">assignment</a>.
 </p>
 
 <pre class="ebnf">
-Operand     = Literal | OperandName | MethodExpr | "(" Expression ")" .
+Operand     = Literal | OperandName | "(" Expression ")" .
 Literal     = BasicLit | CompositeLit | FunctionLit .
 BasicLit    = int_lit | float_lit | imaginary_lit | rune_lit | string_lit .
 OperandName = identifier | QualifiedIdent.
@@ -4572,7 +4683,8 @@ For array and slice literals the following rules apply:
 	    its position in the array.
 	</li>
 	<li>An element with a key uses the key as its index. The
-	    key must be a non-negative constant representable by
+	    key must be a non-negative constant
+	    <a href="#Representability">representable</a> by
 	    a value of type <code>int</code>; and if it is typed
 	    it must be of integer type.
 	</li>
@@ -4856,6 +4968,7 @@ Primary expressions are the operands for unary and binary expressions.
 PrimaryExpr =
 	Operand |
 	Conversion |
+	MethodExpr |
 	PrimaryExpr Selector |
 	PrimaryExpr Index |
 	PrimaryExpr Slice |
@@ -5205,7 +5318,7 @@ argument that is the receiver of the method.
 
 <pre class="ebnf">
 MethodExpr    = ReceiverType "." MethodName .
-ReceiverType  = TypeName | "(" "*" TypeName ")" | "(" ReceiverType ")" .
+ReceiverType  = Type .
 </pre>
 </div>
 
@@ -5700,11 +5813,12 @@ The following rules apply:
 If <code>a</code> is not a map:
 </p>
 <ul>
-	<li>the index <code>x</code> must be of integer type or untyped;
-	    it is <i>in range</i> if <code>0 &lt;= x &lt; len(a)</code>,
+	<li>the index <code>x</code> must be of integer type or an untyped constant</li>
+	<li>a constant index must be non-negative and
+	    <a href="#Representability">representable</a> by a value of type <code>int</code></li>
+	<li>a constant index that is untyped is given type <code>int</code></li>
+	<li>the index <code>x</code> is <i>in range</i> if <code>0 &lt;= x &lt; len(a)</code>,
 	    otherwise it is <i>out of range</i></li>
-	<li>a <a href="#Constants">constant</a> index must be non-negative
-	    and representable by a value of type <code>int</code>
 </ul>
 </div>
 
@@ -5989,7 +6103,8 @@ For arrays or strings, the indices are <i>in range</i> if
 <code>0</code> &lt;= <code>low</code> &lt;= <code>high</code> &lt;= <code>len(a)</code>,
 otherwise they are <i>out of range</i>.
 For slices, the upper index bound is the slice capacity <code>cap(a)</code> rather than the length.
-A <a href="#Constants">constant</a> index must be non-negative and representable by a value of type
+A <a href="#Constants">constant</a> index must be non-negative and
+<a href="#Representability">representable</a> by a value of type
 <code>int</code>; for arrays or constant strings, constant indices must also be in range.
 If both indices are constant, they must satisfy <code>low &lt;= high</code>.
 If the indices are out of range at run time, a <a href="#Run_time_panics">run-time panic</a> occurs.
@@ -6026,8 +6141,8 @@ and the result of the slice operation is a slice with the same element type as t
 <div class="english">
 <p>
 If the sliced operand of a valid slice expression is a <code>nil</code> slice, the result
-is a <code>nil</code> slice. Otherwise, the result shares its underlying array with the
-operand.
+is a <code>nil</code> slice. Otherwise, if the result is a slice, it shares its underlying
+array with the operand.
 </p>
 </div>
 
@@ -6108,7 +6223,8 @@ If the sliced operand is an array, it must be <a href="#Address_operators">addre
 <p>
 The indices are <i>in range</i> if <code>0 &lt;= low &lt;= high &lt;= max &lt;= cap(a)</code>,
 otherwise they are <i>out of range</i>.
-A <a href="#Constants">constant</a> index must be non-negative and representable by a value of type
+A <a href="#Constants">constant</a> index must be non-negative and
+<a href="#Representability">representable</a> by a value of type
 <code>int</code>; for arrays, constant indices must also be in range.
 If multiple indices are constant, the constants that are present must be in range relative to each
 other.
@@ -6583,7 +6699,8 @@ to the type of the other operand.
 <div class="english">
 <p>
 The right operand in a shift expression must have unsigned integer type
-or be an untyped constant representable by a value of type <code>uint</code>.
+or be an untyped constant <a href="#Representability">representable</a> by a
+value of type <code>uint</code>.
 If the left operand of a non-constant shift expression is an untyped constant,
 it is first converted to the type it would assume if the shift expression were
 replaced by its left operand alone.
@@ -6591,18 +6708,20 @@ replaced by its left operand alone.
 
 <pre>
 var s uint = 33
-var i = 1&lt;&lt;s           // 1 has type int
-var j int32 = 1&lt;&lt;s     // 1 has type int32; j == 0
-var k = uint64(1&lt;&lt;s)   // 1 has type uint64; k == 1&lt;&lt;33
-var m int = 1.0&lt;&lt;s     // 1.0 has type int; m == 0 if ints are 32bits in size
-var n = 1.0&lt;&lt;s == j    // 1.0 has type int32; n == true
-var o = 1&lt;&lt;s == 2&lt;&lt;s   // 1 and 2 have type int; o == true if ints are 32bits in size
-var p = 1&lt;&lt;s == 1&lt;&lt;33  // illegal if ints are 32bits in size: 1 has type int, but 1&lt;&lt;33 overflows int
-var u = 1.0&lt;&lt;s         // illegal: 1.0 has type float64, cannot shift
-var u1 = 1.0&lt;&lt;s != 0   // illegal: 1.0 has type float64, cannot shift
-var u2 = 1&lt;&lt;s != 1.0   // illegal: 1 has type float64, cannot shift
-var v float32 = 1&lt;&lt;s   // illegal: 1 has type float32, cannot shift
-var w int64 = 1.0&lt;&lt;33  // 1.0&lt;&lt;33 is a constant shift expression
+var i = 1&lt;&lt;s                  // 1 has type int
+var j int32 = 1&lt;&lt;s            // 1 has type int32; j == 0
+var k = uint64(1&lt;&lt;s)          // 1 has type uint64; k == 1&lt;&lt;33
+var m int = 1.0&lt;&lt;s            // 1.0 has type int; m == 0 if ints are 32bits in size
+var n = 1.0&lt;&lt;s == j           // 1.0 has type int32; n == true
+var o = 1&lt;&lt;s == 2&lt;&lt;s          // 1 and 2 have type int; o == true if ints are 32bits in size
+var p = 1&lt;&lt;s == 1&lt;&lt;33         // illegal if ints are 32bits in size: 1 has type int, but 1&lt;&lt;33 overflows int
+var u = 1.0&lt;&lt;s                // illegal: 1.0 has type float64, cannot shift
+var u1 = 1.0&lt;&lt;s != 0          // illegal: 1.0 has type float64, cannot shift
+var u2 = 1&lt;&lt;s != 1.0          // illegal: 1 has type float64, cannot shift
+var v float32 = 1&lt;&lt;s          // illegal: 1 has type float32, cannot shift
+var w int64 = 1.0&lt;&lt;33         // 1.0&lt;&lt;33 is a constant shift expression
+var x = a[1.0&lt;&lt;s]             // 1.0 has type int; x == a[0] if ints are 32bits in size
+var a = make([]byte, 1.0&lt;&lt;s)  // 1.0 has type int; len(a) == 0 if ints are 32bits in size
 </pre>
 </div>
 
@@ -7529,50 +7648,20 @@ func()(x)        // 函数签名 func() x
 <div class="english">
 <p>
 A <a href="#Constants">constant</a> value <code>x</code> can be converted to
-type <code>T</code> in any of these cases:
+type <code>T</code> if <code>x</code> is <a href="#Representability">representable</a>
+by a value of <code>T</code>.
+As a special case, an integer constant <code>x</code> can be converted to a
+<a href="#String_types">string type</a> using the
+<a href="#Conversions_to_and_from_a_string_type">same rule</a>
+as for non-constant <code>x</code>.
 </p>
-
-<ul>
-	<li>
-	<code>x</code> is representable by a value of type <code>T</code>.
-	</li>
-	<li>
-	<code>x</code> is a floating-point constant,
-	<code>T</code> is a floating-point type,
-	and <code>x</code> is representable by a value
-	of type <code>T</code> after rounding using
-	IEEE 754 round-to-even rules, but with an IEEE <code>-0.0</code>
-	further rounded to an unsigned <code>0.0</code>.
-	The constant <code>T(x)</code> is the rounded value.
-	</li>
-	<li>
-	<code>x</code> is an integer constant and <code>T</code> is a
-	<a href="#String_types">string type</a>.
-	The <a href="#Conversions_to_and_from_a_string_type">same rule</a>
-	as for non-constant <code>x</code> applies in this case.
-	</li>
-</ul>
-</div>
 
 <p>
-<a href="#常量">常量</a>值 <code>x</code> 在以下情况下可转换为类型 <code>T</code>：
+当<a href="#常量">常量</a>值 <code>x</code> <a href="#可表示性">可表示</a>为一个
+<code>T</code> 类型的值时，<code>x</code> 可转换为类型 <code>T</code>。
+作为一个特殊情况，整数常量 <code>x</code> 可作为非常量 <code>x</code> 使用
+<a href="#字符串类型的转换">同一规则</a>被转换为<a href="#字符串类型">字符串类型</a>。
 </p>
-
-<ul>
-	<li>
-	<code>x</code> 可表示为类型为 <code>T</code> 的值。
-	</li>
-	<li>
-	<code>x</code> 为浮点数常量，<code>T</code> 为浮点数类型且
-	<code>x</code> 在使用“IEEE 754 舍入到偶数”规则后可表示成类型为
-	<code>T</code> 的值，除了 IEEE <code>-0.0</code> 进一步舍入为 <code>0.0</code>。
-	常量 <code>T(x)</code> 为舍入后的值。
-	</li>
-	<li>
-	<code>x</code> 为整数常量且 <code>T</code> 为 <a href="#字符串类型">字符串类型</a>。
-	这种情况下<a href="#字符串类型的转换">同样的规则</a>对于非常量 <code>x</code> 也适用。
-	</li>
-</ul>
 
 <div class="english">
 <p>
@@ -8110,7 +8199,8 @@ The divisor of a constant division or remainder operation must not be zero:
 
 <div class="english">
 <p>
-The values of <i>typed</i> constants must always be accurately representable as values
+The values of <i>typed</i> constants must always be accurately
+<a href="#Representability">representable</a> by values
 of the constant type. The following constant expressions are illegal:
 </p>
 
@@ -8124,7 +8214,8 @@ Four * 100   // product 400 cannot be represented as an int8 (type of Four)
 </div>
 
 <p>
-<b>类型化</b>常量的值必须总是可作为该常量类型的值被准确地表示。以下为非法常量表达式：
+<b>带类型</b>常量的值必须总是可被精确地<a href="#可表示性">表示</a>为该常量类型的值。
+以下为非法常量表达式：
 </p>
 
 <pre>
@@ -9357,15 +9448,16 @@ in the TypeSwitchGuard.
 
 <div class="english">
 <p>
-The type in a case may be <a href="#Predeclared_identifiers"><code>nil</code></a>;
-that case is used when the expression in the TypeSwitchGuard
+Instead of a type, a case may use the predeclared identifier
+<a href="#Predeclared_identifiers"><code>nil</code></a>;
+that case is selected when the expression in the TypeSwitchGuard
 is a <code>nil</code> interface value.
 There may be at most one <code>nil</code> case.
 </p>
 </div>
 
 <p>
-case 中的类型可为 <a href="#预声明标识符"><code>nil</code></a>，
+除类型外，case 也可为 <a href="#预声明标识符"><code>nil</code></a>，
 这种情况在类型选择监视中的表达式为 <code>nil</code> 接口值时使用。
 此处最多有一种 <code>nil</code> 的情况。
 </p>
@@ -9666,12 +9758,10 @@ the range clause is equivalent to the same clause without that identifier.
 
 <div class="english">
 <p>
-The range expression is evaluated once before beginning the loop,
-with one exception: if the range expression is an array or a pointer to an array
-and at most one iteration variable is present, only the range expression's
-length is evaluated; if that length is constant,
-<a href="#Length_and_capacity">by definition</a>
-the range expression itself will not be evaluated.
+The range expression <code>x</code> is evaluated once before beginning the loop,
+with one exception: if at most one iteration variable is present and
+<code>len(x)</code> is <a href="#Length_and_capacity">constant</a>,
+the range expression is not evaluated.
 </p>
 
 <p>
@@ -11001,9 +11091,10 @@ make(T, n)       channel    类型为 T，缓存大小为 n 的带缓冲信道
 
 <div class="english">
 <p>
-The size arguments <code>n</code> and <code>m</code> must be of integer type or untyped.
-A <a href="#Constants">constant</a> size argument must be non-negative and
-representable by a value of type <code>int</code>.
+Each of the size arguments <code>n</code> and <code>m</code> must be of integer type
+or an untyped <a href="#Constants">constant</a>.
+A constant size argument must be non-negative and <a href="#Representability">representable</a>
+by a value of type <code>int</code>; if it is an untyped constant it is given type <code>int</code>.
 If both <code>n</code> and <code>m</code> are provided and are constant, then
 <code>n</code> must be no larger than <code>m</code>.
 If <code>n</code> is negative or larger than <code>m</code> at run time,
@@ -11908,7 +11999,7 @@ of <code>make</code>,
 and no explicit initialization is provided, the variable or value is
 given a default value.  Each element of such a variable or value is
 set to the <i>zero value</i> for its type: <code>false</code> for booleans,
-<code>0</code> for integers, <code>0.0</code> for floats, <code>""</code>
+<code>0</code> for numeric types, <code>""</code>
 for strings, and <code>nil</code> for pointers, functions, interfaces, slices, channels, and maps.
 This initialization is done recursively, so for instance each element of an
 array of structs will have its fields zeroed if no value is specified.
@@ -12386,7 +12477,8 @@ type Error interface {
 
 <div class="english">
 <p>
-The built-in package <code>unsafe</code>, known to the compiler,
+The built-in package <code>unsafe</code>, known to the compiler
+and accessible through the <a href="#Import_declarations">import path</a> <code>"unsafe"</code>,
 provides facilities for low-level programming including operations
 that violate the type system. A package using <code>unsafe</code>
 must be vetted manually for type safety and may not be portable.
