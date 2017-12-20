@@ -265,6 +265,10 @@ func (t *tester) registerStdTest(pkg string) {
 	if t.runRx == nil || t.runRx.MatchString(testName) == t.runRxWant {
 		stdMatches = append(stdMatches, pkg)
 	}
+	timeoutSec := 180
+	if pkg == "cmd/go" {
+		timeoutSec *= 2
+	}
 	t.tests = append(t.tests, distTest{
 		name:    testName,
 		heading: "Testing packages.",
@@ -280,7 +284,7 @@ func (t *tester) registerStdTest(pkg string) {
 				"test",
 				"-short",
 				t.tags(),
-				t.timeout(180),
+				t.timeout(timeoutSec),
 				"-gcflags=all=" + gogcflags,
 			}
 			if t.race {
@@ -644,7 +648,7 @@ func (t *tester) registerTests() {
 			t.registerHostTest("testcshared", "../misc/cgo/testcshared", "misc/cgo/testcshared", "cshared_test.go")
 		}
 		if t.supportedBuildmode("shared") {
-			t.registerTest("testshared", "../misc/cgo/testshared", t.goTest())
+			t.registerTest("testshared", "../misc/cgo/testshared", t.goTest(), t.timeout(600))
 		}
 		if t.supportedBuildmode("plugin") {
 			t.registerTest("testplugin", "../misc/cgo/testplugin", "./test.bash")

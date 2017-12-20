@@ -650,6 +650,12 @@ func TestEscape(t *testing.T) {
 			`<{{"script"}}>{{"doEvil()"}}</{{"script"}}>`,
 			`&lt;script>doEvil()&lt;/script>`,
 		},
+		{
+			"srcset bad URL in second position",
+			`<img srcset="{{"/not-an-image#,javascript:alert(1)"}}">`,
+			// The second URL is also filtered.
+			`<img srcset="/not-an-image#,#ZgotmplZ">`,
+		},
 	}
 
 	for _, test := range tests {
@@ -1918,7 +1924,7 @@ func TestOrphanedTemplate(t *testing.T) {
 	}
 	b.Reset()
 	if err := t2.Execute(&b, nil); err != nil {
-		t.Fatalf("error executing t1: %s", err)
+		t.Fatalf("error executing t2: %s", err)
 	}
 	const want = "bar"
 	if got := b.String(); got != want {

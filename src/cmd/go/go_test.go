@@ -224,7 +224,7 @@ func testgo(t *testing.T) *testgoData {
 	testenv.MustHaveGoBuild(t)
 
 	if skipExternal {
-		t.Skip("skipping external tests on %s/%s", runtime.GOOS, runtime.GOARCH)
+		t.Skipf("skipping external tests on %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
 	return &testgoData{t: t}
@@ -2284,7 +2284,7 @@ func TestSymlinkWarning(t *testing.T) {
 	tg.tempDir("yy/zz")
 	tg.tempFile("yy/zz/zz.go", "package zz\n")
 	if err := os.Symlink(tg.path("yy"), tg.path("src/example/xx/yy")); err != nil {
-		t.Skip("symlink failed: %v", err)
+		t.Skipf("symlink failed: %v", err)
 	}
 	tg.run("list", "example/xx/z...")
 	tg.grepStdoutNot(".", "list should not have matched anything")
@@ -2479,7 +2479,7 @@ func TestCoveragePattern(t *testing.T) {
 	// (as opposed to pattern matching on deps)
 	// then it will try to load sleepybad, which does not compile,
 	// and the test command will fail.
-	tg.run("test", "-coverprofile="+filepath.Join(tg.tempdir, "cover.out"), "-coverpkg=sleepy...", "-run=^$", "sleepy1")
+	tg.run("test", "-coverprofile="+tg.path("cover.out"), "-coverpkg=sleepy...", "-run=^$", "sleepy1")
 }
 
 func TestCoverageErrorLine(t *testing.T) {
@@ -2530,7 +2530,7 @@ func TestCoverageFunc(t *testing.T) {
 	tg.setenv("GOPATH", filepath.Join(tg.pwd(), "testdata"))
 
 	tg.run("test", "-outputdir="+tg.tempdir, "-coverprofile=cover.out", "coverasm")
-	tg.run("tool", "cover", "-func="+filepath.Join(tg.tempdir, "cover.out"))
+	tg.run("tool", "cover", "-func="+tg.path("cover.out"))
 	tg.grepStdout(`\tg\t*100.0%`, "did not find g 100% covered")
 	tg.grepStdoutNot(`\tf\t*[0-9]`, "reported coverage for assembly function f")
 }
@@ -2980,6 +2980,18 @@ func TestGoTestMainAsNormalTest(t *testing.T) {
 	defer tg.cleanup()
 	tg.run("test", "testdata/standalone_main_normal_test.go")
 	tg.grepBoth(okPattern, "go test did not say ok")
+}
+
+func TestGoTestMainTwice(t *testing.T) {
+	tg := testgo(t)
+	defer tg.cleanup()
+	tg.makeTempdir()
+	tg.setenv("GOCACHE", tg.tempdir)
+	tg.setenv("GOPATH", filepath.Join(tg.pwd(), "testdata"))
+	tg.run("test", "-v", "multimain")
+	if strings.Count(tg.getStdout(), "notwithstanding") != 2 {
+		t.Fatal("tests did not run twice")
+	}
 }
 
 func TestGoTestFlagsAfterPackage(t *testing.T) {
@@ -4344,7 +4356,7 @@ func main() {
 }
 `)
 	tg.setenv("GOPATH", tg.path("go"))
-	exe := filepath.Join(tg.tempdir, "p.exe")
+	exe := tg.path("p.exe")
 	tg.creatingTemp(exe)
 	tg.run("build", "-o", exe, "p")
 }
@@ -4958,7 +4970,7 @@ func TestCacheCoverage(t *testing.T) {
 	tg.setenv("GOPATH", filepath.Join(tg.pwd(), "testdata"))
 	tg.makeTempdir()
 
-	tg.setenv("GOCACHE", filepath.Join(tg.tempdir, "c1"))
+	tg.setenv("GOCACHE", tg.path("c1"))
 	tg.run("test", "-cover", "strings")
 	tg.run("test", "-cover", "math", "strings")
 }
@@ -4987,12 +4999,12 @@ func TestIssue22531(t *testing.T) {
 	tg.parallel()
 	tg.makeTempdir()
 	tg.setenv("GOPATH", tg.tempdir)
-	tg.setenv("GOCACHE", filepath.Join(tg.tempdir, "cache"))
+	tg.setenv("GOCACHE", tg.path("cache"))
 	tg.tempFile("src/m/main.go", "package main /* c1 */; func main() {}\n")
 	tg.run("install", "-x", "m")
 	tg.run("list", "-f", "{{.Stale}}", "m")
 	tg.grepStdout("false", "reported m as stale after install")
-	tg.run("tool", "buildid", filepath.Join(tg.tempdir, "bin/m"+exeSuffix))
+	tg.run("tool", "buildid", tg.path("bin/m"+exeSuffix))
 
 	// The link action ID did not include the full main build ID,
 	// even though the full main build ID is written into the
@@ -5003,7 +5015,7 @@ func TestIssue22531(t *testing.T) {
 	tg.run("install", "-x", "m")
 	tg.run("list", "-f", "{{.Stale}}", "m")
 	tg.grepStdout("false", "reported m as stale after reinstall")
-	tg.run("tool", "buildid", filepath.Join(tg.tempdir, "bin/m"+exeSuffix))
+	tg.run("tool", "buildid", tg.path("bin/m"+exeSuffix))
 }
 
 func TestIssue22596(t *testing.T) {
@@ -5014,17 +5026,17 @@ func TestIssue22596(t *testing.T) {
 	defer tg.cleanup()
 	tg.parallel()
 	tg.makeTempdir()
-	tg.setenv("GOCACHE", filepath.Join(tg.tempdir, "cache"))
+	tg.setenv("GOCACHE", tg.path("cache"))
 	tg.tempFile("gopath1/src/p/p.go", "package p; func F(){}\n")
 	tg.tempFile("gopath2/src/p/p.go", "package p; func F(){}\n")
 
-	tg.setenv("GOPATH", filepath.Join(tg.tempdir, "gopath1"))
+	tg.setenv("GOPATH", tg.path("gopath1"))
 	tg.run("list", "-f={{.Target}}", "p")
 	target1 := strings.TrimSpace(tg.getStdout())
 	tg.run("install", "p")
 	tg.wantNotStale("p", "", "p stale after install")
 
-	tg.setenv("GOPATH", filepath.Join(tg.tempdir, "gopath2"))
+	tg.setenv("GOPATH", tg.path("gopath2"))
 	tg.run("list", "-f={{.Target}}", "p")
 	target2 := strings.TrimSpace(tg.getStdout())
 	tg.must(os.MkdirAll(filepath.Dir(target2), 0777))
@@ -5043,7 +5055,7 @@ func TestTestCache(t *testing.T) {
 	tg.parallel()
 	tg.makeTempdir()
 	tg.setenv("GOPATH", tg.tempdir)
-	tg.setenv("GOCACHE", filepath.Join(tg.tempdir, "cache"))
+	tg.setenv("GOCACHE", tg.path("cache"))
 
 	// timeout here should not affect result being cached
 	// or being retrieved later.
@@ -5138,6 +5150,96 @@ func TestTestCache(t *testing.T) {
 	tg.grepStdout(`ok  \tt/t4\t\(cached\)`, "did not cache t/t4")
 }
 
+func TestTestCacheInputs(t *testing.T) {
+	if strings.Contains(os.Getenv("GODEBUG"), "gocacheverify") {
+		t.Skip("GODEBUG gocacheverify")
+	}
+	tg := testgo(t)
+	defer tg.cleanup()
+	tg.parallel()
+	tg.makeTempdir()
+	tg.setenv("GOPATH", filepath.Join(tg.pwd(), "testdata"))
+	tg.setenv("GOCACHE", tg.path("cache"))
+
+	defer os.Remove(filepath.Join(tg.pwd(), "testdata/src/testcache/file.txt"))
+	defer os.Remove(filepath.Join(tg.pwd(), "testdata/src/testcache/script.sh"))
+	tg.must(ioutil.WriteFile(filepath.Join(tg.pwd(), "testdata/src/testcache/file.txt"), []byte("x"), 0644))
+	old := time.Now().Add(-1 * time.Minute)
+	tg.must(os.Chtimes(filepath.Join(tg.pwd(), "testdata/src/testcache/file.txt"), old, old))
+	info, err := os.Stat(filepath.Join(tg.pwd(), "testdata/src/testcache/file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("file.txt: old=%v, info.ModTime=%v", old, info.ModTime()) // help debug when Chtimes lies about succeeding
+	tg.setenv("TESTKEY", "x")
+
+	tg.must(ioutil.WriteFile(filepath.Join(tg.pwd(), "testdata/src/testcache/script.sh"), []byte("#!/bin/sh\nexit 0\n"), 0755))
+	tg.must(os.Chtimes(filepath.Join(tg.pwd(), "testdata/src/testcache/script.sh"), old, old))
+
+	tg.run("test", "testcache")
+	tg.run("test", "testcache")
+	tg.grepStdout(`\(cached\)`, "did not cache")
+
+	tg.setenv("TESTKEY", "y")
+	tg.run("test", "testcache")
+	tg.grepStdoutNot(`\(cached\)`, "did not notice env var change")
+	tg.run("test", "testcache")
+	tg.grepStdout(`\(cached\)`, "did not cache")
+
+	tg.run("test", "testcache", "-run=FileSize")
+	tg.run("test", "testcache", "-run=FileSize")
+	tg.grepStdout(`\(cached\)`, "did not cache")
+	tg.must(ioutil.WriteFile(filepath.Join(tg.pwd(), "testdata/src/testcache/file.txt"), []byte("xxx"), 0644))
+	tg.run("test", "testcache", "-run=FileSize")
+	tg.grepStdoutNot(`\(cached\)`, "did not notice file size change")
+	tg.run("test", "testcache", "-run=FileSize")
+	tg.grepStdout(`\(cached\)`, "did not cache")
+
+	tg.run("test", "testcache", "-run=Chdir")
+	tg.run("test", "testcache", "-run=Chdir")
+	tg.grepStdout(`\(cached\)`, "did not cache")
+	tg.must(ioutil.WriteFile(filepath.Join(tg.pwd(), "testdata/src/testcache/file.txt"), []byte("xxxxx"), 0644))
+	tg.run("test", "testcache", "-run=Chdir")
+	tg.grepStdoutNot(`\(cached\)`, "did not notice file size change")
+	tg.run("test", "testcache", "-run=Chdir")
+	tg.grepStdout(`\(cached\)`, "did not cache")
+
+	tg.must(os.Chtimes(filepath.Join(tg.pwd(), "testdata/src/testcache/file.txt"), old, old))
+	tg.run("test", "testcache", "-run=FileContent")
+	tg.run("test", "testcache", "-run=FileContent")
+	tg.grepStdout(`\(cached\)`, "did not cache")
+	tg.must(ioutil.WriteFile(filepath.Join(tg.pwd(), "testdata/src/testcache/file.txt"), []byte("yyy"), 0644))
+	old2 := old.Add(10 * time.Second)
+	tg.must(os.Chtimes(filepath.Join(tg.pwd(), "testdata/src/testcache/file.txt"), old2, old2))
+	tg.run("test", "testcache", "-run=FileContent")
+	tg.grepStdoutNot(`\(cached\)`, "did not notice file content change")
+	tg.run("test", "testcache", "-run=FileContent")
+	tg.grepStdout(`\(cached\)`, "did not cache")
+
+	tg.run("test", "testcache", "-run=DirList")
+	tg.run("test", "testcache", "-run=DirList")
+	tg.grepStdout(`\(cached\)`, "did not cache")
+	tg.must(os.Remove(filepath.Join(tg.pwd(), "testdata/src/testcache/file.txt")))
+	tg.run("test", "testcache", "-run=DirList")
+	tg.grepStdoutNot(`\(cached\)`, "did not notice directory change")
+	tg.run("test", "testcache", "-run=DirList")
+	tg.grepStdout(`\(cached\)`, "did not cache")
+
+	switch runtime.GOOS {
+	case "nacl", "plan9", "windows":
+		// no shell scripts
+	default:
+		tg.run("test", "testcache", "-run=Exec")
+		tg.run("test", "testcache", "-run=Exec")
+		tg.grepStdout(`\(cached\)`, "did not cache")
+		tg.must(os.Chtimes(filepath.Join(tg.pwd(), "testdata/src/testcache/script.sh"), old2, old2))
+		tg.run("test", "testcache", "-run=Exec")
+		tg.grepStdoutNot(`\(cached\)`, "did not notice script change")
+		tg.run("test", "testcache", "-run=Exec")
+		tg.grepStdout(`\(cached\)`, "did not cache")
+	}
+}
+
 func TestTestVet(t *testing.T) {
 	tg := testgo(t)
 	defer tg.cleanup()
@@ -5151,9 +5253,9 @@ func TestTestVet(t *testing.T) {
 		}
 	`)
 
-	tg.runFail("test", filepath.Join(tg.tempdir, "p1_test.go"))
+	tg.runFail("test", tg.path("p1_test.go"))
 	tg.grepStderr(`Logf format %d`, "did not diagnose bad Logf")
-	tg.run("test", "-vet=off", filepath.Join(tg.tempdir, "p1_test.go"))
+	tg.run("test", "-vet=off", tg.path("p1_test.go"))
 	tg.grepStdout(`^ok`, "did not print test summary")
 
 	tg.tempFile("p1.go", `
@@ -5163,16 +5265,20 @@ func TestTestVet(t *testing.T) {
 			fmt.Printf("%d") // oops
 		}
 	`)
-	tg.runFail("test", filepath.Join(tg.tempdir, "p1.go"))
+	tg.runFail("test", tg.path("p1.go"))
 	tg.grepStderr(`Printf format %d`, "did not diagnose bad Printf")
-	tg.run("test", "-x", "-vet=shift", filepath.Join(tg.tempdir, "p1.go"))
+	tg.run("test", "-x", "-vet=shift", tg.path("p1.go"))
 	tg.grepStderr(`[\\/]vet.*-shift`, "did not run vet with -shift")
 	tg.grepStdout(`\[no test files\]`, "did not print test summary")
-	tg.run("test", "-vet=off", filepath.Join(tg.tempdir, "p1.go"))
+	tg.run("test", "-vet=off", tg.path("p1.go"))
 	tg.grepStdout(`\[no test files\]`, "did not print test summary")
 
 	tg.setenv("GOPATH", filepath.Join(tg.pwd(), "testdata"))
 	tg.run("test", "vetcycle") // must not fail; #22890
+
+	tg.runFail("test", "vetfail/...")
+	tg.grepStderr(`Printf format %d`, "did not diagnose bad Printf")
+	tg.grepStdout(`ok\s+vetfail/p2`, "did not run vetfail/p2")
 }
 
 func TestInstallDeps(t *testing.T) {
@@ -5253,11 +5359,13 @@ func TestGcflagsPatterns(t *testing.T) {
 	tg.grepStderr("compile.* -N .*-p reflect", "did not build reflect with -N flag")
 	tg.grepStderrNot("compile.* -N .*-p fmt", "incorrectly built fmt with -N flag")
 
-	tg.run("test", "-c", "-n", "-gcflags=-N", "strings")
-	tg.grepStderr("compile.* -N .*compare_test.go", "did not build strings_test package with -N flag")
+	tg.run("test", "-c", "-n", "-gcflags=-N", "-ldflags=-X=x.y=z", "strings")
+	tg.grepStderr("compile.* -N .*compare_test.go", "did not compile strings_test package with -N flag")
+	tg.grepStderr("link.* -X=x.y=z", "did not link strings.test binary with -X flag")
 
-	tg.run("test", "-c", "-n", "-gcflags=strings=-N", "strings")
-	tg.grepStderr("compile.* -N .*compare_test.go", "did not build strings_test package with -N flag")
+	tg.run("test", "-c", "-n", "-gcflags=strings=-N", "-ldflags=strings=-X=x.y=z", "strings")
+	tg.grepStderr("compile.* -N .*compare_test.go", "did not compile strings_test package with -N flag")
+	tg.grepStderr("link.* -X=x.y=z", "did not link strings.test binary with -X flag")
 }
 
 func TestGoTestMinusN(t *testing.T) {
@@ -5293,8 +5401,8 @@ func TestGoTestJSON(t *testing.T) {
 	tg.grepStdout(`"Package":"errors"`, "did not see JSON output")
 	tg.grepStdout(`"Action":"run"`, "did not see JSON output")
 
-	tg.run("test", "-o", filepath.Join(tg.tempdir, "errors.test.exe"), "-c", "errors")
-	tg.run("tool", "test2json", "-p", "errors", filepath.Join(tg.tempdir, "errors.test.exe"), "-test.v", "-test.short")
+	tg.run("test", "-o", tg.path("errors.test.exe"), "-c", "errors")
+	tg.run("tool", "test2json", "-p", "errors", tg.path("errors.test.exe"), "-test.v", "-test.short")
 	tg.grepStdout(`"Package":"errors"`, "did not see JSON output")
 	tg.grepStdout(`"Action":"run"`, "did not see JSON output")
 	tg.grepStdout(`\{"Action":"pass","Package":"errors"\}`, "did not see final pass")
@@ -5342,4 +5450,51 @@ func TestFailFast(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Issue 22986.
+func TestImportPath(t *testing.T) {
+	tg := testgo(t)
+	defer tg.cleanup()
+	tg.parallel()
+
+	tg.tempFile("src/a/a.go", `
+package main
+
+import (
+	"log"
+	p "a/p-1.0"
+)
+
+func main() {
+	if !p.V {
+		log.Fatal("false")
+	}
+}`)
+
+	tg.tempFile("src/a/a_test.go", `
+package main_test
+
+import (
+	p "a/p-1.0"
+	"testing"
+)
+
+func TestV(t *testing.T) {
+	if !p.V {
+		t.Fatal("false")
+	}
+}`)
+
+	tg.tempFile("src/a/p-1.0/p.go", `
+package p
+
+var V = true
+
+func init() {}
+`)
+
+	tg.setenv("GOPATH", tg.path("."))
+	tg.run("build", "-o", tg.path("a.exe"), "a")
+	tg.run("test", "a")
 }
