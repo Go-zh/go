@@ -172,9 +172,13 @@ func (t *tester) run() {
 		return
 	}
 
-	// we must unset GOROOT_FINAL before tests, because runtime/debug requires
+	// We must unset GOROOT_FINAL before tests, because runtime/debug requires
 	// correct access to source code, so if we have GOROOT_FINAL in effect,
 	// at least runtime/debug test will fail.
+	// If GOROOT_FINAL was set before, then now all the commands will appear stale.
+	// Nothing we can do about that other than not checking them below.
+	// (We call checkNotStale but only with "std" not "cmd".)
+	os.Setenv("GOROOT_FINAL_OLD", os.Getenv("GOROOT_FINAL")) // for cmd/link test
 	os.Unsetenv("GOROOT_FINAL")
 
 	for _, name := range t.runNames {
@@ -1044,7 +1048,7 @@ func (t *tester) cgoTest(dt *distTest) error {
 // running in parallel with earlier tests, or if it has some other reason
 // for needing the earlier tests to be done.
 func (t *tester) runPending(nextTest *distTest) {
-	checkNotStale("go", "std", "cmd")
+	checkNotStale("go", "std")
 	worklist := t.worklist
 	t.worklist = nil
 	for _, w := range worklist {
@@ -1097,7 +1101,7 @@ func (t *tester) runPending(nextTest *distTest) {
 			log.Printf("Failed: %v", w.err)
 			t.failed = true
 		}
-		checkNotStale("go", "std", "cmd")
+		checkNotStale("go", "std")
 	}
 	if t.failed && !t.keepGoing {
 		log.Fatal("FAILED")
@@ -1286,7 +1290,7 @@ func (t *tester) runFlag(rx string) string {
 func (t *tester) raceTest(dt *distTest) error {
 	t.addCmd(dt, "src", t.goTest(), "-race", "-i", "runtime/race", "flag", "os", "os/exec")
 	t.addCmd(dt, "src", t.goTest(), "-race", t.runFlag("Output"), "runtime/race")
-	t.addCmd(dt, "src", t.goTest(), "-race", t.runFlag("TestParse|TestEcho|TestStdinCloseRace|TestClosedPipeRace"), "flag", "os", "os/exec")
+	t.addCmd(dt, "src", t.goTest(), "-race", t.runFlag("TestParse|TestEcho|TestStdinCloseRace|TestClosedPipeRace|TestTypeRace"), "flag", "os", "os/exec", "encoding/gob")
 	// We don't want the following line, because it
 	// slows down all.bash (by 10 seconds on my laptop).
 	// The race builder should catch any error here, but doesn't.
