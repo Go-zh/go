@@ -1149,6 +1149,9 @@ and are discussed in that section.
 <p>
 Numeric constants represent exact values of arbitrary precision and do not overflow.
 Consequently, there are no constants denoting the IEEE-754 negative zero, infinity,
+and not-a-number values.
+</p>
+</div>
 
 <p>
 数值常量可表示任意精度的精确值而不会溢出，因此也就没有表示 IEEE-754 负零和无限的常量。
@@ -3174,6 +3177,7 @@ x                   T           x 无法表示为一个 T 类型的值，因为
 A <i>block</i> is a possibly empty sequence of declarations and statements
 within matching brace brackets.
 </p>
+</div>
 
 <pre class="ebnf">
 Block = "{" StatementList "}" .
@@ -7655,6 +7659,7 @@ As a special case, an integer constant <code>x</code> can be converted to a
 <a href="#Conversions_to_and_from_a_string_type">same rule</a>
 as for non-constant <code>x</code>.
 </p>
+</div>
 
 <p>
 当<a href="#常量">常量</a>值 <code>x</code> <a href="#可表示性">可表示</a>为一个
@@ -7775,7 +7780,7 @@ in any of these cases:
 <a href="#Struct_types">Struct tags</a> are ignored when comparing struct types
 for identity for the purpose of conversion:
 </p>
-<div>
+</div>
 
 <p>
 在为了转换而通过比较识别结构体类型时，<a href="#结构体类型">结构体标注</a> 会被忽略：
@@ -12344,10 +12349,9 @@ order to a compiler.
 <h3 id="Program_execution">Program execution</h3>
 </div>
 
-<div class="english">
 <h3 id="程序执行">程序执行</h3>
-</div>
 
+<div class="english">
 <p>
 A complete program is created by linking a single, unimported package
 called the <i>main package</i> with all the packages it imports, transitively.
