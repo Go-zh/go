@@ -78,7 +78,7 @@ func makechan(t *chantype, size int) *hchan {
 		throw("makechan: bad alignment")
 	}
 
-	if size < 0 || uintptr(size) > maxSliceCap(elem.size) || uintptr(size)*elem.size > _MaxMem-hchanSize {
+	if size < 0 || uintptr(size) > maxSliceCap(elem.size) || uintptr(size)*elem.size > maxAlloc-hchanSize {
 		panic(plainError("makechan: size out of range"))
 	}
 
@@ -310,6 +310,8 @@ func sendDirect(t *_type, sg *sudog, src unsafe.Pointer) {
 	// So make sure that no preemption points can happen between read & use.
 	dst := sg.elem
 	typeBitsBulkBarrier(t, uintptr(dst), uintptr(src), t.size)
+	// No need for cgo write barrier checks because dst is always
+	// Go memory.
 	memmove(dst, src, t.size)
 }
 

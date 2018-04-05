@@ -292,7 +292,7 @@ func defaultContext() Context {
 	// say "+build go1.x", and code that should only be built before Go 1.x
 	// (perhaps it is the stub to use in that case) should say "+build !go1.x".
 	// NOTE: If you add to this list, also update the doc comment in doc.go.
-	const version = 10 // go1.10
+	const version = 11 // go1.11
 	for i := 1; i <= version; i++ {
 		c.ReleaseTags = append(c.ReleaseTags, "go1."+strconv.Itoa(i))
 	}
@@ -813,7 +813,8 @@ Found:
 			})
 			p.InvalidGoFiles = append(p.InvalidGoFiles, name)
 		}
-		if pf.Doc != nil && p.Doc == "" {
+		// Grab the first package comment as docs, provided it is not from a test file.
+		if pf.Doc != nil && p.Doc == "" && !isTest && !isXTest {
 			p.Doc = doc.Synopsis(pf.Doc.Text())
 		}
 

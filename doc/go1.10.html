@@ -15,28 +15,31 @@ Do not send CLs removing the interior tags from such phrases.
 ul li { margin: 0.5em 0; }
 </style>
 
-<h2 id="introduction">DRAFT RELEASE NOTES - Introduction to Go 1.10</h2>
-
-<p><strong>
-  Go 1.10 is not yet released. These are work-in-progress
-  release notes. Go 1.10 is expected to be released in February 2018.
-</strong></p>
+<h2 id="introduction">Introduction to Go 1.10</h2>
 
 <p>
-The latest Go release, version 1.10, arrives six months after <a href="go1.9">go1.9</a>.
+The latest Go release, version 1.10, arrives six months after <a href="go1.9">Go 1.9</a>.
 Most of its changes are in the implementation of the toolchain, runtime, and libraries.
 As always, the release maintains the Go 1 <a href="/doc/go1compat.html">promise of compatibility</a>.
 We expect almost all Go programs to continue to compile and run as before.
 </p>
 
 <p>
-OVERVIEW HERE
+This release improves <a href="#build">caching of built packages</a>,
+adds <a href="#test">caching of successful test results</a>,
+runs <a href="#test-vet">vet automatically during tests</a>,
+and
+permits <a href="#cgo">passing string values directly between Go and C using cgo</a>.
+A new <a href="#cgo">compiler option whitelist</a> may cause
+unexpected <a href="https://golang.org/s/invalidflag"><code>invalid
+flag</code></a> errors in code that built successfully with older
+releases.
 </p>
 
 <h2 id="language">Changes to the language</h2>
 
 <p>
-There are no significant changes to the language.
+There are no significant changes to the language specification.
 </p>
 
 <p><!-- CL 60230 -->
@@ -198,7 +201,7 @@ only to command lines using a subset of the
 The idiomatic way to bypass test caching is to use <code>-count=1</code>.
 </p>
 
-<p>
+<p id="test-vet">
 The <code>go</code>&nbsp;<code>test</code> command now automatically runs
 <code>go</code> <code>vet</code> on the package being tested,
 to identify significant problems before running the test.
@@ -263,7 +266,19 @@ and the <a href="/cmd/test2json/">test2json documentation</a>.
 <h3 id="cgo">Cgo</h3>
 
 <p>
-Cgo now implements a C typedef like “<code>typedef</code> <code>X</code> <code>Y</code>;” using a Go type alias,
+Options specified by cgo using <code>#cgo CFLAGS</code> and the like
+are now checked against a whitelist of permitted options.
+This closes a security hole in which a downloaded package uses
+compiler options like
+<span style="white-space: nowrap"><code>-fplugin</code></span>
+to run arbitrary code on the machine where it is being built.
+This can cause a build error such as <code>invalid flag in #cgo CFLAGS</code>.
+For more background, and how to handle this error, see
+<a href="https://golang.org/s/invalidflag">https://golang.org/s/invalidflag</a>.
+</p>
+
+<p>
+Cgo now implements a C typedef like “<code>typedef</code> <code>X</code> <code>Y</code>” using a Go type alias,
 so that Go code may use the types <code>C.X</code> and <code>C.Y</code> interchangeably.
 It also now supports the use of niladic function-like macros.
 Also, the documentation has been updated to clarify that
@@ -271,7 +286,13 @@ Go structs and Go arrays are not supported in the type signatures of cgo-exporte
 </p>
 
 <p>
-TODO: CL 70890 "permit passing string values directly between Go and C."
+Cgo now supports direct access to Go string values from C.
+Functions in the C preamble may use the type <code>_GoString_</code>
+to accept a Go string as an argument.
+C code may call <code>_GoStringLen</code> and <code>_GoStringPtr</code>
+for direct access to the contents of the string.
+A value of type <code>_GoString_</code>
+may be passed in a call to an exported Go function that takes an argument of Go type <code>string</code>.
 </p>
 
 <p>
@@ -283,7 +304,7 @@ The new set of environment variables <code>CC_FOR_<i>goos</i>_<i>goarch</i></cod
 allows specifying a different default C compiler for each target.
 Note that these variables only apply during toolchain bootstrap,
 to set the defaults used by the resulting toolchain.
-Later <code>go</code> <code>build</code> commands refer to the <code>CC</code> environment
+Later <code>go</code> <code>build</code> commands use the <code>CC</code> environment
 variable or else the built-in default.
 </p>
 
@@ -298,7 +319,8 @@ interface.
 <p>
 These types must be <code>uintptr</code> on the Go side because they
 would otherwise confuse the Go garbage collector; they are sometimes
-not really pointers but data structures encoded in a pointer type.
+not really pointers but data structures encoded in a pointer-sized integer.
+Pointers to Go memory must not be stored in these <code>uintptr</code> values.
 </p>
 
 <p>
@@ -370,8 +392,9 @@ without the binary that produced the profile.
 </p>
 
 <p>
-The <a href="/cmd/pprof/"><code>go</code>&nbsp;<code>tool</code>&nbsp;<code>pprof</code></a> profile visualizer has been updated to
-the latest version from <a href="https://github.com/google/pprof">github.com/google/pprof</a>,
+The <a href="/cmd/pprof/"><code>go</code>&nbsp;<code>tool</code>&nbsp;<code>pprof</code></a>
+profile visualizer has been updated to git version 9e20b5b (2017-11-08)
+from <a href="https://github.com/google/pprof">github.com/google/pprof</a>,
 which includes an updated web interface.
 </p>
 
@@ -418,7 +441,7 @@ a repository is not “properly formatted” is inherently fragile and not recom
 If multiple programs must agree about which version of gofmt is used to format a source file,
 we recommend that they do this by arranging to invoke the same gofmt binary.
 For example, in the Go open source repository, our Git pre-commit hook is written in Go
-and could import <code>go/format</code> directly but instead invokes the <code>gofmt</code>
+and could import <code>go/format</code> directly, but instead it invokes the <code>gofmt</code>
 binary found in the current path, so that the pre-commit hook need not be recompiled
 each time <code>gofmt</code> changes.
 </p>
@@ -439,7 +462,7 @@ and each package is now presented as its own DWARF compilation unit.
 
 <p>
 The various <a href="https://docs.google.com/document/d/1nr-TQHw_er6GOQRsF6T43GGhFDelrAP0NqSS_00RgZQ/edit">build modes</a>
-has been ported to more systems.
+have been ported to more systems.
 Specifically, <code>c-shared</code> now works on <code>linux/ppc64le</code>, <code>windows/386</code>, and <code>windows/amd64</code>;
 <code>pie</code> now works on <code>darwin/amd64</code> and also forces the use of external linking on all systems;
 and <code>plugin</code> now works on <code>linux/ppc64le</code> and <code>darwin/amd64</code>.
@@ -544,7 +567,11 @@ to avoid clearing the condition flags unexpectedly.
 <h3 id="gccgo">Gccgo</h3>
 
 <p>
-TODO: Words about GCC 8 and Go 1.10.
+Due to the alignment of Go's semiannual release schedule with GCC's
+annual release schedule,
+GCC release 7 contains the Go 1.8.3 version of gccgo.
+We expect that the next release, GCC 8, will contain the Go 1.10
+version of gccgo.
 </p>
 
 <h2 id="runtime">Runtime</h2>
@@ -564,7 +591,7 @@ Now, the calls nest: if <code>LockOSThread</code> is called multiple times,
 in order to unlock the thread.
 Existing code that was careful not to nest these calls will remain correct.
 Existing code that incorrectly assumed the calls nested will become correct.
-Most uses of these functions in public Go source falls into the second category.
+Most uses of these functions in public Go source code falls into the second category.
 </p>
 
 <p>
@@ -727,9 +754,9 @@ The
 <a href="/pkg/bytes/#Split"><code>Split</code></a>,
 and
 <a href="/pkg/bytes/#SplitAfter"><code>SplitAfter</code></a>
-each already returned slices pointing into the same underlying array as its input.
-Go 1.10 changes each of the returned subslices to have capacity equal to its length,
-so that appending to a subslice will not overwrite adjacent data in the original input.
+functions have always returned subslices of their inputs.
+Go 1.10 changes each returned subslice to have capacity equal to its length,
+so that appending to one cannot overwrite adjacent data in the original input.
 </p>
 </dl>
 
@@ -755,13 +782,13 @@ them unless explicitly advertised.
 <dl id="crypto/x509"><dt><a href="/pkg/crypto/x509/">crypto/x509</a></dt>
 <dd>
 <p>
-Leaf certificate validation now enforces the name constraints for all
+<a href="/pkg/crypto/x509/#Certificate.Verify"><code>Certificate.Verify</code></a>
+now enforces the name constraints for all
 names contained in the certificate, not just the one name that a client has asked about.
 Extended key usage restrictions are similarly now checked all at once.
 As a result, after a certificate has been validated, now it can be trusted in its entirety.
 It is no longer necessary to revalidate the certificate for each additional name
 or key usage.
-TODO: Link to docs that may not exist yet.
 </p>
 
 <p>
@@ -769,7 +796,8 @@ Parsed certificates also now report URI names and IP, email, and URI constraints
 <a href="/pkg/crypto/x509/#Certificate"><code>Certificate</code></a> fields
 <code>URIs</code>, <code>PermittedIPRanges</code>, <code>ExcludedIPRanges</code>,
 <code>PermittedEmailAddresses</code>, <code>ExcludedEmailAddresses</code>,
-<code>PermittedURIDomains</code>, and <code>ExcludedURIDomains</code>.
+<code>PermittedURIDomains</code>, and <code>ExcludedURIDomains</code>. Certificates with
+invalid values for those fields are now rejected.
 </p>
 
 <p>
@@ -797,6 +825,13 @@ formats the X.509 distinguished name in the standard RFC 2253 format.
 
 <dl id="database/sql/driver"><dt><a href="/pkg/database/sql/driver/">database/sql/driver</a></dt>
 <dd>
+<p>
+Drivers that currently hold on to the destination buffer provided by
+<a href="/pkg/database/sql/driver/#Rows.Next"><code>driver.Rows.Next</code></a> should ensure they no longer
+write to a buffer assigned to the destination array outside of that call.
+Drivers must be careful that underlying buffers are not modified when closing
+<a href="/pkg/database/sql/driver/#Rows"><code>driver.Rows</code></a>.
+</p>
 <p>
 Drivers that want to construct a <a href="/pkg/database/sql/#DB"><code>sql.DB</code></a> for
 their clients can now implement the <a href="/pkg/database/sql/driver/#Connector"><code>Connector</code></a> interface
@@ -1046,9 +1081,10 @@ now implement those interfaces.
 <dl id="html/template"><dt><a href="/pkg/html/template/">html/template</a></dt>
 <dd>
 <p>
-The new actions <code>{{"{{break}}"}}</code> and <code>{{"{{continue}}"}}</code>
-break out of the innermost <code>{{"{{range"}}</code>&nbsp;...<code>}}</code> loop,
-like the corresponding Go statements.
+The new <a href="/pkg/html/template#Srcset"><code>Srcset</code></a> content
+type allows for proper handling of values within the
+<a href="https://w3c.github.io/html/semantics-embedded-content.html#element-attrdef-img-srcset"><code>srcset</code></a>
+attribute of <code>img</code> tags.
 </p>
 </dl>
 
@@ -1189,6 +1225,10 @@ The content-serving handlers also now omit the <code>Content-Type</code> header 
 if passed an invalid (non-3-digit) status code.
 </p>
 <p>
+<!-- CL 46631 -->
+The <code>Server</code> will no longer add an implicit Content-Type when a <code>Handler</code> does not write any output.
+</p>
+<p>
 <a href="/pkg/net/http/#Redirect"><code>Redirect</code></a> now sets the <code>Content-Type</code> header before writing its HTTP response.
 </p>
 </dl>
@@ -1289,7 +1329,7 @@ Also matching <code>net.Conn</code>,
 <a href="/pkg/os/#File.Close"><code>Close</code></a> method
 now guarantee that when <code>Close</code> returns,
 the underlying file descriptor has been closed.
-(In earlier releases, like for <code>net.Conn</code>'s,
+(In earlier releases,
 if the <code>Close</code> stopped pending I/O
 in other goroutines, the closing of the file descriptor could happen in one of those
 goroutines shortly after <code>Close</code> returned.)
@@ -1318,7 +1358,7 @@ in the corresponding <a href="/pkg/reflect/#StructField">StructField</a>,
 with the result that for those fields,
 and <a href="/pkg/reflect/#Value.CanSet"><code>Value.CanSet</code></a>
 incorrectly returned true and
-and <a href="/pkg/reflect/#Value.Set"><code>Value.Set</code></a>
+<a href="/pkg/reflect/#Value.Set"><code>Value.Set</code></a>
 incorrectly succeeded.
 The underlying metadata has been corrected;
 for those fields,
@@ -1382,15 +1422,6 @@ is now implemented.
 </p>
 </dl>
 
-<dl id="text/template"><dt><a href="/pkg/text/template/">text/template</a></dt>
-<dd>
-<p>
-The new actions <code>{{"{{break}}"}}</code> and <code>{{"{{continue}}"}}</code>
-break out of the innermost <code>{{"{{range"}}</code>&nbsp;...<code>}}</code> loop,
-like the corresponding Go statements.
-</p>
-</dl>
-
 <dl id="time"><dt><a href="/pkg/time/">time</a></dt>
 <dd>
 <p>
@@ -1409,7 +1440,7 @@ allows conversion of IANA time zone file data to a <a href="/pkg/time/#Location"
 <dd>
 <p>
 The <a href="/pkg/unicode/"><code>unicode</code></a> package and associated
-support throughout the system has been upgraded from version 9.0 to
+support throughout the system has been upgraded from Unicode 9.0 to
 <a href="http://www.unicode.org/versions/Unicode10.0.0/">Unicode 10.0</a>,
 which adds 8,518 new characters, including four new scripts, one new property,
 a Bitcoin currency symbol, and 56 new emoji.

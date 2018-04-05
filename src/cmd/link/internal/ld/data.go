@@ -49,7 +49,9 @@ import (
 func isRuntimeDepPkg(pkg string) bool {
 	switch pkg {
 	case "runtime",
-		"sync/atomic": // runtime may call to sync/atomic, due to go:linkname
+		"sync/atomic",      // runtime may call to sync/atomic, due to go:linkname
+		"internal/bytealg", // for IndexByte
+		"internal/cpu":     // for cpu features
 		return true
 	}
 	return strings.HasPrefix(pkg, "runtime/internal/") && !strings.HasSuffix(pkg, "_test")
@@ -59,9 +61,9 @@ func isRuntimeDepPkg(pkg string) bool {
 // is used to determine when the section can be split if it becomes too large, to ensure that
 // the trampolines are in the same section as the function that uses them.
 func maxSizeTrampolinesPPC64(s *sym.Symbol, isTramp bool) uint64 {
-	// If Thearch.Trampoline is nil, then trampoline support is not available on this arch.
+	// If thearch.Trampoline is nil, then trampoline support is not available on this arch.
 	// A trampoline does not need any dependent trampolines.
-	if Thearch.Trampoline == nil || isTramp {
+	if thearch.Trampoline == nil || isTramp {
 		return 0
 	}
 
@@ -81,7 +83,7 @@ func maxSizeTrampolinesPPC64(s *sym.Symbol, isTramp bool) uint64 {
 // On PPC64 & PPC64LE the text sections might be split but will still insert trampolines
 // where necessary.
 func trampoline(ctxt *Link, s *sym.Symbol) {
-	if Thearch.Trampoline == nil {
+	if thearch.Trampoline == nil {
 		return // no need or no support of trampolines on this arch
 	}
 
@@ -101,7 +103,7 @@ func trampoline(ctxt *Link, s *sym.Symbol) {
 			continue
 		}
 
-		Thearch.Trampoline(ctxt, r, s)
+		thearch.Trampoline(ctxt, r, s)
 	}
 
 }
@@ -193,7 +195,7 @@ func relocsym(ctxt *Link, s *sym.Symbol) {
 			case 8:
 				o = int64(ctxt.Arch.ByteOrder.Uint64(s.P[off:]))
 			}
-			if !Thearch.Archreloc(ctxt, r, s, &o) {
+			if !thearch.Archreloc(ctxt, r, s, &o) {
 				Errorf(s, "unknown reloc to %v: %d (%s)", r.Sym.Name, r.Type, sym.RelocName(ctxt.Arch, r.Type))
 			}
 		case objabi.R_TLS_LE:
@@ -248,10 +250,10 @@ func relocsym(ctxt *Link, s *sym.Symbol) {
 			if ctxt.BuildMode == BuildModePIE && ctxt.IsELF {
 				// We are linking the final executable, so we
 				// can optimize any TLS IE relocation to LE.
-				if Thearch.TLSIEtoLE == nil {
+				if thearch.TLSIEtoLE == nil {
 					log.Fatalf("internal linking of TLS IE not supported on %v", ctxt.Arch.Family)
 				}
-				Thearch.TLSIEtoLE(s, int(off), int(r.Siz))
+				thearch.TLSIEtoLE(s, int(off), int(r.Siz))
 				o = int64(ctxt.Tlsoffset)
 				// TODO: o += r.Add when ctxt.Arch.Family != sys.AMD64?
 				// Why do we treat r.Add differently on AMD64?
@@ -417,7 +419,7 @@ func relocsym(ctxt *Link, s *sym.Symbol) {
 						o -= int64(r.Off) // relative to section offset, not symbol
 					} else if ctxt.Arch.Family == sys.ARM {
 						// see ../arm/asm.go:/machoreloc1
-						o += Symaddr(rs) - int64(s.Value) - int64(r.Off)
+						o += Symaddr(rs) - s.Value - int64(r.Off)
 					} else {
 						o += int64(r.Siz)
 					}
@@ -443,7 +445,7 @@ func relocsym(ctxt *Link, s *sym.Symbol) {
 		}
 
 		if r.Variant != sym.RV_NONE {
-			o = Thearch.Archrelocvariant(ctxt, r, s, o)
+			o = thearch.Archrelocvariant(ctxt, r, s, o)
 		}
 
 		if false {
@@ -559,14 +561,14 @@ func dynrelocsym(ctxt *Link, s *sym.Symbol) {
 			// It's expected that some relocations will be done
 			// later by relocsym (R_TLS_LE, R_ADDROFF), so
 			// don't worry if Adddynrel returns false.
-			Thearch.Adddynrel(ctxt, s, r)
+			thearch.Adddynrel(ctxt, s, r)
 			continue
 		}
 		if r.Sym != nil && r.Sym.Type == sym.SDYNIMPORT || r.Type >= 256 {
 			if r.Sym != nil && !r.Sym.Attr.Reachable() {
 				Errorf(s, "dynamic relocation to unreachable symbol %s", r.Sym.Name)
 			}
-			if !Thearch.Adddynrel(ctxt, s, r) {
+			if !thearch.Adddynrel(ctxt, s, r) {
 				Errorf(s, "unsupported dynamic relocation for symbol %s (type=%d (%s) stype=%d (%s))", r.Sym.Name, r.Type, sym.RelocName(ctxt.Arch, r.Type), r.Sym.Type, r.Sym.Type)
 			}
 		}
@@ -909,7 +911,7 @@ func dosymtype(ctxt *Link) {
 
 // symalign returns the required alignment for the given symbol s.
 func symalign(s *sym.Symbol) int32 {
-	min := int32(Thearch.Minalign)
+	min := int32(thearch.Minalign)
 	if s.Align >= min {
 		return s.Align
 	} else if s.Align != 0 {
@@ -920,7 +922,7 @@ func symalign(s *sym.Symbol) int32 {
 		// If we align it, we waste a lot of space to padding.
 		return min
 	}
-	align := int32(Thearch.Maxalign)
+	align := int32(thearch.Maxalign)
 	for int64(align) > s.Size && align > min {
 		align >>= 1
 	}
@@ -1874,7 +1876,6 @@ func assignAddress(ctxt *Link, sect *sym.Section, n int, s *sym.Symbol, va uint6
 	// Only break at outermost syms.
 
 	if ctxt.Arch.InFamily(sys.PPC64) && s.Outer == nil && ctxt.IsELF && ctxt.LinkMode == LinkExternal && va-sect.Vaddr+funcsize+maxSizeTrampolinesPPC64(s, isTramp) > 0x1c00000 {
-
 		// Set the length for the previous text section
 		sect.Length = va - sect.Vaddr
 
@@ -2006,7 +2007,7 @@ func (ctxt *Link) address() {
 	Segdwarf.Fileoff = Segdata.Fileoff + uint64(Rnd(int64(Segdata.Filelen), int64(*FlagRound)))
 	Segdwarf.Filelen = 0
 	if ctxt.HeadType == objabi.Hwindows {
-		Segdwarf.Fileoff = Segdata.Fileoff + uint64(Rnd(int64(Segdata.Filelen), int64(PEFILEALIGN)))
+		Segdwarf.Fileoff = Segdata.Fileoff + uint64(Rnd(int64(Segdata.Filelen), PEFILEALIGN))
 	}
 	for i, s := range Segdwarf.Sections {
 		vlen := int64(s.Length)

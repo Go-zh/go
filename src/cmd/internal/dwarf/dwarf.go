@@ -23,6 +23,9 @@ const LocPrefix = "go.loc."
 // RangePrefix is the prefix for all the symbols containing DWARF range lists.
 const RangePrefix = "go.range."
 
+// IsStmtPrefix is the prefix for all the symbols containing DWARF is_stmt info for the line number table.
+const IsStmtPrefix = "go.isstmt."
+
 // ConstInfoPrefix is the prefix for all symbols containing DWARF info
 // entries that contain constants.
 const ConstInfoPrefix = "go.constinfo."
@@ -44,23 +47,6 @@ type Sym interface {
 	Len() int64
 }
 
-// A Location represents a variable's location at a particular PC range.
-// It becomes a location list entry in the DWARF.
-type Location struct {
-	StartPC, EndPC int64
-	Pieces         []Piece
-}
-
-// A Piece represents the location of a particular part of a variable.
-// It becomes part of a location list entry (a DW_OP_piece) in the DWARF.
-type Piece struct {
-	Length      int64
-	StackOffset int32
-	RegNum      int16
-	Missing     bool
-	OnStack     bool // if true, RegNum is unset.
-}
-
 // A Var represents a local variable or a function parameter.
 type Var struct {
 	Name          string
@@ -68,15 +54,17 @@ type Var struct {
 	IsReturnValue bool
 	IsInlFormal   bool
 	StackOffset   int32
-	LocationList  []Location
-	Scope         int32
-	Type          Sym
-	DeclFile      string
-	DeclLine      uint
-	DeclCol       uint
-	InlIndex      int32 // subtract 1 to form real index into InlTree
-	ChildIndex    int32 // child DIE index in abstract function
-	IsInAbstract  bool  // variable exists in abstract function
+	// This package can't use the ssa package, so it can't mention ssa.FuncDebug,
+	// so indirect through a closure.
+	PutLocationList func(listSym, startPC Sym)
+	Scope           int32
+	Type            Sym
+	DeclFile        string
+	DeclLine        uint
+	DeclCol         uint
+	InlIndex        int32 // subtract 1 to form real index into InlTree
+	ChildIndex      int32 // child DIE index in abstract function
+	IsInAbstract    bool  // variable exists in abstract function
 }
 
 // A Scope represents a lexical scope. All variables declared within a
@@ -189,7 +177,6 @@ type Context interface {
 	AddInt(s Sym, size int, i int64)
 	AddBytes(s Sym, b []byte)
 	AddAddress(s Sym, t interface{}, ofs int64)
-	AddCURelativeAddress(s Sym, t interface{}, ofs int64)
 	AddSectionOffset(s Sym, size int, t interface{}, ofs int64)
 	CurrentOffset(s Sym) int64
 	RecordDclReference(from Sym, to Sym, dclIdx int, inlIndex int)
@@ -791,7 +778,7 @@ func GetAbbrev() []byte {
 		// See section 7.5.3
 		buf = AppendUleb128(buf, uint64(i))
 		buf = AppendUleb128(buf, uint64(abbrevs[i].tag))
-		buf = append(buf, byte(abbrevs[i].children))
+		buf = append(buf, abbrevs[i].children)
 		for _, f := range abbrevs[i].attr {
 			buf = AppendUleb128(buf, uint64(f.attr))
 			buf = AppendUleb128(buf, uint64(f.form))
@@ -966,18 +953,15 @@ func PutIntConst(ctxt Context, info, typ Sym, name string, val int64) {
 // attribute).
 func PutRanges(ctxt Context, sym Sym, base Sym, ranges []Range) {
 	ps := ctxt.PtrSize()
+	// Write base address entry.
+	if base != nil {
+		ctxt.AddInt(sym, ps, -1)
+		ctxt.AddAddress(sym, base, 0)
+	}
 	// Write ranges.
-	// We do not emit base address entries here, even though they would reduce
-	// the number of relocations, because dsymutil (which is used on macOS when
-	// linking externally) does not support them.
 	for _, r := range ranges {
-		if base == nil {
-			ctxt.AddInt(sym, ps, r.Start)
-			ctxt.AddInt(sym, ps, r.End)
-		} else {
-			ctxt.AddCURelativeAddress(sym, base, r.Start)
-			ctxt.AddCURelativeAddress(sym, base, r.End)
-		}
+		ctxt.AddInt(sym, ps, r.Start)
+		ctxt.AddInt(sym, ps, r.End)
 	}
 	// Write trailer.
 	ctxt.AddInt(sym, ps, 0)
@@ -1319,6 +1303,11 @@ func putscope(ctxt Context, s *FnState, scopes []Scope, curscope int32, fnabbrev
 			return curscope
 		}
 
+		if len(scopes[curscope].Vars) == 0 {
+			curscope = putscope(ctxt, s, scopes, curscope, fnabbrev, encbuf)
+			continue
+		}
+
 		if len(scope.Ranges) == 1 {
 			Uleb128put(ctxt, s.Info, DW_ABRV_LEXICAL_BLOCK_SIMPLE)
 			putattr(ctxt, s.Info, DW_ABRV_LEXICAL_BLOCK_SIMPLE, DW_FORM_addr, DW_CLS_ADDRESS, scope.Ranges[0].Start, s.StartPC)
@@ -1331,6 +1320,7 @@ func putscope(ctxt Context, s *FnState, scopes []Scope, curscope int32, fnabbrev
 		}
 
 		curscope = putscope(ctxt, s, scopes, curscope, fnabbrev, encbuf)
+
 		Uleb128put(ctxt, s.Info, 0)
 	}
 	return curscope
@@ -1360,10 +1350,10 @@ func determineVarAbbrev(v *Var, fnabbrev int) (int, bool, bool) {
 	// convert to an inline abbreviation and emit an empty location.
 	missing := false
 	switch {
-	case abbrev == DW_ABRV_AUTO_LOCLIST && len(v.LocationList) == 0:
+	case abbrev == DW_ABRV_AUTO_LOCLIST && v.PutLocationList == nil:
 		missing = true
 		abbrev = DW_ABRV_AUTO
-	case abbrev == DW_ABRV_PARAM_LOCLIST && len(v.LocationList) == 0:
+	case abbrev == DW_ABRV_PARAM_LOCLIST && v.PutLocationList == nil:
 		missing = true
 		abbrev = DW_ABRV_PARAM
 	}
@@ -1469,8 +1459,8 @@ func putvar(ctxt Context, s *FnState, v *Var, absfn Sym, fnabbrev, inlIndex int,
 	}
 
 	if abbrevUsesLoclist(abbrev) {
-		putattr(ctxt, s.Info, abbrev, DW_FORM_sec_offset, DW_CLS_PTR, int64(s.Loc.Len()), s.Loc)
-		addLocList(ctxt, s.Loc, s.StartPC, v, encbuf)
+		putattr(ctxt, s.Info, abbrev, DW_FORM_sec_offset, DW_CLS_PTR, s.Loc.Len(), s.Loc)
+		v.PutLocationList(s.Loc, s.StartPC)
 	} else {
 		loc := encbuf[:0]
 		switch {
@@ -1486,45 +1476,6 @@ func putvar(ctxt Context, s *FnState, v *Var, absfn Sym, fnabbrev, inlIndex int,
 	}
 
 	// Var has no children => no terminator
-}
-
-func addLocList(ctxt Context, listSym, startPC Sym, v *Var, encbuf []byte) {
-	// Base address entry: max ptr followed by the base address.
-	ctxt.AddInt(listSym, ctxt.PtrSize(), ^0)
-	ctxt.AddAddress(listSym, startPC, 0)
-	for _, entry := range v.LocationList {
-		ctxt.AddInt(listSym, ctxt.PtrSize(), entry.StartPC)
-		ctxt.AddInt(listSym, ctxt.PtrSize(), entry.EndPC)
-		locBuf := encbuf[:0]
-		for _, piece := range entry.Pieces {
-			if !piece.Missing {
-				if piece.OnStack {
-					if piece.StackOffset == 0 {
-						locBuf = append(locBuf, DW_OP_call_frame_cfa)
-					} else {
-						locBuf = append(locBuf, DW_OP_fbreg)
-						locBuf = AppendSleb128(locBuf, int64(piece.StackOffset))
-					}
-				} else {
-					if piece.RegNum < 32 {
-						locBuf = append(locBuf, DW_OP_reg0+byte(piece.RegNum))
-					} else {
-						locBuf = append(locBuf, DW_OP_regx)
-						locBuf = AppendUleb128(locBuf, uint64(piece.RegNum))
-					}
-				}
-			}
-			if len(entry.Pieces) > 1 {
-				locBuf = append(locBuf, DW_OP_piece)
-				locBuf = AppendUleb128(locBuf, uint64(piece.Length))
-			}
-		}
-		ctxt.AddInt(listSym, 2, int64(len(locBuf)))
-		ctxt.AddBytes(listSym, locBuf)
-	}
-	// End list
-	ctxt.AddInt(listSym, ctxt.PtrSize(), 0)
-	ctxt.AddInt(listSym, ctxt.PtrSize(), 0)
 }
 
 // VarsByOffset attaches the methods of sort.Interface to []*Var,

@@ -44,7 +44,6 @@ var (
 	Debug_slice        int
 	Debug_vlog         bool
 	Debug_wb           int
-	Debug_eagerwb      int
 	Debug_pctab        string
 	Debug_locationlist int
 	Debug_typecheckinl int
@@ -73,7 +72,6 @@ var debugtab = []struct {
 	{"slice", "print information about slice compilation", &Debug_slice},
 	{"typeassert", "print information about type assertion inlining", &Debug_typeassert},
 	{"wb", "print information about write barriers", &Debug_wb},
-	{"eagerwb", "use unbuffered write barrier", &Debug_eagerwb},
 	{"export", "print export data", &Debug_export},
 	{"pctab", "print named pc-value table", &Debug_pctab},
 	{"locationlists", "print information about DWARF location list creation", &Debug_locationlist},
@@ -96,8 +94,8 @@ Key "pctab" supports values:
 `
 
 func usage() {
-	fmt.Printf("usage: compile [options] file.go...\n")
-	objabi.Flagprint(1)
+	fmt.Fprintf(os.Stderr, "usage: compile [options] file.go...\n")
+	objabi.Flagprint(os.Stderr)
 	Exit(2)
 }
 
@@ -194,7 +192,7 @@ func Main(archInit func(*Arch)) {
 	flag.BoolVar(&pure_go, "complete", false, "compiling complete package (no C or assembly)")
 	flag.StringVar(&debugstr, "d", "", "print debug information about items in `list`; try -d help")
 	flag.BoolVar(&flagDWARF, "dwarf", true, "generate DWARF symbols")
-	flag.BoolVar(&Ctxt.Flag_locationlists, "dwarflocationlists", false, "add location lists to DWARF in optimized mode")
+	flag.BoolVar(&Ctxt.Flag_locationlists, "dwarflocationlists", true, "add location lists to DWARF in optimized mode")
 	flag.IntVar(&genDwarfInline, "gendwarfinl", 2, "generate DWARF inline info records")
 	objabi.Flagcount("e", "no limit on number of errors reported", &Debug['e'])
 	objabi.Flagcount("f", "debug stack frames", &Debug['f'])
@@ -213,7 +211,7 @@ func Main(archInit func(*Arch)) {
 	flag.BoolVar(&nolocalimports, "nolocalimports", false, "reject local (relative) imports")
 	flag.StringVar(&outfile, "o", "", "write output to `file`")
 	flag.StringVar(&myimportpath, "p", "", "set expected package import `path`")
-	flag.BoolVar(&writearchive, "pack", false, "write package file instead of object file")
+	flag.BoolVar(&writearchive, "pack", false, "write to file.a instead of file.o")
 	objabi.Flagcount("r", "debug generated wrappers", &Debug['r'])
 	flag.BoolVar(&flag_race, "race", false, "enable race detector")
 	objabi.Flagcount("s", "warn about composite literals that can be simplified", &Debug['s'])
@@ -292,17 +290,23 @@ func Main(archInit func(*Arch)) {
 
 	startProfile()
 
+	if flag_race && flag_msan {
+		log.Fatal("cannot use both -race and -msan")
+	}
+	if ispkgin(omit_pkgs) {
+		flag_race = false
+		flag_msan = false
+	}
 	if flag_race {
 		racepkg = types.NewPkg("runtime/race", "race")
 	}
 	if flag_msan {
 		msanpkg = types.NewPkg("runtime/msan", "msan")
 	}
-	if flag_race && flag_msan {
-		log.Fatal("cannot use both -race and -msan")
-	} else if flag_race || flag_msan {
+	if flag_race || flag_msan {
 		instrumenting = true
 	}
+
 	if compiling_runtime && Debug['N'] != 0 {
 		log.Fatal("cannot disable optimizations while compiling runtime")
 	}
@@ -407,13 +411,7 @@ func Main(archInit func(*Arch)) {
 		Debug['l'] = 1 - Debug['l']
 	}
 
-	// The buffered write barrier is only implemented on amd64
-	// right now.
-	if objabi.GOARCH != "amd64" {
-		Debug_eagerwb = 1
-	}
-
-	trackScopes = flagDWARF && ((Debug['l'] == 0 && Debug['N'] != 0) || Ctxt.Flag_locationlists)
+	trackScopes = flagDWARF
 
 	Widthptr = thearch.LinkArch.PtrSize
 	Widthreg = thearch.LinkArch.RegSize
@@ -546,7 +544,7 @@ func Main(archInit func(*Arch)) {
 		// Typecheck imported function bodies if debug['l'] > 1,
 		// otherwise lazily when used or re-exported.
 		for _, n := range importlist {
-			if n.Func.Inl.Len() != 0 {
+			if n.Func.Inl != nil {
 				saveerrors()
 				typecheckinl(n)
 			}
@@ -633,13 +631,6 @@ func Main(archInit func(*Arch)) {
 		}
 
 		compileFunctions()
-
-		// We autogenerate and compile some small functions
-		// such as method wrappers and equality/hash routines
-		// while exporting code.
-		// Disable concurrent compilation from here on,
-		// at least until this convoluted structure has been unwound.
-		nBackendWorkers = 1
 
 		if nowritebarrierrecCheck != nil {
 			// Write barriers are now known. Check the
@@ -1231,7 +1222,7 @@ func concurrentBackendAllowed() bool {
 		return false
 	}
 	// TODO: Test and delete these conditions.
-	if objabi.Fieldtrack_enabled != 0 || objabi.Preemptibleloops_enabled != 0 || objabi.Clobberdead_enabled != 0 {
+	if objabi.Fieldtrack_enabled != 0 || objabi.Clobberdead_enabled != 0 {
 		return false
 	}
 	// TODO: fix races and enable the following flags

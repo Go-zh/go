@@ -39,8 +39,8 @@ func MkdirAll(path string, perm FileMode) error {
 	}
 
 	if j > 1 {
-		// Create parent
-		err = MkdirAll(path[0:j-1], perm)
+		// Create parent.
+		err = MkdirAll(fixRootDirectory(path[:j-1]), perm)
 		if err != nil {
 			return err
 		}

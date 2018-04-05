@@ -665,18 +665,29 @@ func (e *EscState) esc(n *Node, parent *Node) {
 		}
 	}
 
-	// Big stuff escapes unconditionally
-	// "Big" conditions that were scattered around in walk have been gathered here
+	// Big stuff and non-constant-sized stuff escapes unconditionally.
+	// "Big" conditions that were scattered around in walk have been
+	// gathered here.
 	if n.Esc != EscHeap && n.Type != nil &&
 		(n.Type.Width > maxStackVarSize ||
 			(n.Op == ONEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= 1<<16 ||
 			n.Op == OMAKESLICE && !isSmallMakeSlice(n)) {
+
+		// isSmallMakeSlice returns false for non-constant len/cap.
+		// If that's the case, print a more accurate escape reason.
+		var msgVerb, escapeMsg string
+		if n.Op == OMAKESLICE && (!Isconst(n.Left, CTINT) || !Isconst(n.Right, CTINT)) {
+			msgVerb, escapeMsg = "has ", "non-constant size"
+		} else {
+			msgVerb, escapeMsg = "is ", "too large for stack"
+		}
+
 		if Debug['m'] > 2 {
-			Warnl(n.Pos, "%v is too large for stack", n)
+			Warnl(n.Pos, "%v "+msgVerb+escapeMsg, n)
 		}
 		n.Esc = EscHeap
 		addrescapes(n)
-		e.escassignSinkWhy(n, n, "too large for stack") // TODO category: tooLarge
+		e.escassignSinkWhy(n, n, escapeMsg) // TODO category: tooLarge
 	}
 
 	e.esc(n.Left, n)
@@ -948,7 +959,7 @@ func (e *EscState) esc(n *Node, parent *Node) {
 
 	case OCLOSURE:
 		// Link addresses of captured variables to closure.
-		for _, v := range n.Func.Cvars.Slice() {
+		for _, v := range n.Func.Closure.Func.Cvars.Slice() {
 			if v.Op == OXXX { // unnamed out argument; see dcl.go:/^funcargs
 				continue
 			}
@@ -2168,9 +2179,7 @@ func moveToHeap(n *Node) {
 // This special tag is applied to uintptr variables
 // that we believe may hold unsafe.Pointers for
 // calls into assembly functions.
-// It is logically a constant, but using a var
-// lets us take the address below to get a *string.
-var unsafeUintptrTag = "unsafe-uintptr"
+const unsafeUintptrTag = "unsafe-uintptr"
 
 // This special tag is applied to uintptr parameters of functions
 // marked go:uintptrescapes.
@@ -2238,30 +2247,29 @@ func (e *EscState) esctag(fn *Node) {
 		}
 	}
 
-	for _, ln := range fn.Func.Dcl {
-		if ln.Op != ONAME {
-			continue
-		}
-
-		switch ln.Esc & EscMask {
-		case EscNone, // not touched by escflood
-			EscReturn:
-			if types.Haspointers(ln.Type) { // don't bother tagging for scalars
-				if ln.Name.Param.Field.Note != uintptrEscapesTag {
-					ln.Name.Param.Field.Note = mktag(int(ln.Esc))
-				}
+	for _, fs := range types.RecvsParams {
+		for _, f := range fs(fn.Type).Fields().Slice() {
+			if !types.Haspointers(f.Type) { // don't bother tagging for scalars
+				continue
+			}
+			if f.Note == uintptrEscapesTag {
+				// Note is already set in the loop above.
+				continue
 			}
 
-		case EscHeap: // touched by escflood, moved to heap
-		}
-	}
+			// Unnamed parameters are unused and therefore do not escape.
+			if f.Sym == nil || f.Sym.IsBlank() {
+				f.Note = mktag(EscNone)
+				continue
+			}
 
-	// Unnamed parameters are unused and therefore do not escape.
-	// (Unnamed parameters are not in the Dcl list in the loop above
-	// so we need to mark them separately.)
-	for _, f := range fn.Type.Params().Fields().Slice() {
-		if f.Sym == nil || f.Sym.IsBlank() {
-			f.Note = mktag(EscNone)
+			switch esc := asNode(f.Nname).Esc; esc & EscMask {
+			case EscNone, // not touched by escflood
+				EscReturn:
+				f.Note = mktag(int(esc))
+
+			case EscHeap: // touched by escflood, moved to heap
+			}
 		}
 	}
 }

@@ -110,12 +110,6 @@ data, defined in detail in the corresponding sections that follow.
 		T0 is executed; otherwise, dot is set to the successive elements
 		of the array, slice, or map and T1 is executed.
 
-	{{break}}
-		Break out of the surrounding range loop.
-
-	{{continue}}
-		Begin the next iteration of the surrounding range loop.
-
 	{{template "name"}}
 		The template with the specified name is executed with nil data.
 
@@ -127,7 +121,7 @@ data, defined in detail in the corresponding sections that follow.
 		A block is shorthand for defining a template
 			{{define "name"}} T1 {{end}}
 		and then executing it in place
-			{{template "name" .}}
+			{{template "name" pipeline}}
 		The typical use is to define a set of root templates that are
 		then customized by redefining the block templates within.
 
@@ -246,6 +240,10 @@ The initialization has syntax
 
 where $variable is the name of the variable. An action that declares a
 variable produces no output.
+
+Variables previously declared can also be assigned, using the syntax
+
+	$variable = pipeline
 
 If a "range" action initializes a variable, the variable is set to the
 successive elements of the iteration. Also, a "range" may declare two

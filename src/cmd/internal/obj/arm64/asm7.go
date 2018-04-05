@@ -146,6 +146,10 @@ func FPOP2S(m uint32, s uint32, type_ uint32, op uint32) uint32 {
 	return m<<31 | s<<29 | 0x1E<<24 | type_<<22 | 1<<21 | op<<12 | 2<<10
 }
 
+func FPOP3S(m uint32, s uint32, type_ uint32, op uint32, op2 uint32) uint32 {
+	return m<<31 | s<<29 | 0x1F<<24 | type_<<22 | op<<21 | op2<<15
+}
+
 func FPCVTI(sf uint32, s uint32, type_ uint32, rmode uint32, op uint32) uint32 {
 	return sf<<31 | s<<29 | 0x1E<<24 | type_<<22 | 1<<21 | rmode<<19 | op<<16 | 0<<10
 }
@@ -207,28 +211,28 @@ var optab = []Optab{
 	/* logical operations */
 	{AAND, C_REG, C_REG, C_REG, 1, 4, 0, 0, 0},
 	{AAND, C_REG, C_NONE, C_REG, 1, 4, 0, 0, 0},
-	{ABIC, C_REG, C_REG, C_REG, 1, 4, 0, 0, 0},
-	{ABIC, C_REG, C_NONE, C_REG, 1, 4, 0, 0, 0},
-	{AAND, C_MBCON, C_REG, C_REG, 53, 4, 0, 0, 0},
+	{AANDS, C_REG, C_REG, C_REG, 1, 4, 0, 0, 0},
+	{AANDS, C_REG, C_NONE, C_REG, 1, 4, 0, 0, 0},
+	{AAND, C_MBCON, C_REG, C_RSP, 53, 4, 0, 0, 0},
 	{AAND, C_MBCON, C_NONE, C_REG, 53, 4, 0, 0, 0},
-	{ABIC, C_MBCON, C_REG, C_REG, 53, 4, 0, 0, 0},
-	{ABIC, C_MBCON, C_NONE, C_REG, 53, 4, 0, 0, 0},
-	{AAND, C_BITCON, C_REG, C_REG, 53, 4, 0, 0, 0},
+	{AANDS, C_MBCON, C_REG, C_REG, 53, 4, 0, 0, 0},
+	{AANDS, C_MBCON, C_NONE, C_REG, 53, 4, 0, 0, 0},
+	{AAND, C_BITCON, C_REG, C_RSP, 53, 4, 0, 0, 0},
 	{AAND, C_BITCON, C_NONE, C_REG, 53, 4, 0, 0, 0},
-	{ABIC, C_BITCON, C_REG, C_REG, 53, 4, 0, 0, 0},
-	{ABIC, C_BITCON, C_NONE, C_REG, 53, 4, 0, 0, 0},
-	{AAND, C_MOVCON, C_REG, C_REG, 62, 8, 0, 0, 0},
+	{AANDS, C_BITCON, C_REG, C_REG, 53, 4, 0, 0, 0},
+	{AANDS, C_BITCON, C_NONE, C_REG, 53, 4, 0, 0, 0},
+	{AAND, C_MOVCON, C_REG, C_RSP, 62, 8, 0, 0, 0},
 	{AAND, C_MOVCON, C_NONE, C_REG, 62, 8, 0, 0, 0},
-	{ABIC, C_MOVCON, C_REG, C_REG, 62, 8, 0, 0, 0},
-	{ABIC, C_MOVCON, C_NONE, C_REG, 62, 8, 0, 0, 0},
-	{AAND, C_VCON, C_REG, C_REG, 28, 8, 0, LFROM, 0},
+	{AANDS, C_MOVCON, C_REG, C_REG, 62, 8, 0, 0, 0},
+	{AANDS, C_MOVCON, C_NONE, C_REG, 62, 8, 0, 0, 0},
+	{AAND, C_VCON, C_REG, C_RSP, 28, 8, 0, LFROM, 0},
 	{AAND, C_VCON, C_NONE, C_REG, 28, 8, 0, LFROM, 0},
-	{ABIC, C_VCON, C_REG, C_REG, 28, 8, 0, LFROM, 0},
-	{ABIC, C_VCON, C_NONE, C_REG, 28, 8, 0, LFROM, 0},
+	{AANDS, C_VCON, C_REG, C_REG, 28, 8, 0, LFROM, 0},
+	{AANDS, C_VCON, C_NONE, C_REG, 28, 8, 0, LFROM, 0},
 	{AAND, C_SHIFT, C_REG, C_REG, 3, 4, 0, 0, 0},
 	{AAND, C_SHIFT, C_NONE, C_REG, 3, 4, 0, 0, 0},
-	{ABIC, C_SHIFT, C_REG, C_REG, 3, 4, 0, 0, 0},
-	{ABIC, C_SHIFT, C_NONE, C_REG, 3, 4, 0, 0, 0},
+	{AANDS, C_SHIFT, C_REG, C_REG, 3, 4, 0, 0, 0},
+	{AANDS, C_SHIFT, C_NONE, C_REG, 3, 4, 0, 0, 0},
 	{AMOVD, C_RSP, C_NONE, C_RSP, 24, 4, 0, 0, 0},
 	{AMVN, C_REG, C_NONE, C_REG, 24, 4, 0, 0, 0},
 	{AMOVB, C_REG, C_NONE, C_REG, 45, 4, 0, 0, 0},
@@ -305,6 +309,8 @@ var optab = []Optab{
 	{ACSEL, C_COND, C_REG, C_REG, 18, 4, 0, 0, 0}, /* from3 optional */
 	{ACSET, C_COND, C_NONE, C_REG, 18, 4, 0, 0, 0},
 	{ACCMN, C_COND, C_REG, C_VCON, 19, 4, 0, 0, 0}, /* from3 either C_REG or C_VCON */
+	{APRFM, C_UOREG32K, C_NONE, C_SPR, 91, 4, 0, 0, 0},
+	{APRFM, C_UOREG32K, C_NONE, C_LCON, 91, 4, 0, 0, 0},
 
 	/* scaled 12-bit unsigned displacement store */
 	{AMOVB, C_REG, C_NONE, C_UAUTO4K, 20, 4, REGSP, 0, 0},
@@ -493,6 +499,59 @@ var optab = []Optab{
 	{ASTP, C_PAIR, C_NONE, C_LOREG, 77, 12, 0, LTO, C_XPOST},
 	{ASTP, C_PAIR, C_NONE, C_ADDR, 87, 12, 0, 0, 0},
 
+	// differ from LDP/STP for C_NSAUTO_4/C_PSAUTO_4/C_NSOREG_4/C_PSOREG_4
+	{ALDPW, C_NSAUTO, C_NONE, C_PAIR, 66, 4, REGSP, 0, 0},
+	{ALDPW, C_NSAUTO, C_NONE, C_PAIR, 66, 4, REGSP, 0, C_XPRE},
+	{ALDPW, C_NSAUTO, C_NONE, C_PAIR, 66, 4, REGSP, 0, C_XPOST},
+	{ALDPW, C_PSAUTO_4, C_NONE, C_PAIR, 66, 4, REGSP, 0, 0},
+	{ALDPW, C_PSAUTO_4, C_NONE, C_PAIR, 66, 4, REGSP, 0, C_XPRE},
+	{ALDPW, C_PSAUTO_4, C_NONE, C_PAIR, 66, 4, REGSP, 0, C_XPOST},
+	{ALDPW, C_UAUTO4K, C_NONE, C_PAIR, 74, 8, REGSP, 0, 0},
+	{ALDPW, C_UAUTO4K, C_NONE, C_PAIR, 74, 8, REGSP, 0, C_XPRE},
+	{ALDPW, C_UAUTO4K, C_NONE, C_PAIR, 74, 8, REGSP, 0, C_XPOST},
+	{ALDPW, C_LAUTO, C_NONE, C_PAIR, 75, 12, REGSP, LFROM, 0},
+	{ALDPW, C_LAUTO, C_NONE, C_PAIR, 75, 12, REGSP, LFROM, C_XPRE},
+	{ALDPW, C_LAUTO, C_NONE, C_PAIR, 75, 12, REGSP, LFROM, C_XPOST},
+	{ALDPW, C_NSOREG, C_NONE, C_PAIR, 66, 4, 0, 0, 0},
+	{ALDPW, C_NSOREG, C_NONE, C_PAIR, 66, 4, 0, 0, C_XPRE},
+	{ALDPW, C_NSOREG, C_NONE, C_PAIR, 66, 4, 0, 0, C_XPOST},
+	{ALDPW, C_PSOREG_4, C_NONE, C_PAIR, 66, 4, 0, 0, 0},
+	{ALDPW, C_PSOREG_4, C_NONE, C_PAIR, 66, 4, 0, 0, C_XPRE},
+	{ALDPW, C_PSOREG_4, C_NONE, C_PAIR, 66, 4, 0, 0, C_XPOST},
+	{ALDPW, C_UOREG4K, C_NONE, C_PAIR, 74, 8, 0, 0, 0},
+	{ALDPW, C_UOREG4K, C_NONE, C_PAIR, 74, 8, 0, 0, C_XPRE},
+	{ALDPW, C_UOREG4K, C_NONE, C_PAIR, 74, 8, 0, 0, C_XPOST},
+	{ALDPW, C_LOREG, C_NONE, C_PAIR, 75, 12, 0, LFROM, 0},
+	{ALDPW, C_LOREG, C_NONE, C_PAIR, 75, 12, 0, LFROM, C_XPRE},
+	{ALDPW, C_LOREG, C_NONE, C_PAIR, 75, 12, 0, LFROM, C_XPOST},
+	{ALDPW, C_ADDR, C_NONE, C_PAIR, 88, 12, 0, 0, 0},
+
+	{ASTPW, C_PAIR, C_NONE, C_NSAUTO, 67, 4, REGSP, 0, 0},
+	{ASTPW, C_PAIR, C_NONE, C_NSAUTO, 67, 4, REGSP, 0, C_XPRE},
+	{ASTPW, C_PAIR, C_NONE, C_NSAUTO, 67, 4, REGSP, 0, C_XPOST},
+	{ASTPW, C_PAIR, C_NONE, C_PSAUTO_4, 67, 4, REGSP, 0, 0},
+	{ASTPW, C_PAIR, C_NONE, C_PSAUTO_4, 67, 4, REGSP, 0, C_XPRE},
+	{ASTPW, C_PAIR, C_NONE, C_PSAUTO_4, 67, 4, REGSP, 0, C_XPOST},
+	{ASTPW, C_PAIR, C_NONE, C_UAUTO4K, 76, 8, REGSP, 0, 0},
+	{ASTPW, C_PAIR, C_NONE, C_UAUTO4K, 76, 8, REGSP, 0, C_XPRE},
+	{ASTPW, C_PAIR, C_NONE, C_UAUTO4K, 76, 8, REGSP, 0, C_XPOST},
+	{ASTPW, C_PAIR, C_NONE, C_LAUTO, 77, 12, REGSP, LTO, 0},
+	{ASTPW, C_PAIR, C_NONE, C_LAUTO, 77, 12, REGSP, LTO, C_XPRE},
+	{ASTPW, C_PAIR, C_NONE, C_LAUTO, 77, 12, REGSP, LTO, C_XPOST},
+	{ASTPW, C_PAIR, C_NONE, C_NSOREG, 67, 4, 0, 0, 0},
+	{ASTPW, C_PAIR, C_NONE, C_NSOREG, 67, 4, 0, 0, C_XPRE},
+	{ASTPW, C_PAIR, C_NONE, C_NSOREG, 67, 4, 0, 0, C_XPOST},
+	{ASTPW, C_PAIR, C_NONE, C_PSOREG_4, 67, 4, 0, 0, 0},
+	{ASTPW, C_PAIR, C_NONE, C_PSOREG_4, 67, 4, 0, 0, C_XPRE},
+	{ASTPW, C_PAIR, C_NONE, C_PSOREG_4, 67, 4, 0, 0, C_XPOST},
+	{ASTPW, C_PAIR, C_NONE, C_UOREG4K, 76, 8, 0, 0, 0},
+	{ASTPW, C_PAIR, C_NONE, C_UOREG4K, 76, 8, 0, 0, C_XPRE},
+	{ASTPW, C_PAIR, C_NONE, C_UOREG4K, 76, 8, 0, 0, C_XPOST},
+	{ASTPW, C_PAIR, C_NONE, C_LOREG, 77, 12, 0, LTO, 0},
+	{ASTPW, C_PAIR, C_NONE, C_LOREG, 77, 12, 0, LTO, C_XPRE},
+	{ASTPW, C_PAIR, C_NONE, C_LOREG, 77, 12, 0, LTO, C_XPOST},
+	{ASTPW, C_PAIR, C_NONE, C_ADDR, 87, 12, 0, 0, 0},
+
 	/* special */
 	{AMOVD, C_SPR, C_NONE, C_REG, 35, 4, 0, 0, 0},
 	{AMRS, C_SPR, C_NONE, C_REG, 35, 4, 0, 0, 0},
@@ -537,6 +596,7 @@ var optab = []Optab{
 	{AFADDS, C_FREG, C_FREG, C_FREG, 54, 4, 0, 0, 0},
 	{AFADDS, C_FCON, C_NONE, C_FREG, 54, 4, 0, 0, 0},
 	{AFADDS, C_FCON, C_FREG, C_FREG, 54, 4, 0, 0, 0},
+	{AFMSUBD, C_FREG, C_FREG, C_FREG, 15, 4, 0, 0, 0},
 	{AFMOVS, C_FCON, C_NONE, C_FREG, 54, 4, 0, 0, 0},
 	{AFMOVS, C_FREG, C_NONE, C_FREG, 54, 4, 0, 0, 0},
 	{AFMOVD, C_FCON, C_NONE, C_FREG, 54, 4, 0, 0, 0},
@@ -564,13 +624,11 @@ var optab = []Optab{
 	{ALDAR, C_ZOREG, C_NONE, C_REG, 58, 4, 0, 0, 0},
 	{ALDXR, C_ZOREG, C_NONE, C_REG, 58, 4, 0, 0, 0},
 	{ALDAXR, C_ZOREG, C_NONE, C_REG, 58, 4, 0, 0, 0},
-	{ALDXP, C_ZOREG, C_REG, C_REG, 58, 4, 0, 0, 0},
+	{ALDXP, C_ZOREG, C_NONE, C_PAIR, 58, 4, 0, 0, 0},
 	{ASTLR, C_REG, C_NONE, C_ZOREG, 59, 4, 0, 0, 0},  // to3=C_NONE
 	{ASTXR, C_REG, C_NONE, C_ZOREG, 59, 4, 0, 0, 0},  // to3=C_REG
 	{ASTLXR, C_REG, C_NONE, C_ZOREG, 59, 4, 0, 0, 0}, // to3=C_REG
-
-	//	{ ASTXP,		C_REG, C_NONE,	C_ZOREG,		59, 4, 0 , 0}, // TODO(aram):
-
+	{ASTXP, C_PAIR, C_NONE, C_ZOREG, 59, 4, 0, 0, 0},
 	{AAESD, C_VREG, C_NONE, C_VREG, 29, 4, 0, 0, 0}, // for compatibility with old code
 	{AAESD, C_ARNG, C_NONE, C_ARNG, 29, 4, 0, 0, 0}, // recommend using the new one for better readability
 	{ASHA1C, C_VREG, C_REG, C_VREG, 1, 4, 0, 0, 0},
@@ -584,17 +642,31 @@ var optab = []Optab{
 	{AVADD, C_VREG, C_NONE, C_VREG, 89, 4, 0, 0, 0},
 	{AVLD1, C_ZOREG, C_NONE, C_LIST, 81, 4, 0, 0, 0},
 	{AVLD1, C_LOREG, C_NONE, C_LIST, 81, 4, 0, 0, C_XPOST},
+	{AVLD1, C_ROFF, C_NONE, C_LIST, 81, 4, 0, 0, C_XPOST},
+	{AVLD1, C_LOREG, C_NONE, C_ELEM, 97, 4, 0, 0, C_XPOST},
+	{AVLD1, C_ROFF, C_NONE, C_ELEM, 97, 4, 0, 0, C_XPOST},
+	{AVLD1, C_LOREG, C_NONE, C_ELEM, 97, 4, 0, 0, 0},
 	{AVMOV, C_ELEM, C_NONE, C_REG, 73, 4, 0, 0, 0},
 	{AVMOV, C_REG, C_NONE, C_ARNG, 82, 4, 0, 0, 0},
+	{AVMOV, C_ELEM, C_NONE, C_ELEM, 92, 4, 0, 0, 0},
 	{AVMOV, C_ARNG, C_NONE, C_ARNG, 83, 4, 0, 0, 0},
 	{AVMOV, C_REG, C_NONE, C_ELEM, 78, 4, 0, 0, 0},
 	{AVMOV, C_ELEM, C_NONE, C_VREG, 80, 4, 0, 0, 0},
 	{AVREV32, C_ARNG, C_NONE, C_ARNG, 83, 4, 0, 0, 0},
 	{AVST1, C_LIST, C_NONE, C_ZOREG, 84, 4, 0, 0, 0},
 	{AVST1, C_LIST, C_NONE, C_LOREG, 84, 4, 0, 0, C_XPOST},
+	{AVST1, C_LIST, C_NONE, C_ROFF, 84, 4, 0, 0, C_XPOST},
+	{AVST1, C_ELEM, C_NONE, C_LOREG, 96, 4, 0, 0, C_XPOST},
+	{AVST1, C_ELEM, C_NONE, C_ROFF, 96, 4, 0, 0, C_XPOST},
+	{AVST1, C_ELEM, C_NONE, C_LOREG, 96, 4, 0, 0, 0},
 	{AVDUP, C_ELEM, C_NONE, C_ARNG, 79, 4, 0, 0, 0},
 	{AVADDV, C_ARNG, C_NONE, C_VREG, 85, 4, 0, 0, 0},
+	{AVCNT, C_ARNG, C_NONE, C_ARNG, 29, 4, 0, 0, 0},
 	{AVMOVI, C_ADDCON, C_NONE, C_ARNG, 86, 4, 0, 0, 0},
+	{AVFMLA, C_ARNG, C_ARNG, C_ARNG, 72, 4, 0, 0, 0},
+	{AVPMULL, C_ARNG, C_ARNG, C_ARNG, 93, 4, 0, 0, 0},
+	{AVEXT, C_VCON, C_ARNG, C_ARNG, 94, 4, 0, 0, 0},
+	{AVUSHR, C_VCON, C_ARNG, C_ARNG, 95, 4, 0, 0, 0},
 
 	{obj.AUNDEF, C_NONE, C_NONE, C_NONE, 90, 4, 0, 0, 0},
 	{obj.APCDATA, C_VCON, C_NONE, C_VCON, 0, 0, 0, 0, 0},
@@ -624,6 +696,31 @@ var systemreg = []struct {
 	enc uint32
 }{
 	{REG_ELR_EL1, 8<<16 | 4<<12 | 1<<5},
+	{REG_DCZID_EL0, 3<<19 | 3<<16 | 7<<5},
+}
+
+var prfopfield = []struct {
+	reg int16
+	enc uint32
+}{
+	{REG_PLDL1KEEP, 0},
+	{REG_PLDL1STRM, 1},
+	{REG_PLDL2KEEP, 2},
+	{REG_PLDL2STRM, 3},
+	{REG_PLDL3KEEP, 4},
+	{REG_PLDL3STRM, 5},
+	{REG_PLIL1KEEP, 8},
+	{REG_PLIL1STRM, 9},
+	{REG_PLIL2KEEP, 10},
+	{REG_PLIL2STRM, 11},
+	{REG_PLIL3KEEP, 12},
+	{REG_PLIL3STRM, 13},
+	{REG_PSTL1KEEP, 16},
+	{REG_PSTL1STRM, 17},
+	{REG_PSTL2KEEP, 18},
+	{REG_PSTL2STRM, 19},
+	{REG_PSTL3KEEP, 20},
+	{REG_PSTL3STRM, 21},
 }
 
 func span7(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
@@ -694,9 +791,16 @@ func span7(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 			o = c.oplook(p)
 
 			/* very large branches */
-			if (o.type_ == 7 || o.type_ == 39) && p.Pcond != nil { // 7: BEQ and like, 39: CBZ and like
+			if (o.type_ == 7 || o.type_ == 39 || o.type_ == 40) && p.Pcond != nil { // 7: BEQ and like, 39: CBZ and like, 40: TBZ and like
 				otxt := p.Pcond.Pc - pc
-				if otxt <= -(1<<18)+10 || otxt >= (1<<18)-10 {
+				var toofar bool
+				switch o.type_ {
+				case 7, 39: // branch instruction encodes 19 bits
+					toofar = otxt <= -(1<<20)+10 || otxt >= (1<<20)-10
+				case 40: // branch instruction encodes 14 bits
+					toofar = otxt <= -(1<<15)+10 || otxt >= (1<<15)-10
+				}
+				if toofar {
 					q := c.newprog()
 					q.Link = p.Link
 					p.Link = q
@@ -825,7 +929,7 @@ func (c *ctxt7) addpool(p *obj.Prog, a *obj.Addr) {
 	//	MOVD addr, REGTMP
 	//	MOVD REGTMP, R
 	// where addr is the address of the DWORD containing the address of foo.
-	if p.As == AMOVD && a.Type != obj.TYPE_MEM || cls == C_ADDR || cls == C_VCON || int64(lit) != int64(int32(lit)) || uint64(lit) != uint64(uint32(lit)) {
+	if p.As == AMOVD && a.Type != obj.TYPE_MEM || cls == C_ADDR || cls == C_VCON || lit != int64(int32(lit)) || uint64(lit) != uint64(uint32(lit)) {
 		// conservative: don't know if we want signed or unsigned extension.
 		// in case of ambiguity, store 64-bit
 		t.As = ADWORD
@@ -851,6 +955,7 @@ func (c *ctxt7) addpool(p *obj.Prog, a *obj.Addr) {
 
 	case C_PSAUTO,
 		C_PSAUTO_8,
+		C_PSAUTO_4,
 		C_PPAUTO,
 		C_UAUTO4K_8,
 		C_UAUTO4K_4,
@@ -867,6 +972,7 @@ func (c *ctxt7) addpool(p *obj.Prog, a *obj.Addr) {
 		C_LAUTO,
 		C_PPOREG,
 		C_PSOREG,
+		C_PSOREG_4,
 		C_PSOREG_8,
 		C_UOREG4K_8,
 		C_UOREG4K_4,
@@ -1091,6 +1197,9 @@ func autoclass(l int64) int {
 		if (l & 7) == 0 {
 			return C_PSAUTO_8
 		}
+		if (l & 3) == 0 {
+			return C_PSAUTO_4
+		}
 		return C_PSAUTO
 	}
 	if l <= 504 && l&7 == 0 {
@@ -1268,6 +1377,12 @@ func (c *ctxt7) aclass(a *obj.Addr) int {
 			return autoclass(c.instoffset)
 
 		case obj.NAME_NONE:
+			if a.Index != 0 {
+				if a.Offset != 0 {
+					return C_GOK
+				}
+				return C_ROFF
+			}
 			c.instoffset = a.Offset
 			return oregclass(c.instoffset)
 		}
@@ -1417,11 +1532,12 @@ func (c *ctxt7) oplook(p *obj.Prog) *Optab {
 		}
 	}
 
-	c.ctxt.Diag("illegal combination %v %v %v %v, %d %d", p, DRconv(a1), DRconv(a2), DRconv(a3), p.From.Type, p.To.Type)
+	c.ctxt.Diag("illegal combination: %v %v %v %v, %d %d", p, DRconv(a1), DRconv(a2), DRconv(a3), p.From.Type, p.To.Type)
 	if ops == nil {
 		ops = optab
 	}
-	return &ops[0]
+	// Turn illegal instruction into an UNDEF, avoid crashing in asmout
+	return &Optab{obj.AUNDEF, C_NONE, C_NONE, C_NONE, 90, 4, 0, 0, 0}
 }
 
 func cmp(a int, b int) bool {
@@ -1497,8 +1613,13 @@ func cmp(a int, b int) bool {
 			return true
 		}
 
-	case C_PSAUTO:
+	case C_PSAUTO_4:
 		if b == C_PSAUTO_8 {
+			return true
+		}
+
+	case C_PSAUTO:
+		if b == C_PSAUTO_8 || b == C_PSAUTO_4 {
 			return true
 		}
 
@@ -1509,25 +1630,25 @@ func cmp(a int, b int) bool {
 
 	case C_UAUTO4K:
 		switch b {
-		case C_PSAUTO, C_PSAUTO_8, C_PPAUTO, C_UAUTO4K_2, C_UAUTO4K_4, C_UAUTO4K_8:
+		case C_PSAUTO, C_PSAUTO_4, C_PSAUTO_8, C_PPAUTO, C_UAUTO4K_2, C_UAUTO4K_4, C_UAUTO4K_8:
 			return true
 		}
 
 	case C_UAUTO8K:
 		switch b {
-		case C_PSAUTO, C_PSAUTO_8, C_PPAUTO, C_UAUTO4K_2, C_UAUTO4K_4, C_UAUTO4K_8, C_UAUTO8K_4, C_UAUTO8K_8:
+		case C_PSAUTO, C_PSAUTO_4, C_PSAUTO_8, C_PPAUTO, C_UAUTO4K_2, C_UAUTO4K_4, C_UAUTO4K_8, C_UAUTO8K_4, C_UAUTO8K_8:
 			return true
 		}
 
 	case C_UAUTO16K:
 		switch b {
-		case C_PSAUTO, C_PSAUTO_8, C_PPAUTO, C_UAUTO4K_4, C_UAUTO4K_8, C_UAUTO8K_4, C_UAUTO8K_8, C_UAUTO16K_8:
+		case C_PSAUTO, C_PSAUTO_4, C_PSAUTO_8, C_PPAUTO, C_UAUTO4K_4, C_UAUTO4K_8, C_UAUTO8K_4, C_UAUTO8K_8, C_UAUTO16K_8:
 			return true
 		}
 
 	case C_UAUTO32K:
 		switch b {
-		case C_PSAUTO, C_PSAUTO_8, C_PPAUTO, C_UAUTO4K_8, C_UAUTO8K_8, C_UAUTO16K_8:
+		case C_PSAUTO, C_PSAUTO_4, C_PSAUTO_8, C_PPAUTO, C_UAUTO4K_8, C_UAUTO8K_8, C_UAUTO16K_8:
 			return true
 		}
 
@@ -1536,7 +1657,7 @@ func cmp(a int, b int) bool {
 
 	case C_LAUTO:
 		switch b {
-		case C_PSAUTO, C_PSAUTO_8, C_PPAUTO,
+		case C_PSAUTO, C_PSAUTO_4, C_PSAUTO_8, C_PPAUTO,
 			C_UAUTO4K, C_UAUTO4K_2, C_UAUTO4K_4, C_UAUTO4K_8,
 			C_UAUTO8K, C_UAUTO8K_4, C_UAUTO8K_8,
 			C_UAUTO16K, C_UAUTO16K_8,
@@ -1545,8 +1666,15 @@ func cmp(a int, b int) bool {
 		}
 		return cmp(C_NPAUTO, b)
 
+	case C_PSOREG_4:
+		switch b {
+		case C_ZOREG, C_PSOREG_8:
+			return true
+		}
+
 	case C_PSOREG:
-		if b == C_ZOREG || b == C_PSOREG_8 {
+		switch b {
+		case C_ZOREG, C_PSOREG_8, C_PSOREG_4:
 			return true
 		}
 
@@ -1558,25 +1686,25 @@ func cmp(a int, b int) bool {
 
 	case C_UOREG4K:
 		switch b {
-		case C_ZOREG, C_PSOREG_8, C_PSOREG, C_PPOREG, C_UOREG4K_2, C_UOREG4K_4, C_UOREG4K_8:
+		case C_ZOREG, C_PSOREG_4, C_PSOREG_8, C_PSOREG, C_PPOREG, C_UOREG4K_2, C_UOREG4K_4, C_UOREG4K_8:
 			return true
 		}
 
 	case C_UOREG8K:
 		switch b {
-		case C_ZOREG, C_PSOREG_8, C_PSOREG, C_PPOREG, C_UOREG4K_2, C_UOREG4K_4, C_UOREG4K_8, C_UOREG8K_4, C_UOREG8K_8:
+		case C_ZOREG, C_PSOREG_4, C_PSOREG_8, C_PSOREG, C_PPOREG, C_UOREG4K_2, C_UOREG4K_4, C_UOREG4K_8, C_UOREG8K_4, C_UOREG8K_8:
 			return true
 		}
 
 	case C_UOREG16K:
 		switch b {
-		case C_ZOREG, C_PSOREG_8, C_PSOREG, C_PPOREG, C_UOREG4K_4, C_UOREG4K_8, C_UOREG8K_4, C_UOREG8K_8, C_UOREG16K_8:
+		case C_ZOREG, C_PSOREG_4, C_PSOREG_8, C_PSOREG, C_PPOREG, C_UOREG4K_4, C_UOREG4K_8, C_UOREG8K_4, C_UOREG8K_8, C_UOREG16K_8:
 			return true
 		}
 
 	case C_UOREG32K:
 		switch b {
-		case C_ZOREG, C_PSOREG_8, C_PSOREG, C_PPOREG, C_UOREG4K_8, C_UOREG8K_8, C_UOREG16K_8:
+		case C_ZOREG, C_PSOREG_4, C_PSOREG_8, C_PSOREG, C_PPOREG, C_UOREG4K_8, C_UOREG8K_8, C_UOREG16K_8:
 			return true
 		}
 
@@ -1585,7 +1713,7 @@ func cmp(a int, b int) bool {
 
 	case C_LOREG:
 		switch b {
-		case C_ZOREG, C_PSOREG_8, C_PSOREG, C_PPOREG,
+		case C_ZOREG, C_PSOREG_4, C_PSOREG_8, C_PSOREG, C_PPOREG,
 			C_UOREG4K, C_UOREG4K_2, C_UOREG4K_4, C_UOREG4K_8,
 			C_UOREG8K, C_UOREG8K_4, C_UOREG8K_8,
 			C_UOREG16K, C_UOREG16K_8,
@@ -1682,24 +1810,22 @@ func buildop(ctxt *obj.Link) {
 			oprangeset(ASUBSW, t)
 
 		case AAND: /* logical immediate, logical shifted register */
-			oprangeset(AANDS, t)
-
-			oprangeset(AANDSW, t)
 			oprangeset(AANDW, t)
 			oprangeset(AEOR, t)
 			oprangeset(AEORW, t)
 			oprangeset(AORR, t)
 			oprangeset(AORRW, t)
-
-		case ABIC: /* only logical shifted register */
-			oprangeset(ABICS, t)
-
-			oprangeset(ABICSW, t)
+			oprangeset(ABIC, t)
 			oprangeset(ABICW, t)
 			oprangeset(AEON, t)
 			oprangeset(AEONW, t)
 			oprangeset(AORN, t)
 			oprangeset(AORNW, t)
+
+		case AANDS: /* logical immediate, logical shifted register, set flags, cannot target RSP */
+			oprangeset(AANDSW, t)
+			oprangeset(ABICS, t)
+			oprangeset(ABICSW, t)
 
 		case ANEG:
 			oprangeset(ANEGS, t)
@@ -1899,8 +2025,12 @@ func buildop(ctxt *obj.Link) {
 			obj.ARET,
 			obj.ATEXT,
 			ASTP,
+			ASTPW,
 			ALDP:
 			break
+
+		case ALDPW:
+			oprangeset(ALDPSW, t)
 
 		case AERET:
 			oprangeset(AWFE, t)
@@ -1951,6 +2081,15 @@ func buildop(ctxt *obj.Link) {
 			oprangeset(AFMINNMD, t)
 			oprangeset(AFMINNMS, t)
 			oprangeset(AFDIVD, t)
+
+		case AFMSUBD:
+			oprangeset(AFMSUBS, t)
+			oprangeset(AFMADDS, t)
+			oprangeset(AFMADDD, t)
+			oprangeset(AFNMSUBS, t)
+			oprangeset(AFNMSUBD, t)
+			oprangeset(AFNMADDS, t)
+			oprangeset(AFNMADDD, t)
 
 		case AFCVTSD:
 			oprangeset(AFCVTDS, t)
@@ -2031,6 +2170,8 @@ func buildop(ctxt *obj.Link) {
 
 		case ALDAR:
 			oprangeset(ALDARW, t)
+			oprangeset(ALDARB, t)
+			oprangeset(ALDARH, t)
 			fallthrough
 
 		case ALDXR:
@@ -2045,8 +2186,12 @@ func buildop(ctxt *obj.Link) {
 
 		case ALDXP:
 			oprangeset(ALDXPW, t)
+			oprangeset(ALDAXP, t)
+			oprangeset(ALDAXPW, t)
 
 		case ASTLR:
+			oprangeset(ASTLRB, t)
+			oprangeset(ASTLRH, t)
 			oprangeset(ASTLRW, t)
 
 		case ASTXR:
@@ -2060,6 +2205,8 @@ func buildop(ctxt *obj.Link) {
 			oprangeset(ASTLXRW, t)
 
 		case ASTXP:
+			oprangeset(ASTLXP, t)
+			oprangeset(ASTLXPW, t)
 			oprangeset(ASTXPW, t)
 
 		case AVADDP:
@@ -2091,14 +2238,28 @@ func buildop(ctxt *obj.Link) {
 		case AVADDV:
 			oprangeset(AVUADDLV, t)
 
+		case AVFMLA:
+			oprangeset(AVFMLS, t)
+
+		case AVPMULL:
+			oprangeset(AVPMULL2, t)
+
+		case AVUSHR:
+			oprangeset(AVSHL, t)
+
+		case AVREV32:
+			oprangeset(AVRBIT, t)
+
 		case ASHA1H,
+			AVCNT,
 			AVMOV,
 			AVLD1,
-			AVREV32,
 			AVST1,
 			AVDUP,
 			AVMOVS,
-			AVMOVI:
+			AVMOVI,
+			APRFM,
+			AVEXT:
 			break
 
 		case obj.ANOP,
@@ -2152,6 +2313,48 @@ func SYSARG4(op1 int, Cn int, Cm int, op2 int) int {
 	return SYSARG5(0, op1, Cn, Cm, op2)
 }
 
+/* checkindex checks if index >= 0 && index <= maxindex */
+func (c *ctxt7) checkindex(p *obj.Prog, index, maxindex int) {
+	if index < 0 || index > maxindex {
+		c.ctxt.Diag("register element index out of range 0 to %d: %v", maxindex, p)
+	}
+}
+
+/* checkoffset checks whether the immediate offset is valid for VLD1.P and VST1.P*/
+func (c *ctxt7) checkoffset(p *obj.Prog, as obj.As) {
+	var offset, list, n int64
+	switch as {
+	case AVLD1:
+		offset = p.From.Offset
+		list = p.To.Offset
+	case AVST1:
+		offset = p.To.Offset
+		list = p.From.Offset
+	default:
+		c.ctxt.Diag("invalid operation on op %v", p.As)
+	}
+	opcode := (list >> 12) & 15
+	q := (list >> 30) & 1
+	if offset == 0 {
+		return
+	}
+	switch opcode {
+	case 0x7:
+		n = 1 // one register
+	case 0xa:
+		n = 2 // two registers
+	case 0x6:
+		n = 3 // three registers
+	case 0x2:
+		n = 4 // four registers
+	default:
+		c.ctxt.Diag("invalid register numbers in ARM64 register list: %v", p)
+	}
+	if !(q == 0 && offset == n*8) && !(q == 1 && offset == n*16) {
+		c.ctxt.Diag("invalid post-increment offset: %v", p)
+	}
+}
+
 func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 	o1 := uint32(0)
 	o2 := uint32(0)
@@ -2203,6 +2406,11 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 	case 3: /* op R<<n[,R],R (shifted register) */
 		o1 = c.oprrr(p, p.As)
 
+		amount := (p.From.Offset >> 10) & 63
+		is64bit := o1 & (1 << 31)
+		if is64bit == 0 && amount >= 32 {
+			c.ctxt.Diag("shift amount out of range 0 to 31: %v", p)
+		}
 		o1 |= uint32(p.From.Offset) /* includes reg, op, etc */
 		rt := int(p.To.Reg)
 		if p.To.Type == obj.TYPE_NONE {
@@ -2354,7 +2562,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			r = rt
 		}
 		if p.To.Type != obj.TYPE_NONE && (p.To.Reg == REGSP || r == REGSP) {
-			o2 = c.opxrrr(p, p.As)
+			o2 = c.opxrrr(p, p.As, false)
 			o2 |= REGTMP & 31 << 16
 			o2 |= LSL0_64
 		} else {
@@ -2383,7 +2591,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			o1 = 0
 		}
 
-	case 15: /* mul/mneg/umulh/umull r,[r,]r; madd/msub Rm,Ra,Rn,Rd */
+	case 15: /* mul/mneg/umulh/umull r,[r,]r; madd/msub/fmadd/fmsub/fnmadd/fnmsub Rm,Ra,Rn,Rd */
 		o1 = c.oprrr(p, p.As)
 
 		rf := int(p.From.Reg)
@@ -2523,7 +2731,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		v := int32(p.From.Offset)
 
 		if v < -256 || v > 255 {
-			c.ctxt.Diag("offset out of range\n%v", p)
+			c.ctxt.Diag("offset out of range [-255,254]: %v", p)
 		}
 		o1 = c.opldrpp(p, p.As)
 		if o.scond == C_XPOST {
@@ -2537,7 +2745,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		v := int32(p.To.Offset)
 
 		if v < -256 || v > 255 {
-			c.ctxt.Diag("offset out of range\n%v", p)
+			c.ctxt.Diag("offset out of range [-255,254]: %v", p)
 		}
 		o1 = LD2STR(c.opldrpp(p, p.As))
 		if o.scond == C_XPOST {
@@ -2583,11 +2791,16 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		o1 |= (REGZERO & 31 << 5) | uint32(rt&31)
 
 	case 27: /* op Rm<<n[,Rn],Rd (extended register) */
-		o1 = c.opxrrr(p, p.As)
 
 		if (p.From.Reg-obj.RBaseARM64)&REG_EXT != 0 {
+			amount := (p.From.Reg >> 5) & 7
+			if amount > 4 {
+				c.ctxt.Diag("shift amount out of range 0 to 4: %v", p)
+			}
+			o1 = c.opxrrr(p, p.As, true)
 			o1 |= uint32(p.From.Offset) /* includes reg, op, etc */
 		} else {
+			o1 = c.opxrrr(p, p.As, false)
 			o1 |= uint32(p.From.Reg&31) << 16
 		}
 		rt := int(p.To.Reg)
@@ -2747,7 +2960,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		if !(o1 != 0) {
 			break
 		}
-		o2 = c.opxrrr(p, AADD)
+		o2 = c.opxrrr(p, AADD, false)
 		o2 |= REGTMP & 31 << 16
 		o2 |= LSL0_64
 		r := int(p.From.Reg)
@@ -2770,7 +2983,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		if v == 0 {
 			c.ctxt.Diag("illegal system register:\n%v", p)
 		}
-		if (o1 & uint32(v&^(3<<19))) != 0 {
+		if (o1 & (v &^ (3 << 19))) != 0 {
 			c.ctxt.Diag("MRS register value overlap\n%v", p)
 		}
 
@@ -2790,7 +3003,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		if v == 0 {
 			c.ctxt.Diag("illegal system register:\n%v", p)
 		}
-		if (o1 & uint32(v&^(3<<19))) != 0 {
+		if (o1 & (v &^ (3 << 19))) != 0 {
 			c.ctxt.Diag("MSR register value overlap\n%v", p)
 		}
 
@@ -3063,19 +3276,19 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		rt := int(p.GetFrom3().Reg)
 		o1 |= uint32(rf&31)<<16 | uint32(cond&15)<<12 | uint32(rt&31)<<5 | uint32(nzcv)
 
-	case 58: /* ldar/ldxr/ldaxr */
+	case 58: /* ldar/ldarb/ldarh/ldaxp/ldxp/ldaxr/ldxr */
 		o1 = c.opload(p, p.As)
 
 		o1 |= 0x1F << 16
 		o1 |= uint32(p.From.Reg&31) << 5
-		if p.Reg != 0 {
-			o1 |= uint32(p.Reg&31) << 10
+		if p.As == ALDXP || p.As == ALDXPW || p.As == ALDAXP || p.As == ALDAXPW {
+			o1 |= uint32(p.To.Offset&31) << 10
 		} else {
 			o1 |= 0x1F << 10
 		}
 		o1 |= uint32(p.To.Reg & 31)
 
-	case 59: /* stxr/stlxr */
+	case 59: /* stxr/stlxr/stxp/stlxp */
 		o1 = c.opstore(p, p.As)
 
 		if p.RegTo2 != obj.REG_NONE {
@@ -3083,11 +3296,10 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		} else {
 			o1 |= 0x1F << 16
 		}
-
-		// TODO(aram): add support for STXP
-		o1 |= uint32(p.To.Reg&31) << 5
-
-		o1 |= uint32(p.From.Reg & 31)
+		if p.As == ASTXP || p.As == ASTXPW || p.As == ASTLXP || p.As == ASTLXPW {
+			o1 |= uint32(p.From.Offset&31) << 10
+		}
+		o1 |= uint32(p.To.Reg&31)<<5 | uint32(p.From.Reg&31)
 
 	case 60: /* adrp label,r */
 		d := c.brdist(p, 12, 21, 0)
@@ -3114,7 +3326,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			r = rt
 		}
 		if p.To.Type != obj.TYPE_NONE && (p.To.Reg == REGSP || r == REGSP) {
-			o2 = c.opxrrr(p, p.As)
+			o2 = c.opxrrr(p, p.As, false)
 			o2 |= REGTMP & 31 << 16
 			o2 |= LSL0_64
 		} else {
@@ -3156,19 +3368,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		if r == obj.REG_NONE {
 			c.ctxt.Diag("invalid ldp source: %v\n", p)
 		}
-
-		if v < -512 || v > 504 || v%8 != 0 {
-			c.ctxt.Diag("invalid offset %v\n", p)
-		}
-		if o.scond == C_XPOST {
-			o1 |= 1 << 23
-		} else if o.scond == C_XPRE {
-			o1 |= 3 << 23
-		} else {
-			o1 |= 2 << 23
-		}
-		o1 |= 1 << 22
-		o1 |= uint32(int64(2<<30|5<<27|((uint32(v)/8)&0x7f)<<15) | (p.To.Offset&31)<<10 | int64(uint32(r&31)<<5) | int64(p.To.Reg&31))
+		o1 |= c.opldpstp(p, o, v, uint32(r), uint32(p.To.Reg), uint32(p.To.Offset), 1)
 
 	case 67: /* stp (r1, r2), O(R)!; stp (r1, r2), (R)O! */
 		r := int(p.To.Reg)
@@ -3178,20 +3378,8 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		if r == obj.REG_NONE {
 			c.ctxt.Diag("invalid stp destination: %v\n", p)
 		}
-
 		v := int32(c.regoff(&p.To))
-		if v < -512 || v > 504 || v%8 != 0 {
-			c.ctxt.Diag("invalid offset %v\n", p)
-		}
-
-		if o.scond == C_XPOST {
-			o1 |= 1 << 23
-		} else if o.scond == C_XPRE {
-			o1 |= 3 << 23
-		} else {
-			o1 |= 2 << 23
-		}
-		o1 |= uint32(int64(2<<30|5<<27|((uint32(v)/8)&0x7f)<<15) | (p.From.Offset&31)<<10 | int64(uint32(r&31)<<5) | int64(p.From.Reg&31))
+		o1 = c.opldpstp(p, o, v, uint32(r), uint32(p.From.Reg), uint32(p.From.Offset), 0)
 
 	case 68: /* movT $vconaddr(SB), reg -> adrp + add + reloc */
 		if p.As == AMOVW {
@@ -3241,12 +3429,13 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		rel.Add = 0
 		rel.Type = objabi.R_ARM64_GOTPCREL
 
-	case 72: /* vaddp/vand/vcmeq/vorr/vadd/veor Vm.<T>, Vn.<T>, Vd.<T> */
+	case 72: /* vaddp/vand/vcmeq/vorr/vadd/veor/vfmla/vfmls Vm.<T>, Vn.<T>, Vd.<T> */
 		af := int((p.From.Reg >> 5) & 15)
 		af3 := int((p.Reg >> 5) & 15)
 		at := int((p.To.Reg >> 5) & 15)
 		if af != af3 || af != at {
-			c.ctxt.Diag("invalid arrangement: %v\n", p)
+			c.ctxt.Diag("operand mismatch: %v", p)
+			break
 		}
 		o1 = c.oprrr(p, p.As)
 		rf := int((p.From.Reg) & 31)
@@ -3278,16 +3467,25 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			Q = 1
 			size = 1
 		default:
-			c.ctxt.Diag("invalid arrangement: %v\n", p)
+			c.ctxt.Diag("invalid arrangement: %v", p)
 		}
 
 		if (p.As == AVORR || p.As == AVAND || p.As == AVEOR) &&
 			(af != ARNG_16B && af != ARNG_8B) {
-			c.ctxt.Diag("invalid arrangement on op %v", p.As)
+			c.ctxt.Diag("invalid arrangement: %v", p)
+		} else if (p.As == AVFMLA || p.As == AVFMLS) &&
+			(af != ARNG_2D && af != ARNG_2S && af != ARNG_4S) {
+			c.ctxt.Diag("invalid arrangement: %v", p)
 		} else if p.As == AVORR {
 			size = 2
 		} else if p.As == AVAND || p.As == AVEOR {
 			size = 0
+		} else if p.As == AVFMLA || p.As == AVFMLS {
+			if af == ARNG_2D {
+				size = 1
+			} else {
+				size = 0
+			}
 		}
 
 		o1 |= (uint32(Q&1) << 30) | (uint32(size&3) << 22) | (uint32(rf&31) << 16) | (uint32(r&31) << 5) | uint32(rt&31)
@@ -3297,22 +3495,27 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		rt := int(p.To.Reg)
 		imm5 := 0
 		o1 = 7<<25 | 0xf<<10
+		index := int(p.From.Index)
 		switch (p.From.Reg >> 5) & 15 {
 		case ARNG_B:
+			c.checkindex(p, index, 15)
 			imm5 |= 1
-			imm5 |= int(p.From.Index) << 1
+			imm5 |= index << 1
 		case ARNG_H:
+			c.checkindex(p, index, 7)
 			imm5 |= 2
-			imm5 |= int(p.From.Index) << 2
+			imm5 |= index << 2
 		case ARNG_S:
+			c.checkindex(p, index, 3)
 			imm5 |= 4
-			imm5 |= int(p.From.Index) << 3
+			imm5 |= index << 3
 		case ARNG_D:
+			c.checkindex(p, index, 1)
 			imm5 |= 8
-			imm5 |= int(p.From.Index) << 4
+			imm5 |= index << 4
 			o1 |= 1 << 30
 		default:
-			c.ctxt.Diag("invalid arrangement on op V.<T>[index], R: %v\n", p)
+			c.ctxt.Diag("invalid arrangement: %v", p)
 		}
 		o1 |= (uint32(imm5&0x1f) << 16) | (uint32(rf&31) << 5) | uint32(rt&31)
 
@@ -3326,23 +3529,12 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		if r == obj.REG_NONE {
 			c.ctxt.Diag("invalid ldp source: %v\n", p)
 		}
-
 		v := int32(c.regoff(&p.From))
 		if v < 0 || v > 4095 {
 			c.ctxt.Diag("offset out of range%v\n", p)
 		}
-
-		if o.scond == C_XPOST {
-			o2 |= 1 << 23
-		} else if o.scond == C_XPRE {
-			o2 |= 3 << 23
-		} else {
-			o2 |= 2 << 23
-		}
-
 		o1 = c.oaddi(p, int32(c.opirr(p, AADD)), v, r, REGTMP)
-		o2 |= 1 << 22
-		o2 |= uint32(int64(2<<30|5<<27) | (p.To.Offset&31)<<10 | int64(uint32(REGTMP&31)<<5) | int64(p.To.Reg&31))
+		o2 |= c.opldpstp(p, o, 0, uint32(REGTMP), uint32(p.To.Reg), uint32(p.To.Offset), 1)
 
 	case 75:
 		//	mov $L, Rtmp (from constant pool)
@@ -3355,22 +3547,12 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		if r == obj.REG_NONE {
 			c.ctxt.Diag("invalid ldp source: %v\n", p)
 		}
-
-		if o.scond == C_XPOST {
-			o3 |= 1 << 23
-		} else if o.scond == C_XPRE {
-			o3 |= 3 << 23
-		} else {
-			o3 |= 2 << 23
-		}
-
 		o1 = c.omovlit(AMOVD, p, &p.From, REGTMP)
-		o2 = c.opxrrr(p, AADD)
+		o2 = c.opxrrr(p, AADD, false)
 		o2 |= (REGTMP & 31) << 16
 		o2 |= uint32(r&31) << 5
 		o2 |= uint32(REGTMP & 31)
-		o3 |= 1 << 22
-		o3 |= uint32(int64(2<<30|5<<27) | (p.To.Offset&31)<<10 | int64(uint32(REGTMP&31)<<5) | int64(p.To.Reg&31))
+		o3 |= c.opldpstp(p, o, 0, uint32(REGTMP), uint32(p.To.Reg), uint32(p.To.Offset), 1)
 
 	case 76:
 		//	add $O, R, Rtmp
@@ -3382,21 +3564,12 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		if r == obj.REG_NONE {
 			c.ctxt.Diag("invalid stp destination: %v\n", p)
 		}
-
 		v := int32(c.regoff(&p.To))
 		if v < 0 || v > 4095 {
 			c.ctxt.Diag("offset out of range%v\n", p)
 		}
-		if o.scond == C_XPOST {
-			o2 |= 1 << 23
-		} else if o.scond == C_XPRE {
-			o2 |= 3 << 23
-		} else {
-			o2 |= 2 << 23
-		}
-
 		o1 = c.oaddi(p, int32(c.opirr(p, AADD)), v, r, REGTMP)
-		o2 |= uint32(int64(2<<30|5<<27) | (p.From.Offset&31)<<10 | int64(uint32(REGTMP&31)<<5) | int64(p.From.Reg&31))
+		o2 |= c.opldpstp(p, o, 0, uint32(REGTMP), uint32(p.From.Reg), uint32(p.From.Offset), 0)
 
 	case 77:
 		//	mov $L, Rtmp (from constant pool)
@@ -3409,41 +3582,38 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		if r == obj.REG_NONE {
 			c.ctxt.Diag("invalid stp destination: %v\n", p)
 		}
-
-		if o.scond == C_XPOST {
-			o3 |= 1 << 23
-		} else if o.scond == C_XPRE {
-			o3 |= 3 << 23
-		} else {
-			o3 |= 2 << 23
-		}
 		o1 = c.omovlit(AMOVD, p, &p.To, REGTMP)
-		o2 = c.opxrrr(p, AADD)
+		o2 = c.opxrrr(p, AADD, false)
 		o2 |= REGTMP & 31 << 16
 		o2 |= uint32(r&31) << 5
 		o2 |= uint32(REGTMP & 31)
-		o3 |= uint32(int64(2<<30|5<<27) | (p.From.Offset&31)<<10 | int64(uint32(REGTMP&31)<<5) | int64(p.From.Reg&31))
+		o3 |= c.opldpstp(p, o, 0, uint32(REGTMP), uint32(p.From.Reg), uint32(p.From.Offset), 0)
 
 	case 78: /* vmov R, V.<T>[index] */
 		rf := int(p.From.Reg)
 		rt := int(p.To.Reg)
 		imm5 := 0
 		o1 = 1<<30 | 7<<25 | 7<<10
+		index := int(p.To.Index)
 		switch (p.To.Reg >> 5) & 15 {
 		case ARNG_B:
+			c.checkindex(p, index, 15)
 			imm5 |= 1
-			imm5 |= int(p.From.Index) << 1
+			imm5 |= index << 1
 		case ARNG_H:
+			c.checkindex(p, index, 7)
 			imm5 |= 2
-			imm5 |= int(p.From.Index) << 2
+			imm5 |= index << 2
 		case ARNG_S:
+			c.checkindex(p, index, 3)
 			imm5 |= 4
-			imm5 |= int(p.From.Index) << 3
+			imm5 |= index << 3
 		case ARNG_D:
+			c.checkindex(p, index, 1)
 			imm5 |= 8
-			imm5 |= int(p.From.Index) << 4
+			imm5 |= index << 4
 		default:
-			c.ctxt.Diag("invalid arrangement on op R, V.<T>[index]: %v\n", p)
+			c.ctxt.Diag("invalid arrangement: %v", p)
 		}
 		o1 |= (uint32(imm5&0x1f) << 16) | (uint32(rf&31) << 5) | uint32(rt&31)
 
@@ -3451,38 +3621,46 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		rf := int(p.From.Reg)
 		rt := int(p.To.Reg)
 		o1 = 7<<25 | 1<<10
-		var imm5, Q uint32
+		var imm5, Q int
+		index := int(p.From.Index)
 		switch (p.To.Reg >> 5) & 15 {
 		case ARNG_16B:
+			c.checkindex(p, index, 15)
 			Q = 1
 			imm5 = 1
-			imm5 |= uint32(p.From.Index) << 1
+			imm5 |= index << 1
 		case ARNG_2D:
+			c.checkindex(p, index, 1)
 			Q = 1
 			imm5 = 8
-			imm5 |= uint32(p.From.Index) << 4
+			imm5 |= index << 4
 		case ARNG_2S:
+			c.checkindex(p, index, 3)
 			Q = 0
 			imm5 = 4
-			imm5 |= uint32(p.From.Index) << 3
+			imm5 |= index << 3
 		case ARNG_4H:
+			c.checkindex(p, index, 7)
 			Q = 0
 			imm5 = 2
-			imm5 |= uint32(p.From.Index) << 2
+			imm5 |= index << 2
 		case ARNG_4S:
+			c.checkindex(p, index, 3)
 			Q = 1
 			imm5 = 4
-			imm5 |= uint32(p.From.Index) << 3
+			imm5 |= index << 3
 		case ARNG_8B:
+			c.checkindex(p, index, 15)
 			Q = 0
 			imm5 = 1
-			imm5 |= uint32(p.From.Index) << 1
+			imm5 |= index << 1
 		case ARNG_8H:
+			c.checkindex(p, index, 7)
 			Q = 1
 			imm5 = 2
-			imm5 |= uint32(p.From.Index) << 2
+			imm5 |= index << 2
 		default:
-			c.ctxt.Diag("invalid arrangement on VDUP Vn.<T>[index], Vd.<T>: %v\n", p)
+			c.ctxt.Diag("invalid arrangement: %v", p)
 		}
 		o1 |= (uint32(Q&1) << 30) | (uint32(imm5&0x1f) << 16)
 		o1 |= (uint32(rf&31) << 5) | uint32(rt&31)
@@ -3491,24 +3669,29 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		rf := int(p.From.Reg)
 		rt := int(p.To.Reg)
 		imm5 := 0
+		index := int(p.From.Index)
 		switch p.As {
 		case AVMOV:
 			o1 = 1<<30 | 15<<25 | 1<<10
 			switch (p.From.Reg >> 5) & 15 {
 			case ARNG_B:
+				c.checkindex(p, index, 15)
 				imm5 |= 1
-				imm5 |= int(p.From.Index) << 1
+				imm5 |= index << 1
 			case ARNG_H:
+				c.checkindex(p, index, 7)
 				imm5 |= 2
-				imm5 |= int(p.From.Index) << 2
+				imm5 |= index << 2
 			case ARNG_S:
+				c.checkindex(p, index, 3)
 				imm5 |= 4
-				imm5 |= int(p.From.Index) << 3
+				imm5 |= index << 3
 			case ARNG_D:
+				c.checkindex(p, index, 1)
 				imm5 |= 8
-				imm5 |= int(p.From.Index) << 4
+				imm5 |= index << 4
 			default:
-				c.ctxt.Diag("invalid arrangement on op V.<T>[index], Vn: %v\n", p)
+				c.ctxt.Diag("invalid arrangement: %v", p)
 			}
 		default:
 			c.ctxt.Diag("unsupported op %v", p.As)
@@ -3522,6 +3705,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			o1 |= 1 << 23
 			if p.From.Index == 0 {
 				// immediate offset variant
+				c.checkoffset(p, p.As)
 				o1 |= 0x1f << 16
 			} else {
 				// register offset variant
@@ -3561,7 +3745,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		default:
 			c.ctxt.Diag("invalid arrangement on VMOV Rn, Vd.<T>: %v\n", p)
 		}
-		o1 |= (uint32(Q&1) << 30) | (uint32(imm5&0x1f) << 16)
+		o1 |= (Q & 1 << 30) | (imm5 & 0x1f << 16)
 		o1 |= (uint32(rf&31) << 5) | uint32(rt&31)
 
 	case 83: /* vmov Vn.<T>, Vd.<T> */
@@ -3593,12 +3777,16 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			c.ctxt.Diag("invalid arrangement: %v\n", p)
 		}
 
-		if (p.As == AVMOV) && (af != ARNG_16B && af != ARNG_8B) {
-			c.ctxt.Diag("invalid arrangement on op %v", p.As)
+		if (p.As == AVMOV || p.As == AVRBIT) && (af != ARNG_16B && af != ARNG_8B) {
+			c.ctxt.Diag("invalid arrangement: %v", p)
 		}
 
 		if p.As == AVMOV {
 			o1 |= uint32(rf&31) << 16
+		}
+
+		if p.As == AVRBIT {
+			size = 1
 		}
 
 		o1 |= (uint32(Q&1) << 30) | (uint32(size&3) << 22) | (uint32(rf&31) << 5) | uint32(rt&31)
@@ -3610,6 +3798,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			o1 |= 1 << 23
 			if p.To.Index == 0 {
 				// immediate offset variant
+				c.checkoffset(p, p.As)
 				o1 |= 0x1f << 16
 			} else {
 				// register offset variant
@@ -3675,7 +3864,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		rel.Sym = p.To.Sym
 		rel.Add = p.To.Offset
 		rel.Type = objabi.R_ADDRARM64
-		o3 |= 2<<30 | 5<<27 | 2<<23 | uint32(p.From.Offset&31)<<10 | (REGTMP&31)<<5 | uint32(p.From.Reg&31)
+		o3 |= c.opldpstp(p, o, 0, uint32(REGTMP), uint32(p.From.Reg), uint32(p.From.Offset), 0)
 
 	case 88: /* ldp addr(SB), (r,r) -> adrp + add + ldp */
 		o1 = ADR(1, 0, REGTMP)
@@ -3686,7 +3875,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		rel.Sym = p.From.Sym
 		rel.Add = p.From.Offset
 		rel.Type = objabi.R_ADDRARM64
-		o3 |= 2<<30 | 5<<27 | 2<<23 | 1<<22 | uint32(p.To.Offset&31)<<10 | (REGTMP&31)<<5 | uint32(p.To.Reg&31)
+		o3 |= c.opldpstp(p, o, 0, uint32(REGTMP), uint32(p.To.Reg), uint32(p.To.Offset), 1)
 
 	case 89: /* vadd/vsub Vm, Vn, Vd */
 		switch p.As {
@@ -3717,9 +3906,359 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 	case 90:
 		o1 = 0xbea71700
 
-		break
-	}
+	case 92: /* vmov Vn.<T>[index], Vd.<T>[index] */
+		rf := int(p.From.Reg)
+		rt := int(p.To.Reg)
+		imm4 := 0
+		imm5 := 0
+		o1 = 3<<29 | 7<<25 | 1<<10
+		index1 := int(p.To.Index)
+		index2 := int(p.From.Index)
+		if ((p.To.Reg >> 5) & 15) != ((p.From.Reg >> 5) & 15) {
+			c.ctxt.Diag("operand mismatch: %v", p)
+		}
+		switch (p.To.Reg >> 5) & 15 {
+		case ARNG_B:
+			c.checkindex(p, index1, 15)
+			c.checkindex(p, index2, 15)
+			imm5 |= 1
+			imm5 |= index1 << 1
+			imm4 |= index2
+		case ARNG_H:
+			c.checkindex(p, index1, 7)
+			c.checkindex(p, index2, 7)
+			imm5 |= 2
+			imm5 |= index1 << 2
+			imm4 |= index2 << 1
+		case ARNG_S:
+			c.checkindex(p, index1, 3)
+			c.checkindex(p, index2, 3)
+			imm5 |= 4
+			imm5 |= index1 << 3
+			imm4 |= index2 << 2
+		case ARNG_D:
+			c.checkindex(p, index1, 1)
+			c.checkindex(p, index2, 1)
+			imm5 |= 8
+			imm5 |= index1 << 4
+			imm4 |= index2 << 3
+		default:
+			c.ctxt.Diag("invalid arrangement: %v", p)
+		}
+		o1 |= (uint32(imm5&0x1f) << 16) | (uint32(imm4&0xf) << 11) | (uint32(rf&31) << 5) | uint32(rt&31)
 
+		break
+
+	case 91: /* prfm imm(Rn), <prfop | $imm5> */
+		imm := uint32(p.From.Offset)
+		r := p.From.Reg
+		v := uint32(0xff)
+		if p.To.Type == obj.TYPE_CONST {
+			v = uint32(p.To.Offset)
+			if v > 31 {
+				c.ctxt.Diag("illegal prefetch operation\n%v", p)
+			}
+		} else {
+			for i := 0; i < len(prfopfield); i++ {
+				if prfopfield[i].reg == p.To.Reg {
+					v = prfopfield[i].enc
+					break
+				}
+			}
+			if v == 0xff {
+				c.ctxt.Diag("illegal prefetch operation:\n%v", p)
+			}
+		}
+
+		o1 = c.opldrpp(p, p.As)
+		o1 |= (uint32(r&31) << 5) | ((imm >> 3) & 0xfff << 10) | (v & 31)
+
+	case 93: /* vpmull{2} Vm.<T>, Vn.<T>, Vd */
+		af := int((p.From.Reg >> 5) & 15)
+		at := int((p.To.Reg >> 5) & 15)
+		a := int((p.Reg >> 5) & 15)
+
+		var Q, size uint32
+		if p.As == AVPMULL {
+			Q = 0
+		} else {
+			Q = 1
+		}
+
+		var fArng int
+		switch at {
+		case ARNG_8H:
+			if Q == 0 {
+				fArng = ARNG_8B
+			} else {
+				fArng = ARNG_16B
+			}
+			size = 0
+		case ARNG_1Q:
+			if Q == 0 {
+				fArng = ARNG_1D
+			} else {
+				fArng = ARNG_2D
+			}
+			size = 3
+		default:
+			c.ctxt.Diag("invalid arrangement on Vd.<T>: %v", p)
+		}
+
+		if af != a || af != fArng {
+			c.ctxt.Diag("invalid arrangement: %v", p)
+		}
+
+		o1 = c.oprrr(p, p.As)
+		rf := int((p.From.Reg) & 31)
+		rt := int((p.To.Reg) & 31)
+		r := int((p.Reg) & 31)
+
+		o1 |= ((Q & 1) << 30) | ((size & 3) << 22) | (uint32(rf&31) << 16) | (uint32(r&31) << 5) | uint32(rt&31)
+
+	case 94: /* vext $imm4, Vm.<T>, Vn.<T>, Vd.<T> */
+		if p.From3Type() != obj.TYPE_REG {
+			c.ctxt.Diag("illegal combination: %v", p)
+			break
+		}
+		af := int(((p.GetFrom3().Reg) >> 5) & 15)
+		at := int((p.To.Reg >> 5) & 15)
+		a := int((p.Reg >> 5) & 15)
+		index := int(p.From.Offset)
+
+		if af != a || af != at {
+			c.ctxt.Diag("invalid arrangement: %v", p)
+			break
+		}
+
+		var Q uint32
+		var b int
+		if af == ARNG_8B {
+			Q = 0
+			b = 7
+		} else if af == ARNG_16B {
+			Q = 1
+			b = 15
+		} else {
+			c.ctxt.Diag("invalid arrangement, should be 8B or 16B: %v", p)
+			break
+		}
+
+		if index < 0 || index > b {
+			c.ctxt.Diag("illegal offset: %v", p)
+		}
+
+		o1 = c.opirr(p, p.As)
+		rf := int((p.GetFrom3().Reg) & 31)
+		rt := int((p.To.Reg) & 31)
+		r := int((p.Reg) & 31)
+
+		o1 |= ((Q & 1) << 30) | (uint32(r&31) << 16) | (uint32(index&15) << 11) | (uint32(rf&31) << 5) | uint32(rt&31)
+
+	case 95: /* vushr $shift, Vn.<T>, Vd.<T> */
+		at := int((p.To.Reg >> 5) & 15)
+		af := int((p.Reg >> 5) & 15)
+		shift := int(p.From.Offset)
+
+		if af != at {
+			c.ctxt.Diag("invalid arrangement on op Vn.<T>, Vd.<T>: %v", p)
+		}
+
+		var Q uint32
+		var imax, esize int
+
+		switch af {
+		case ARNG_8B, ARNG_4H, ARNG_2S:
+			Q = 0
+		case ARNG_16B, ARNG_8H, ARNG_4S, ARNG_2D:
+			Q = 1
+		default:
+			c.ctxt.Diag("invalid arrangement on op Vn.<T>, Vd.<T>: %v", p)
+		}
+
+		switch af {
+		case ARNG_8B, ARNG_16B:
+			imax = 15
+			esize = 8
+		case ARNG_4H, ARNG_8H:
+			imax = 31
+			esize = 16
+		case ARNG_2S, ARNG_4S:
+			imax = 63
+			esize = 32
+		case ARNG_2D:
+			imax = 127
+			esize = 64
+		}
+
+		imm := 0
+
+		if p.As == AVUSHR {
+			imm = esize*2 - shift
+			if imm < esize || imm > imax {
+				c.ctxt.Diag("shift out of range: %v", p)
+			}
+		}
+
+		if p.As == AVSHL {
+			imm = esize + shift
+			if imm > imax {
+				c.ctxt.Diag("shift out of range: %v", p)
+			}
+		}
+
+		o1 = c.opirr(p, p.As)
+		rt := int((p.To.Reg) & 31)
+		rf := int((p.Reg) & 31)
+
+		o1 |= ((Q & 1) << 30) | (uint32(imm&127) << 16) | (uint32(rf&31) << 5) | uint32(rt&31)
+
+	case 96: /* vst1 Vt1.<T>[index], offset(Rn) */
+		af := int((p.From.Reg >> 5) & 15)
+		rt := int((p.From.Reg) & 31)
+		rf := int((p.To.Reg) & 31)
+		r := int(p.To.Index & 31)
+		index := int(p.From.Index)
+		offset := int32(c.regoff(&p.To))
+
+		if o.scond == C_XPOST {
+			if (p.To.Index != 0) && (offset != 0) {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+			if p.To.Index == 0 && offset == 0 {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+		}
+
+		if offset != 0 {
+			r = 31
+		}
+
+		var Q, S, size int
+		var opcode uint32
+		switch af {
+		case ARNG_B:
+			c.checkindex(p, index, 15)
+			if o.scond == C_XPOST && offset != 0 && offset != 1 {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+			Q = index >> 3
+			S = (index >> 2) & 1
+			size = index & 3
+			opcode = 0
+		case ARNG_H:
+			c.checkindex(p, index, 7)
+			if o.scond == C_XPOST && offset != 0 && offset != 2 {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+			Q = index >> 2
+			S = (index >> 1) & 1
+			size = (index & 1) << 1
+			opcode = 2
+		case ARNG_S:
+			c.checkindex(p, index, 3)
+			if o.scond == C_XPOST && offset != 0 && offset != 4 {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+			Q = index >> 1
+			S = index & 1
+			size = 0
+			opcode = 4
+		case ARNG_D:
+			c.checkindex(p, index, 1)
+			if o.scond == C_XPOST && offset != 0 && offset != 8 {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+			Q = index
+			S = 0
+			size = 1
+			opcode = 4
+		default:
+			c.ctxt.Diag("invalid arrangement: %v", p)
+		}
+
+		if o.scond == C_XPOST {
+			o1 |= 27 << 23
+		} else {
+			o1 |= 26 << 23
+		}
+
+		o1 |= (uint32(Q&1) << 30) | (uint32(r&31) << 16) | ((opcode & 7) << 13) | (uint32(S&1) << 12) | (uint32(size&3) << 10) | (uint32(rf&31) << 5) | uint32(rt&31)
+
+	case 97: /* vld1 offset(Rn), vt.<T>[index] */
+		at := int((p.To.Reg >> 5) & 15)
+		rt := int((p.To.Reg) & 31)
+		rf := int((p.From.Reg) & 31)
+		r := int(p.From.Index & 31)
+		index := int(p.To.Index)
+		offset := int32(c.regoff(&p.From))
+
+		if o.scond == C_XPOST {
+			if (p.From.Index != 0) && (offset != 0) {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+			if p.From.Index == 0 && offset == 0 {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+		}
+
+		if offset != 0 {
+			r = 31
+		}
+
+		Q := 0
+		S := 0
+		size := 0
+		var opcode uint32
+		switch at {
+		case ARNG_B:
+			c.checkindex(p, index, 15)
+			if o.scond == C_XPOST && offset != 0 && offset != 1 {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+			Q = index >> 3
+			S = (index >> 2) & 1
+			size = index & 3
+			opcode = 0
+		case ARNG_H:
+			c.checkindex(p, index, 7)
+			if o.scond == C_XPOST && offset != 0 && offset != 2 {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+			Q = index >> 2
+			S = (index >> 1) & 1
+			size = (index & 1) << 1
+			opcode = 2
+		case ARNG_S:
+			c.checkindex(p, index, 3)
+			if o.scond == C_XPOST && offset != 0 && offset != 4 {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+			Q = index >> 1
+			S = index & 1
+			size = 0
+			opcode = 4
+		case ARNG_D:
+			c.checkindex(p, index, 1)
+			if o.scond == C_XPOST && offset != 0 && offset != 8 {
+				c.ctxt.Diag("invalid offset: %v", p)
+			}
+			Q = index
+			S = 0
+			size = 1
+			opcode = 4
+		default:
+			c.ctxt.Diag("invalid arrangement: %v", p)
+		}
+
+		if o.scond == C_XPOST {
+			o1 |= 110 << 21
+		} else {
+			o1 |= 106 << 21
+		}
+
+		o1 |= (uint32(Q&1) << 30) | (uint32(r&31) << 16) | ((opcode & 7) << 13) | (uint32(S&1) << 12) | (uint32(size&3) << 10) | (uint32(rf&31) << 5) | uint32(rt&31)
+	}
 	out[0] = o1
 	out[1] = o2
 	out[2] = o3
@@ -4091,6 +4630,30 @@ func (c *ctxt7) oprrr(p *obj.Prog, a obj.As) uint32 {
 	case AFSUBD:
 		return FPOP2S(0, 0, 1, 3)
 
+	case AFMADDD:
+		return FPOP3S(0, 0, 1, 0, 0)
+
+	case AFMADDS:
+		return FPOP3S(0, 0, 0, 0, 0)
+
+	case AFMSUBD:
+		return FPOP3S(0, 0, 1, 0, 1)
+
+	case AFMSUBS:
+		return FPOP3S(0, 0, 0, 0, 1)
+
+	case AFNMADDD:
+		return FPOP3S(0, 0, 1, 1, 0)
+
+	case AFNMADDS:
+		return FPOP3S(0, 0, 0, 1, 0)
+
+	case AFNMSUBD:
+		return FPOP3S(0, 0, 1, 1, 1)
+
+	case AFNMSUBS:
+		return FPOP3S(0, 0, 0, 1, 1)
+
 	case AFMULS:
 		return FPOP2S(0, 0, 0, 0)
 
@@ -4259,6 +4822,9 @@ func (c *ctxt7) oprrr(p *obj.Prog, a obj.As) uint32 {
 	case AVCMEQ:
 		return 1<<29 | 0x71<<21 | 0x23<<10
 
+	case AVCNT:
+		return 0<<31 | 0<<29 | 0xE<<24 | 0x10<<17 | 5<<12 | 2<<10
+
 	case AVEOR:
 		return 1<<29 | 0x71<<21 | 7<<10
 
@@ -4276,6 +4842,18 @@ func (c *ctxt7) oprrr(p *obj.Prog, a obj.As) uint32 {
 
 	case AVUADDLV:
 		return 1<<29 | 7<<25 | 3<<20 | 7<<11
+
+	case AVFMLA:
+		return 7<<25 | 0<<23 | 1<<21 | 3<<14 | 3<<10
+
+	case AVFMLS:
+		return 7<<25 | 1<<23 | 1<<21 | 3<<14 | 3<<10
+
+	case AVPMULL, AVPMULL2:
+		return 0xE<<24 | 1<<21 | 0x38<<10
+
+	case AVRBIT:
+		return 0x2E<<24 | 1<<22 | 0x10<<17 | 5<<12 | 2<<10
 	}
 
 	c.ctxt.Diag("%v: bad rrr %d %v", p, a, a)
@@ -4462,6 +5040,15 @@ func (c *ctxt7) opirr(p *obj.Prog, a obj.As) uint32 {
 
 	case AHINT:
 		return SYSOP(0, 0, 3, 2, 0, 0, 0x1F)
+
+	case AVEXT:
+		return 0x2E<<24 | 0<<23 | 0<<21 | 0<<15
+
+	case AVUSHR:
+		return 0x5E<<23 | 1<<10
+
+	case AVSHL:
+		return 0x1E<<23 | 21<<10
 	}
 
 	c.ctxt.Diag("%v: bad irr %v", p, a)
@@ -4510,33 +5097,44 @@ func (c *ctxt7) opbit(p *obj.Prog, a obj.As) uint32 {
 }
 
 /*
- * add/subtract extended register
+ * add/subtract sign or zero-extended register
  */
-func (c *ctxt7) opxrrr(p *obj.Prog, a obj.As) uint32 {
+func (c *ctxt7) opxrrr(p *obj.Prog, a obj.As, extend bool) uint32 {
+	extension := uint32(0)
+	if !extend {
+		switch a {
+		case AADD, ACMN, AADDS, ASUB, ACMP, ASUBS:
+			extension = LSL0_64
+
+		case AADDW, ACMNW, AADDSW, ASUBW, ACMPW, ASUBSW:
+			extension = LSL0_32
+		}
+	}
+
 	switch a {
 	case AADD:
-		return S64 | 0<<30 | 0<<29 | 0x0b<<24 | 0<<22 | 1<<21 | LSL0_64
+		return S64 | 0<<30 | 0<<29 | 0x0b<<24 | 0<<22 | 1<<21 | extension
 
 	case AADDW:
-		return S32 | 0<<30 | 0<<29 | 0x0b<<24 | 0<<22 | 1<<21 | LSL0_32
+		return S32 | 0<<30 | 0<<29 | 0x0b<<24 | 0<<22 | 1<<21 | extension
 
 	case ACMN, AADDS:
-		return S64 | 0<<30 | 1<<29 | 0x0b<<24 | 0<<22 | 1<<21 | LSL0_64
+		return S64 | 0<<30 | 1<<29 | 0x0b<<24 | 0<<22 | 1<<21 | extension
 
 	case ACMNW, AADDSW:
-		return S32 | 0<<30 | 1<<29 | 0x0b<<24 | 0<<22 | 1<<21 | LSL0_32
+		return S32 | 0<<30 | 1<<29 | 0x0b<<24 | 0<<22 | 1<<21 | extension
 
 	case ASUB:
-		return S64 | 1<<30 | 0<<29 | 0x0b<<24 | 0<<22 | 1<<21 | LSL0_64
+		return S64 | 1<<30 | 0<<29 | 0x0b<<24 | 0<<22 | 1<<21 | extension
 
 	case ASUBW:
-		return S32 | 1<<30 | 0<<29 | 0x0b<<24 | 0<<22 | 1<<21 | LSL0_32
+		return S32 | 1<<30 | 0<<29 | 0x0b<<24 | 0<<22 | 1<<21 | extension
 
 	case ACMP, ASUBS:
-		return S64 | 1<<30 | 1<<29 | 0x0b<<24 | 0<<22 | 1<<21 | LSL0_64
+		return S64 | 1<<30 | 1<<29 | 0x0b<<24 | 0<<22 | 1<<21 | extension
 
 	case ACMPW, ASUBSW:
-		return S32 | 1<<30 | 1<<29 | 0x0b<<24 | 0<<22 | 1<<21 | LSL0_32
+		return S32 | 1<<30 | 1<<29 | 0x0b<<24 | 0<<22 | 1<<21 | extension
 	}
 
 	c.ctxt.Diag("bad opxrrr %v\n%v", a, p)
@@ -4792,10 +5390,10 @@ func (c *ctxt7) opstore(p *obj.Prog, a obj.As) uint32 {
 		return LDSTX(2, 1, 0, 0, 1) | 0x1F<<10
 
 	case ASTLXP:
-		return LDSTX(2, 0, 0, 1, 1)
+		return LDSTX(3, 0, 0, 1, 1)
 
 	case ASTLXPW:
-		return LDSTX(3, 0, 0, 1, 1)
+		return LDSTX(2, 0, 0, 1, 1)
 
 	case ASTLXR:
 		return LDSTX(3, 0, 0, 0, 1) | 0x1F<<10
@@ -4969,6 +5567,10 @@ func (c *ctxt7) opldrpp(p *obj.Prog, a obj.As) uint32 {
 
 	case AVMOVS:
 		return 2<<30 | 7<<27 | 1<<26 | 0<<24 | 1<<22
+
+	case APRFM:
+		return 0xf9<<24 | 2<<22
+
 	}
 
 	c.ctxt.Diag("bad opldr %v\n%v", a, p)
@@ -5178,6 +5780,43 @@ func (c *ctxt7) opextr(p *obj.Prog, a obj.As, v int32, rn int, rm int, rt int) u
 	o |= uint32(rm&31) << 16
 	o |= uint32(rt & 31)
 	return o
+}
+
+/* genrate instruction encoding for LDP/LDPW/LDPSW/STP/STPW */
+func (c *ctxt7) opldpstp(p *obj.Prog, o *Optab, vo int32, rbase, rl, rh, ldp uint32) uint32 {
+	var ret uint32
+	switch p.As {
+	case ALDP, ASTP:
+		if vo < -512 || vo > 504 || vo%8 != 0 {
+			c.ctxt.Diag("invalid offset %v\n", p)
+		}
+		vo /= 8
+		ret = 2 << 30
+	case ALDPW, ASTPW:
+		if vo < -256 || vo > 252 || vo%4 != 0 {
+			c.ctxt.Diag("invalid offset %v\n", p)
+		}
+		vo /= 4
+		ret = 0
+	case ALDPSW:
+		if vo < -256 || vo > 252 || vo%4 != 0 {
+			c.ctxt.Diag("invalid offset %v\n", p)
+		}
+		vo /= 4
+		ret = 1 << 30
+	default:
+		c.ctxt.Diag("invalid instruction %v\n", p)
+	}
+	switch o.scond {
+	case C_XPOST:
+		ret |= 1 << 23
+	case C_XPRE:
+		ret |= 3 << 23
+	default:
+		ret |= 2 << 23
+	}
+	ret |= 5<<27 | (ldp&1)<<22 | uint32(vo&0x7f)<<15 | (rh&31)<<10 | (rbase&31)<<5 | (rl & 31)
+	return ret
 }
 
 /*

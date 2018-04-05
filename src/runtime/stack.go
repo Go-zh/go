@@ -144,7 +144,7 @@ var stackpoolmu mutex
 // Global pool of large stack spans.
 var stackLarge struct {
 	lock mutex
-	free [_MHeapMap_Bits]mSpanList // free lists by log_2(s.npages)
+	free [heapAddrBits - pageShift]mSpanList // free lists by log_2(s.npages)
 }
 
 func stackinit() {
@@ -209,7 +209,7 @@ func stackpoolalloc(order uint8) gclinkptr {
 
 // Adds stack x to the free pool. Must be called with stackpoolmu held.
 func stackpoolfree(x gclinkptr, order uint8) {
-	s := mheap_.lookup(unsafe.Pointer(x))
+	s := spanOfUnchecked(uintptr(x))
 	if s.state != _MSpanManual {
 		throw("freeing stack not in a stack span")
 	}
@@ -455,7 +455,7 @@ func stackfree(stk stack) {
 			c.stackcache[order].size += n
 		}
 	} else {
-		s := mheap_.lookup(v)
+		s := spanOfUnchecked(uintptr(v))
 		if s.state != _MSpanManual {
 			println(hex(s.base()), v)
 			throw("bad span state")
@@ -619,7 +619,7 @@ func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 	if stackDebug >= 2 {
 		print("    adjusting ", funcname(f), " frame=[", hex(frame.sp), ",", hex(frame.fp), "] pc=", hex(frame.pc), " continpc=", hex(frame.continpc), "\n")
 	}
-	if f.entry == systemstack_switchPC {
+	if f.funcID == funcID_systemstack_switch {
 		// A special routine at the bottom of stack of a goroutine that does an systemstack call.
 		// We will allow it to be copied even though we don't
 		// have full GC info for it (because it is written in asm).
@@ -1000,7 +1000,7 @@ func newstack() {
 			"\tsched={pc:", hex(gp.sched.pc), " sp:", hex(gp.sched.sp), " lr:", hex(gp.sched.lr), " ctxt:", gp.sched.ctxt, "}\n")
 	}
 	if sp < gp.stack.lo {
-		print("runtime: gp=", gp, ", gp->status=", hex(readgstatus(gp)), "\n ")
+		print("runtime: gp=", gp, ", goid=", gp.goid, ", gp->status=", hex(readgstatus(gp)), "\n ")
 		print("runtime: split stack overflow: ", hex(sp), " < ", hex(gp.stack.lo), "\n")
 		throw("runtime: split stack overflow")
 	}
@@ -1110,7 +1110,8 @@ func shrinkstack(gp *g) {
 	if debug.gcshrinkstackoff > 0 {
 		return
 	}
-	if gp.startpc == gcBgMarkWorkerPC {
+	f := findfunc(gp.startpc)
+	if f.valid() && f.funcID == funcID_gcBgMarkWorker {
 		// We're not allowed to shrink the gcBgMarkWorker
 		// stack (see gcBgMarkWorker for explanation).
 		return
@@ -1184,7 +1185,5 @@ func freeStackSpans() {
 
 //go:nosplit
 func morestackc() {
-	systemstack(func() {
-		throw("attempt to execute system stack code on user stack")
-	})
+	throw("attempt to execute system stack code on user stack")
 }

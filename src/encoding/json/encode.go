@@ -17,12 +17,10 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 )
@@ -283,24 +281,28 @@ func newEncodeState() *encodeState {
 	return new(encodeState)
 }
 
+// jsonError is an error wrapper type for internal use only.
+// Panics with errors are wrapped in jsonError so that the top-level recover
+// can distinguish intentional panics from this package.
+type jsonError struct{ error }
+
 func (e *encodeState) marshal(v interface{}, opts encOpts) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			if _, ok := r.(runtime.Error); ok {
+			if je, ok := r.(jsonError); ok {
+				err = je.error
+			} else {
 				panic(r)
 			}
-			if s, ok := r.(string); ok {
-				panic(s)
-			}
-			err = r.(error)
 		}
 	}()
 	e.reflectValue(reflect.ValueOf(v), opts)
 	return nil
 }
 
+// error aborts the encoding by panicking with err wrapped in jsonError.
 func (e *encodeState) error(err error) {
-	panic(err)
+	panic(jsonError{err})
 }
 
 func isEmptyValue(v reflect.Value) bool {
@@ -1260,34 +1262,13 @@ func dominantField(fields []field) (field, bool) {
 	return fields[0], true
 }
 
-var fieldCache struct {
-	value atomic.Value // map[reflect.Type][]field
-	mu    sync.Mutex   // used only by writers
-}
+var fieldCache sync.Map // map[reflect.Type][]field
 
 // cachedTypeFields is like typeFields but uses a cache to avoid repeated work.
 func cachedTypeFields(t reflect.Type) []field {
-	m, _ := fieldCache.value.Load().(map[reflect.Type][]field)
-	f := m[t]
-	if f != nil {
-		return f
+	if f, ok := fieldCache.Load(t); ok {
+		return f.([]field)
 	}
-
-	// Compute fields without lock.
-	// Might duplicate effort but won't hold other computations back.
-	f = typeFields(t)
-	if f == nil {
-		f = []field{}
-	}
-
-	fieldCache.mu.Lock()
-	m, _ = fieldCache.value.Load().(map[reflect.Type][]field)
-	newM := make(map[reflect.Type][]field, len(m)+1)
-	for k, v := range m {
-		newM[k] = v
-	}
-	newM[t] = f
-	fieldCache.value.Store(newM)
-	fieldCache.mu.Unlock()
-	return f
+	f, _ := fieldCache.LoadOrStore(t, typeFields(t))
+	return f.([]field)
 }

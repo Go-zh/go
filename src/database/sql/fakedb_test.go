@@ -1003,7 +1003,7 @@ type rowsCursor struct {
 	err    error
 
 	// a clone of slices to give out to clients, indexed by the
-	// the original slice's first byte address.  we clone them
+	// original slice's first byte address.  we clone them
 	// just so we're able to corrupt them on close.
 	bytesClone map[*byte][]byte
 
@@ -1020,11 +1020,6 @@ func (rc *rowsCursor) touchMem() {
 }
 
 func (rc *rowsCursor) Close() error {
-	if !rc.closed {
-		for _, bs := range rc.bytesClone {
-			bs[0] = 255 // first byte corrupted
-		}
-	}
 	rc.touchMem()
 	rc.parentMem.touchMem()
 	rc.closed = true

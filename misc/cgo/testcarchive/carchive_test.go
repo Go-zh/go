@@ -260,6 +260,9 @@ func TestSignalForwarding(t *testing.T) {
 }
 
 func TestSignalForwardingExternal(t *testing.T) {
+	if GOOS == "freebsd" {
+		t.Skipf("skipping on %s/%s; signal always goes to the Go runtime", GOOS, GOARCH)
+	}
 	checkSignalForwardingTest(t)
 
 	defer func() {
@@ -433,7 +436,7 @@ func TestSigaltstack(t *testing.T) {
 }
 
 const testar = `#!/usr/bin/env bash
-while expr $1 : '[-]' >/dev/null; do
+while [[ $1 == -* ]] >/dev/null; do
   shift
 done
 echo "testar" > $1
@@ -641,4 +644,51 @@ func TestCompileWithoutShared(t *testing.T) {
 	out, err = exec.Command(binArgs[0], binArgs[1:]...).CombinedOutput()
 	t.Logf("%s", out)
 	expectSignal(t, err, syscall.SIGPIPE)
+}
+
+// Test that installing a second time recreates the header files.
+func TestCachedInstall(t *testing.T) {
+	defer os.RemoveAll("pkg")
+
+	h1 := filepath.Join("pkg", libgodir, "libgo.h")
+	h2 := filepath.Join("pkg", libgodir, "p.h")
+
+	buildcmd := []string{"go", "install", "-i", "-buildmode=c-archive", "libgo"}
+
+	cmd := exec.Command(buildcmd[0], buildcmd[1:]...)
+	cmd.Env = gopathEnv
+	t.Log(buildcmd)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("%s", out)
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(h1); err != nil {
+		t.Errorf("libgo.h not installed: %v", err)
+	}
+	if _, err := os.Stat(h2); err != nil {
+		t.Errorf("p.h not installed: %v", err)
+	}
+
+	if err := os.Remove(h1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(h2); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd = exec.Command(buildcmd[0], buildcmd[1:]...)
+	cmd.Env = gopathEnv
+	t.Log(buildcmd)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("%s", out)
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(h1); err != nil {
+		t.Errorf("libgo.h not installed in second run: %v", err)
+	}
+	if _, err := os.Stat(h2); err != nil {
+		t.Errorf("p.h not installed in second run: %v", err)
+	}
 }

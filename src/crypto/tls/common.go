@@ -91,7 +91,7 @@ const (
 )
 
 // CurveID is the type of a TLS identifier for an elliptic curve. See
-// http://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8
+// https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8
 type CurveID uint16
 
 const (
@@ -102,7 +102,7 @@ const (
 )
 
 // TLS Elliptic Curve Point Formats
-// http://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-9
+// https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-9
 const (
 	pointFormatUncompressed uint8 = 0
 )
@@ -161,6 +161,12 @@ type ConnectionState struct {
 	VerifiedChains              [][]*x509.Certificate // verified chains built from PeerCertificates
 	SignedCertificateTimestamps [][]byte              // SCTs from the server, if any
 	OCSPResponse                []byte                // stapled OCSP response from server, if any
+
+	// ExportKeyMaterial returns length bytes of exported key material as
+	// defined in https://tools.ietf.org/html/rfc5705. If context is nil, it is
+	// not used as part of the seed. If Config.Renegotiation was set to allow
+	// renegotiation, this function will always return nil, false.
+	ExportKeyingMaterial func(label string, context []byte, length int) ([]byte, bool)
 
 	// TLSUnique contains the "tls-unique" channel binding value (see RFC
 	// 5929, section 3). For resumed sessions this value will be nil

@@ -158,7 +158,11 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 			// function calls; in this case s is not evaluated."
 			if !check.hasCallOrRecv {
 				mode = constant_
-				val = constant.MakeInt64(t.len)
+				if t.len >= 0 {
+					val = constant.MakeInt64(t.len)
+				} else {
+					val = constant.MakeUnknown()
+				}
 			}
 
 		case *Slice, *Chan:
@@ -470,6 +474,19 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 
 	case _Panic:
 		// panic(x)
+		// record panic call if inside a function with result parameters
+		// (for use in Checker.isTerminating)
+		if check.sig.results.Len() > 0 {
+			// function has result parameters
+			p := check.isPanic
+			if p == nil {
+				// allocate lazily
+				p = make(map[*ast.CallExpr]bool)
+				check.isPanic = p
+			}
+			p[call] = true
+		}
+
 		check.assignment(x, &emptyInterface, "argument to panic")
 		if x.mode == invalid {
 			return

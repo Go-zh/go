@@ -133,7 +133,11 @@ func (t *tester) run() {
 	// to break if we don't automatically refresh things here.
 	// Rebuilding is a shortened bootstrap.
 	// See cmdbootstrap for a description of the overall process.
-	if !t.listMode {
+	//
+	// But don't do this if we're running in the Go build system,
+	// where cmd/dist is invoked many times. This just slows that
+	// down (Issue 24300).
+	if !t.listMode && os.Getenv("GO_BUILDER_NAME") == "" {
 		goInstall("go", append([]string{"-i"}, toolchain...)...)
 		goInstall("go", append([]string{"-i"}, toolchain...)...)
 		goInstall("go", "std", "cmd")
@@ -908,6 +912,7 @@ func (t *tester) supportedBuildmode(mode string) bool {
 		switch pair {
 		case "darwin-386", "darwin-amd64", "darwin-arm", "darwin-arm64",
 			"linux-amd64", "linux-386", "linux-ppc64le", "linux-s390x",
+			"freebsd-amd64",
 			"windows-amd64", "windows-386":
 			return true
 		}
@@ -916,6 +921,7 @@ func (t *tester) supportedBuildmode(mode string) bool {
 		switch pair {
 		case "linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-ppc64le", "linux-s390x",
 			"darwin-amd64", "darwin-386",
+			"freebsd-amd64",
 			"android-arm", "android-arm64", "android-386",
 			"windows-amd64", "windows-386":
 			return true
@@ -1210,6 +1216,23 @@ func (t *tester) hasSwig() bool {
 	if err != nil {
 		return false
 	}
+
+	// Check that swig was installed with Go support by checking
+	// that a go directory exists inside the swiglib directory.
+	// See https://golang.org/issue/23469.
+	output, err := exec.Command(swig, "-go", "-swiglib").Output()
+	if err != nil {
+		return false
+	}
+	swigDir := strings.TrimSpace(string(output))
+
+	_, err = os.Stat(filepath.Join(swigDir, "go"))
+	if err != nil {
+		return false
+	}
+
+	// Check that swig has a new enough version.
+	// See https://golang.org/issue/22858.
 	out, err := exec.Command(swig, "-version").CombinedOutput()
 	if err != nil {
 		return false

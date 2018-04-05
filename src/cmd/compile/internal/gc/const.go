@@ -6,7 +6,6 @@ package gc
 
 import (
 	"cmd/compile/internal/types"
-	"cmd/internal/src"
 	"math/big"
 	"strings"
 )
@@ -224,19 +223,24 @@ func convlit1(n *Node, t *types.Type, explicit bool, reuse canReuseNode) *Node {
 	if n.Op == OLITERAL && !reuse {
 		// Can't always set n.Type directly on OLITERAL nodes.
 		// See discussion on CL 20813.
-		nn := *n
-		n = &nn
+		n = n.copy()
 		reuse = true
 	}
 
 	switch n.Op {
 	default:
 		if n.Type == types.Idealbool {
-			if t.IsBoolean() {
-				n.Type = t
-			} else {
-				n.Type = types.Types[TBOOL]
+			if !t.IsBoolean() {
+				t = types.Types[TBOOL]
 			}
+			switch n.Op {
+			case ONOT:
+				n.Left = convlit(n.Left, t)
+			case OANDAND, OOROR:
+				n.Left = convlit(n.Left, t)
+				n.Right = convlit(n.Right, t)
+			}
+			n.Type = t
 		}
 
 		if n.Type.Etype == TIDEAL {
@@ -558,8 +562,8 @@ func overflow(v Val, t *types.Type) bool {
 		return false
 	}
 
-	// Only uintptrs may be converted to unsafe.Pointer, which cannot overflow.
-	if t.Etype == TUNSAFEPTR {
+	// Only uintptrs may be converted to pointers, which cannot overflow.
+	if t.IsPtr() || t.IsUnsafePtr() {
 		return false
 	}
 
@@ -602,18 +606,6 @@ func Isconst(n *Node, ct Ctype) bool {
 	// If the caller is asking for CTINT, allow CTRUNE too.
 	// Makes life easier for back ends.
 	return t == ct || (ct == CTINT && t == CTRUNE)
-}
-
-func saveorig(n *Node) *Node {
-	if n == n.Orig {
-		// duplicate node for n->orig.
-		n1 := nod(OLITERAL, nil, nil)
-
-		n.Orig = n1
-		*n1 = *n
-	}
-
-	return n.Orig
 }
 
 // if n is constant, rewrite as OLITERAL node.
@@ -739,20 +731,13 @@ func evconst(n *Node) {
 
 	nr := n.Right
 	var rv Val
-	var lno src.XPos
 	var wr types.EType
 	var ctype uint32
 	var v Val
-	var norig *Node
-	var nn *Node
 	if nr == nil {
 		// copy numeric value to avoid modifying
 		// nl, in case someone still refers to it (e.g. iota).
-		v = nl.Val()
-
-		if wl == TIDEAL {
-			v = copyval(v)
-		}
+		v = copyval(nl.Val())
 
 		// rune values are int values for the purpose of constant folding.
 		ctype = uint32(v.Ctype())
@@ -894,12 +879,7 @@ func evconst(n *Node) {
 
 	// copy numeric value to avoid modifying
 	// n->left, in case someone still refers to it (e.g. iota).
-	v = nl.Val()
-
-	if wl == TIDEAL {
-		v = copyval(v)
-	}
-
+	v = copyval(nl.Val())
 	rv = nr.Val()
 
 	// convert to common ideal
@@ -1196,41 +1176,15 @@ func evconst(n *Node) {
 	}
 
 ret:
-	norig = saveorig(n)
-	*n = *nl
-
-	// restore value of n->orig.
-	n.Orig = norig
-
-	n.SetVal(v)
-
-	// check range.
-	lno = setlineno(n)
-	overflow(v, n.Type)
-	lineno = lno
-
-	// truncate precision for non-ideal float.
-	if v.Ctype() == CTFLT && n.Type.Etype != TIDEAL {
-		n.SetVal(Val{truncfltlit(v.U.(*Mpflt), n.Type)})
-	}
+	setconst(n, v)
 	return
 
 settrue:
-	nn = nodbool(true)
-	nn.Orig = saveorig(n)
-	if !iscmp[n.Op] {
-		nn.Type = nl.Type
-	}
-	*n = *nn
+	setconst(n, Val{true})
 	return
 
 setfalse:
-	nn = nodbool(false)
-	nn.Orig = saveorig(n)
-	if !iscmp[n.Op] {
-		nn.Type = nl.Type
-	}
-	*n = *nn
+	setconst(n, Val{false})
 	return
 
 illegal:
@@ -1240,6 +1194,43 @@ illegal:
 	}
 }
 
+// setconst rewrites n as an OLITERAL with value v.
+func setconst(n *Node, v Val) {
+	// Ensure n.Orig still points to a semantically-equivalent
+	// expression after we rewrite n into a constant.
+	if n.Orig == n {
+		var ncopy Node
+		n.Orig = &ncopy
+		ncopy = *n
+	}
+
+	*n = Node{
+		Op:      OLITERAL,
+		Pos:     n.Pos,
+		Orig:    n.Orig,
+		Type:    n.Type,
+		Xoffset: BADWIDTH,
+	}
+	n.SetVal(v)
+
+	// Check range.
+	lno := setlineno(n)
+	overflow(v, n.Type)
+	lineno = lno
+
+	// Truncate precision for non-ideal float.
+	if v.Ctype() == CTFLT && n.Type.Etype != TIDEAL {
+		n.SetVal(Val{truncfltlit(v.U.(*Mpflt), n.Type)})
+	}
+}
+
+func setintconst(n *Node, v int64) {
+	u := new(Mpint)
+	u.SetInt64(v)
+	setconst(n, Val{u})
+}
+
+// nodlit returns a new untyped constant with value v.
 func nodlit(v Val) *Node {
 	n := nod(OLITERAL, nil, nil)
 	n.SetVal(v)
@@ -1260,24 +1251,6 @@ func nodlit(v Val) *Node {
 		n.Type = types.Types[TNIL]
 	}
 
-	return n
-}
-
-func nodcplxlit(r Val, i Val) *Node {
-	r = toflt(r)
-	i = toflt(i)
-
-	c := new(Mpcplx)
-	n := nod(OLITERAL, nil, nil)
-	n.Type = types.Types[TIDEAL]
-	n.SetVal(Val{c})
-
-	if r.Ctype() != CTFLT || i.Ctype() != CTFLT {
-		Fatalf("nodcplxlit ctype %d/%d", r.Ctype(), i.Ctype())
-	}
-
-	c.Real.Set(r.U.(*Mpflt))
-	c.Imag.Set(i.U.(*Mpflt))
 	return n
 }
 
@@ -1359,8 +1332,7 @@ func defaultlitreuse(n *Node, t *types.Type, reuse canReuseNode) *Node {
 	}
 
 	if n.Op == OLITERAL && !reuse {
-		nn := *n
-		n = &nn
+		n = n.copy()
 		reuse = true
 	}
 

@@ -97,9 +97,11 @@ type Array struct {
 }
 
 // NewArray returns a new array type for the given element type and length.
+// A negative length indicates an unknown length.
 func NewArray(elem Type, len int64) *Array { return &Array{len, elem} }
 
 // Len returns the length of array a.
+// A negative result indicates an unknown length.
 func (a *Array) Len() int64 { return a.len }
 
 // Elem returns element type of array a.
@@ -254,7 +256,8 @@ var emptyInterface = Interface{allMethods: markComplete}
 var markComplete = make([]*Func, 0)
 
 // NewInterface returns a new (incomplete) interface for the given methods and embedded types.
-// To compute the method set of the interface, Complete must be called.
+// NewInterface takes ownership of the provided methods and may modify their types by setting
+// missing receivers. To compute the method set of the interface, Complete must be called.
 func NewInterface(methods []*Func, embeddeds []*Named) *Interface {
 	typ := new(Interface)
 
@@ -267,10 +270,10 @@ func NewInterface(methods []*Func, embeddeds []*Named) *Interface {
 		if mset.insert(m) != nil {
 			panic("multiple methods with the same name")
 		}
-		// set receiver
-		// TODO(gri) Ideally, we should use a named type here instead of
-		// typ, for less verbose printing of interface method signatures.
-		m.typ.(*Signature).recv = NewVar(m.pos, m.pkg, "", typ)
+		// set receiver if we don't have one
+		if sig := m.typ.(*Signature); sig.recv == nil {
+			sig.recv = NewVar(m.pos, m.pkg, "", typ)
+		}
 	}
 	sort.Sort(byUniqueMethodName(methods))
 
@@ -437,26 +440,26 @@ func (t *Named) AddMethod(m *Func) {
 
 // Implementations for Type methods.
 
-func (t *Basic) Underlying() Type     { return t }
-func (t *Array) Underlying() Type     { return t }
-func (t *Slice) Underlying() Type     { return t }
-func (t *Struct) Underlying() Type    { return t }
-func (t *Pointer) Underlying() Type   { return t }
+func (b *Basic) Underlying() Type     { return b }
+func (a *Array) Underlying() Type     { return a }
+func (s *Slice) Underlying() Type     { return s }
+func (s *Struct) Underlying() Type    { return s }
+func (p *Pointer) Underlying() Type   { return p }
 func (t *Tuple) Underlying() Type     { return t }
-func (t *Signature) Underlying() Type { return t }
+func (s *Signature) Underlying() Type { return s }
 func (t *Interface) Underlying() Type { return t }
-func (t *Map) Underlying() Type       { return t }
-func (t *Chan) Underlying() Type      { return t }
+func (m *Map) Underlying() Type       { return m }
+func (c *Chan) Underlying() Type      { return c }
 func (t *Named) Underlying() Type     { return t.underlying }
 
-func (t *Basic) String() string     { return TypeString(t, nil) }
-func (t *Array) String() string     { return TypeString(t, nil) }
-func (t *Slice) String() string     { return TypeString(t, nil) }
-func (t *Struct) String() string    { return TypeString(t, nil) }
-func (t *Pointer) String() string   { return TypeString(t, nil) }
+func (b *Basic) String() string     { return TypeString(b, nil) }
+func (a *Array) String() string     { return TypeString(a, nil) }
+func (s *Slice) String() string     { return TypeString(s, nil) }
+func (s *Struct) String() string    { return TypeString(s, nil) }
+func (p *Pointer) String() string   { return TypeString(p, nil) }
 func (t *Tuple) String() string     { return TypeString(t, nil) }
-func (t *Signature) String() string { return TypeString(t, nil) }
+func (s *Signature) String() string { return TypeString(s, nil) }
 func (t *Interface) String() string { return TypeString(t, nil) }
-func (t *Map) String() string       { return TypeString(t, nil) }
-func (t *Chan) String() string      { return TypeString(t, nil) }
+func (m *Map) String() string       { return TypeString(m, nil) }
+func (c *Chan) String() string      { return TypeString(c, nil) }
 func (t *Named) String() string     { return TypeString(t, nil) }

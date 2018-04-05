@@ -153,10 +153,10 @@ TEXT asmtest(SB),DUPOK|NOSPLIT,$-8
    LDARW (R30), R22                           // d6ffdf88
    LDARW (RSP), R22                           // f6ffdf88
    LDAR (R27), R22                            // 76ffdfc8
-   //TODO LDARB (R25), R2                     // 22ffdf08
-   //TODO LDARH (R5), R7                      // a7fcdf48
-   //TODO LDAXPW (R10), R16, R20              // 54c17f88
-   //TODO LDAXP (R25), R11, R30               // 3eaf7fc8
+   LDARB (R25), R2                            // 22ffdf08
+   LDARH (R5), R7                             // a7fcdf48
+   //TODO LDAXPW (R10), (R20, R16)            // 54c17f88
+   //TODO LDAXP (R25), (R30, R11)             // 3eaf7fc8
    LDAXRW (R15), R2                           // e2fd5f88
    LDAXR (R15), R21                           // f5fd5fc8
    LDAXRB (R19), R16                          // 70fe5f08
@@ -216,8 +216,8 @@ TEXT asmtest(SB),DUPOK|NOSPLIT,$-8
    //TODO LDURSH -0x49(R11), R28              // 7c71db78
    //TODO LDURSH -0x1f(R0), R29               // 1d109e78
    //TODO LDURSW 0x48(R6), R20                // d48084b8
-   LDXPW (R24), R11, R23                      // 172f7f88
-   LDXP (R0), R13, R16                        // 10347fc8
+   //TODO LDXPW (R24), (R23, R11)             // 172f7f88
+   //TODO LDXP (R0), (R16, R13)               // 10347fc8
    LDXRW (RSP), R30                           // fe7f5f88
    LDXR (R27), R12                            // 6c7f5fc8
    LDXRB (R0), R4                             // 047c5f08
@@ -251,6 +251,7 @@ TEXT asmtest(SB),DUPOK|NOSPLIT,$-8
    MSR $6, DAIFClr                            // ff4603d5
    MRS ELR_EL1, R8                            // 284038d5
    MSR R16, ELR_EL1                           // 304018d5
+   MRS DCZID_EL0, R3                          // e3003bd5
    MSUBW R1, R1, R12, R5                      // 8585011b
    MSUB R19, R16, R26, R2                     // 42c3139b
    MULW R26, R5, R22                          // b67c1a1b
@@ -313,8 +314,8 @@ TEXT asmtest(SB),DUPOK|NOSPLIT,$-8
    STLXRW R13, (R15), R14                     // edfd0e88
    STLXRB R24, (R23), R8                      // f8fe0808
    STLXRH R19, (R27), R11                     // 73ff0b48
-   //TODO STLXPW (R22), R11, R6, R21          // c6ae3588
-   //TODO STLXP (R22), LR, R6, R2             // c6fa22c8
+   //TODO STLXP (R6, R3), (R10), R2           // 468d22c8
+   //TODO STLXPW (R6, R11), (R22), R21        // c6ae3588
    //TODO STNPW 44(R1), R3, R10               // 2a8c0528
    //TODO STNP 0x108(R3), ZR, R7              // 67fc10a8
    LDP.P -384(R3), (R22, R26)                 // 7668e8a8
@@ -343,8 +344,10 @@ TEXT asmtest(SB),DUPOK|NOSPLIT,$-8
    //TODO STTR 124(R5), R25                   // b9c807f8
    //TODO STTRB -28(R23), R16                 // f04a1e38
    //TODO STTRH 9(R10), R18                   // 52990078
-   //TODO STXP (R20), R18, R5, ZR             // 854a3f88
-   //TODO STXP (R22), R9, R17, R0             // d12620c8
+   //TODO STXP (R1, R2), (R3), R10            // 61082ac8
+   //TODO STXP (R1, R2), (RSP), R10           // e10b2ac8
+   //TODO STXPW (R1, R2), (R3), R10           // 61082a88
+   //TODO STXPW (R1, R2), (RSP), R10          // e10b2a88
    STXRW R2, (R19), R18                       // 627e1288
    STXR R15, (R21), R13                       // af7e0dc8
    STXRB R7, (R9), R24                        // 277d1808
@@ -388,6 +391,7 @@ TEXT asmtest(SB),DUPOK|NOSPLIT,$-8
    UMULL R18, R22, R19                        // d37eb29b
    UXTBW R2, R6                               // 461c0053
    UXTHW R7, R20                              // f43c0053
+   VCNT V0.B8, V0.B8                          // 0058200e
    WFE                                        // 5f2003d5
    WFI                                        // 7f2003d5
    YIELD                                      // 3f2003d5

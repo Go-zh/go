@@ -308,22 +308,11 @@ func main() {
 	}
 }
 
-func TestVarDeclCoordsAndSubrogramDeclFile(t *testing.T) {
-	testenv.MustHaveGoBuild(t)
+func varDeclCoordsAndSubrogramDeclFile(t *testing.T, testpoint string, expectFile int, expectLine int, directive string) {
 
-	if runtime.GOOS == "plan9" {
-		t.Skip("skipping on plan9; no DWARF symbol table in executables")
-	}
+	prog := fmt.Sprintf("package main\n\nfunc main() {\n%s\nvar i int\ni = i\n}\n", directive)
 
-	const prog = `
-package main
-
-func main() {
-	var i int
-	i = i
-}
-`
-	dir, err := ioutil.TempDir("", "TestVarDeclCoords")
+	dir, err := ioutil.TempDir("", testpoint)
 	if err != nil {
 		t.Fatalf("could not create directory: %v", err)
 	}
@@ -373,14 +362,35 @@ func main() {
 
 	// Verify line/file attributes.
 	line := iEntry.Val(dwarf.AttrDeclLine)
-	if line == nil || line.(int64) != 5 {
-		t.Errorf("DW_AT_decl_line for i is %v, want 5", line)
+	if line == nil || line.(int64) != int64(expectLine) {
+		t.Errorf("DW_AT_decl_line for i is %v, want %d", line, expectLine)
 	}
 
 	file := maindie.Val(dwarf.AttrDeclFile)
 	if file == nil || file.(int64) != 1 {
-		t.Errorf("DW_AT_decl_file for main is %v, want 1", file)
+		t.Errorf("DW_AT_decl_file for main is %v, want %d", file, expectFile)
 	}
+}
+
+func TestVarDeclCoordsAndSubrogramDeclFile(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+
+	if runtime.GOOS == "plan9" {
+		t.Skip("skipping on plan9; no DWARF symbol table in executables")
+	}
+
+	varDeclCoordsAndSubrogramDeclFile(t, "TestVarDeclCoords", 1, 5, "")
+}
+
+func TestVarDeclCoordsWithLineDirective(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+
+	if runtime.GOOS == "plan9" {
+		t.Skip("skipping on plan9; no DWARF symbol table in executables")
+	}
+
+	varDeclCoordsAndSubrogramDeclFile(t, "TestVarDeclCoordsWithLineDirective",
+		2, 200, "//line /foobar.go:200")
 }
 
 // Helper class for supporting queries on DIEs within a DWARF .debug_info
@@ -608,6 +618,27 @@ func main() {
 			originDIE := ex.entryFromOffset(ooff)
 			if originDIE == nil {
 				t.Fatalf("can't locate origin DIE at off %v", ooff)
+			}
+
+			// Walk the children of the abstract subroutine. We expect
+			// to see child variables there, even if (perhaps due to
+			// optimization) there are no references to them from the
+			// inlined subroutine DIE.
+			absFcnIdx := ex.idxFromOffset(ooff)
+			absFcnChildDies := ex.Children(absFcnIdx)
+			if len(absFcnChildDies) != 2 {
+				t.Fatalf("expected abstract function: expected 2 children, got %d children", len(absFcnChildDies))
+			}
+			formalCount := 0
+			for _, absChild := range absFcnChildDies {
+				if absChild.Tag == dwarf.TagFormalParameter {
+					formalCount += 1
+					continue
+				}
+				t.Fatalf("abstract function child DIE: expected formal, got %v", absChild.Tag)
+			}
+			if formalCount != 2 {
+				t.Fatalf("abstract function DIE: expected 2 formals, got %d", formalCount)
 			}
 
 			if exCount >= len(expectedInl) {

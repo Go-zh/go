@@ -379,6 +379,18 @@ func TestServeMuxHandler(t *testing.T) {
 	}
 }
 
+// Issue 24297
+func TestServeMuxHandleFuncWithNilHandler(t *testing.T) {
+	setParallel(t)
+	defer func() {
+		if err := recover(); err == nil {
+			t.Error("expected call to mux.HandleFunc to panic")
+		}
+	}()
+	mux := NewServeMux()
+	mux.HandleFunc("/", nil)
+}
+
 var serveMuxTests2 = []struct {
 	method  string
 	host    string
@@ -579,6 +591,16 @@ func TestServeWithSlashRedirectForHostPatterns(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestShouldRedirectConcurrency(t *testing.T) {
+	setParallel(t)
+	defer afterTest(t)
+
+	mux := NewServeMux()
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	mux.HandleFunc("/", func(w ResponseWriter, r *Request) {})
 }
 
 func BenchmarkServeMux(b *testing.B) {
@@ -931,7 +953,7 @@ func TestOnlyWriteTimeout(t *testing.T) {
 		if err == nil {
 			t.Errorf("expected an error from Get request")
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timeout waiting for Get error")
 	}
 	if err := <-afterTimeoutErrc; err == nil {

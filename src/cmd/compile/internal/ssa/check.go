@@ -102,7 +102,7 @@ func checkFunc(f *Func) {
 				f.Fatalf("plain/dead block %s has a control value", b)
 			}
 		}
-		if len(b.Succs) > 2 && b.Likely != BranchUnknown {
+		if len(b.Succs) != 2 && b.Likely != BranchUnknown {
 			f.Fatalf("likeliness prediction %d for block %s with %d successors", b.Likely, b, len(b.Succs))
 		}
 
@@ -159,6 +159,11 @@ func checkFunc(f *Func) {
 					f.Fatalf("bad int32 AuxInt value for %v", v)
 				}
 				canHaveAuxInt = true
+				canHaveAux = true
+			case auxCCop:
+				if _, ok := v.Aux.(Op); !ok {
+					f.Fatalf("bad type %T for CCop in %v", v.Aux, v)
+				}
 				canHaveAux = true
 			default:
 				f.Fatalf("unknown aux type for %s", v.Op)
@@ -464,10 +469,6 @@ func memCheck(f *Func) {
 				case OpPhi:
 					if seenNonPhi {
 						f.Fatalf("phi after non-phi @ %s: %s", b, v)
-					}
-				case OpRegKill:
-					if f.RegAlloc == nil {
-						f.Fatalf("RegKill seen before register allocation @ %s: %s", b, v)
 					}
 				default:
 					seenNonPhi = true

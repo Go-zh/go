@@ -467,6 +467,9 @@ type m struct {
 	libcallg  guintptr
 	syscall   libcall // stores syscall parameters on windows
 
+	vdsoSP uintptr // SP for traceback while in VDSO call (0 if not in call)
+	vdsoPC uintptr // PC for traceback while in VDSO call
+
 	mOS
 }
 
@@ -635,8 +638,8 @@ type _func struct {
 	entry   uintptr // start pc
 	nameoff int32   // function name
 
-	args int32 // in/out args size
-	_    int32 // previously legacy frame size; kept for layout compatibility
+	args   int32  // in/out args size
+	funcID funcID // set for certain special runtime functions
 
 	pcsp      int32
 	pcfile    int32
@@ -707,7 +710,17 @@ type _defer struct {
 	link    *_defer
 }
 
-// panics
+// A _panic holds information about an active panic.
+//
+// This is marked go:notinheap because _panic values must only ever
+// live on the stack.
+//
+// The argp and link fields are stack pointers, but don't need special
+// handling during stack growth: because they are pointer-typed and
+// _panic values only live on the stack, regular stack pointer
+// adjustment takes care of them.
+//
+//go:notinheap
 type _panic struct {
 	argp      unsafe.Pointer // pointer to arguments of deferred call run during panic; cannot move - known to liblink
 	arg       interface{}    // argument to panic
@@ -754,6 +767,7 @@ var (
 	// Set on startup in asm_{386,amd64,amd64p32}.s.
 	// Packages outside the runtime should not use these
 	// as they are not an external api.
+	// TODO: deprecate these; use internal/cpu directly.
 	processorVersionInfo uint32
 	isIntel              bool
 	lfenceBeforeRdtsc    bool
@@ -769,6 +783,8 @@ var (
 	support_sse41        bool
 	support_sse42        bool
 	support_ssse3        bool
+
+	arm64_support_aes bool
 
 	goarm                uint8 // set by cmd/link on arm systems
 	framepointer_enabled bool  // set by cmd/link

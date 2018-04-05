@@ -223,6 +223,10 @@ func (b *Builder) Init() {
 		if err != nil {
 			base.Fatalf("%s", err)
 		}
+		if !filepath.IsAbs(b.WorkDir) {
+			os.RemoveAll(b.WorkDir)
+			base.Fatalf("cmd/go: relative tmpdir not supported")
+		}
 		if cfg.BuildX || cfg.BuildWork {
 			fmt.Fprintf(os.Stderr, "WORK=%s\n", b.WorkDir)
 		}
@@ -647,11 +651,9 @@ func (b *Builder) linkSharedAction(mode, depMode BuildMode, shlib string, a1 *Ac
 		// it is not present in another shared library, add it here.
 		// TODO(rsc): Maybe this should only happen if "runtime" is in the original package set.
 		// TODO(rsc): This should probably be changed to use load.LinkerDeps(p).
-		// TODO(rsc): Find out and explain here why gccgo is excluded.
-		// If the answer is that gccgo is different in implicit linker deps, maybe
-		// load.LinkerDeps should be used and updated.
-		// Link packages into a shared library.
-
+		// TODO(rsc): We don't add standard library imports for gccgo
+		// because they are all always linked in anyhow.
+		// Maybe load.LinkerDeps should be used and updated.
 		a := &Action{
 			Mode:    "go build -buildmode=shared",
 			Package: p,

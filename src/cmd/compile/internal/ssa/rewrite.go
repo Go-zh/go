@@ -329,8 +329,26 @@ func log2(n int64) (l int64) {
 	return
 }
 
+// log2uint32 returns logarithm in base 2 of uint32(n), with log2(0) = -1.
+// Rounds down.
+func log2uint32(n int64) (l int64) {
+	return log2(int64(uint32(n)))
+}
+
 // isPowerOfTwo reports whether n is a power of 2.
 func isPowerOfTwo(n int64) bool {
+	return n > 0 && n&(n-1) == 0
+}
+
+// isUint64PowerOfTwo reports whether uint64(n) is a power of 2.
+func isUint64PowerOfTwo(in int64) bool {
+	n := uint64(in)
+	return n > 0 && n&(n-1) == 0
+}
+
+// isUint32PowerOfTwo reports whether uint32(n) is a power of 2.
+func isUint32PowerOfTwo(in int64) bool {
+	n := uint64(uint32(in))
 	return n > 0 && n&(n-1) == 0
 }
 
@@ -505,6 +523,17 @@ func clobber(v *Value) bool {
 	return true
 }
 
+// clobberIfDead resets v when use count is 1. Returns true.
+// clobberIfDead is used by rewrite rules to decrement
+// use counts of v's args when v is dead and never used.
+func clobberIfDead(v *Value) bool {
+	if v.Uses == 1 {
+		v.reset(OpInvalid)
+	}
+	// Note: leave v.Block intact.  The Block field is used after clobberIfDead.
+	return true
+}
+
 // noteRule is an easy way to track if a rule is matched when writing
 // new ones.  Make the rule of interest also conditional on
 //     noteRule("note to self: rule of interest matched")
@@ -521,6 +550,131 @@ func warnRule(cond bool, v *Value, s string) bool {
 		v.Block.Func.Warnl(v.Pos, s)
 	}
 	return true
+}
+
+// for a pseudo-op like (LessThan x), extract x
+func flagArg(v *Value) *Value {
+	if len(v.Args) != 1 || !v.Args[0].Type.IsFlags() {
+		return nil
+	}
+	return v.Args[0]
+}
+
+// arm64Negate finds the complement to an ARM64 condition code,
+// for example Equal -> NotEqual or LessThan -> GreaterEqual
+//
+// TODO: add floating-point conditions
+func arm64Negate(op Op) Op {
+	switch op {
+	case OpARM64LessThan:
+		return OpARM64GreaterEqual
+	case OpARM64LessThanU:
+		return OpARM64GreaterEqualU
+	case OpARM64GreaterThan:
+		return OpARM64LessEqual
+	case OpARM64GreaterThanU:
+		return OpARM64LessEqualU
+	case OpARM64LessEqual:
+		return OpARM64GreaterThan
+	case OpARM64LessEqualU:
+		return OpARM64GreaterThanU
+	case OpARM64GreaterEqual:
+		return OpARM64LessThan
+	case OpARM64GreaterEqualU:
+		return OpARM64LessThanU
+	case OpARM64Equal:
+		return OpARM64NotEqual
+	case OpARM64NotEqual:
+		return OpARM64Equal
+	default:
+		panic("unreachable")
+	}
+}
+
+// arm64Invert evaluates (InvertFlags op), which
+// is the same as altering the condition codes such
+// that the same result would be produced if the arguments
+// to the flag-generating instruction were reversed, e.g.
+// (InvertFlags (CMP x y)) -> (CMP y x)
+//
+// TODO: add floating-point conditions
+func arm64Invert(op Op) Op {
+	switch op {
+	case OpARM64LessThan:
+		return OpARM64GreaterThan
+	case OpARM64LessThanU:
+		return OpARM64GreaterThanU
+	case OpARM64GreaterThan:
+		return OpARM64LessThan
+	case OpARM64GreaterThanU:
+		return OpARM64LessThanU
+	case OpARM64LessEqual:
+		return OpARM64GreaterEqual
+	case OpARM64LessEqualU:
+		return OpARM64GreaterEqualU
+	case OpARM64GreaterEqual:
+		return OpARM64LessEqual
+	case OpARM64GreaterEqualU:
+		return OpARM64LessEqualU
+	case OpARM64Equal, OpARM64NotEqual:
+		return op
+	default:
+		panic("unreachable")
+	}
+}
+
+// evaluate an ARM64 op against a flags value
+// that is potentially constant; return 1 for true,
+// -1 for false, and 0 for not constant.
+func ccARM64Eval(cc interface{}, flags *Value) int {
+	op := cc.(Op)
+	fop := flags.Op
+	switch fop {
+	case OpARM64InvertFlags:
+		return -ccARM64Eval(op, flags.Args[0])
+	case OpARM64FlagEQ:
+		switch op {
+		case OpARM64Equal, OpARM64GreaterEqual, OpARM64LessEqual,
+			OpARM64GreaterEqualU, OpARM64LessEqualU:
+			return 1
+		default:
+			return -1
+		}
+	case OpARM64FlagLT_ULT:
+		switch op {
+		case OpARM64LessThan, OpARM64LessThanU,
+			OpARM64LessEqual, OpARM64LessEqualU:
+			return 1
+		default:
+			return -1
+		}
+	case OpARM64FlagLT_UGT:
+		switch op {
+		case OpARM64LessThan, OpARM64GreaterThanU,
+			OpARM64LessEqual, OpARM64GreaterEqualU:
+			return 1
+		default:
+			return -1
+		}
+	case OpARM64FlagGT_ULT:
+		switch op {
+		case OpARM64GreaterThan, OpARM64LessThanU,
+			OpARM64GreaterEqual, OpARM64LessEqualU:
+			return 1
+		default:
+			return -1
+		}
+	case OpARM64FlagGT_UGT:
+		switch op {
+		case OpARM64GreaterThan, OpARM64GreaterThanU,
+			OpARM64GreaterEqual, OpARM64GreaterEqualU:
+			return 1
+		default:
+			return -1
+		}
+	default:
+		return 0
+	}
 }
 
 // logRule logs the use of the rule s. This will only be enabled if
@@ -633,6 +787,10 @@ func overlap(offset1, size1, offset2, size2 int64) bool {
 	return false
 }
 
+func areAdjacentOffsets(off1, off2, size int64) bool {
+	return off1+size == off2 || off1 == off2+size
+}
+
 // check if value zeroes out upper 32-bit of 64-bit register.
 // depth limits recursion depth. In AMD64.rules 3 is used as limit,
 // because it catches same amount of cases as 4.
@@ -648,11 +806,7 @@ func zeroUpper32Bits(x *Value, depth int) bool {
 		return true
 	case OpArg:
 		return x.Type.Width == 4
-	case OpSelect0, OpSelect1:
-		// Disabled for now. See issue 23305.
-		// TODO: we could look into the arg of the Select to decide.
-		return false
-	case OpPhi:
+	case OpPhi, OpSelect0, OpSelect1:
 		// Phis can use each-other as an arguments, instead of tracking visited values,
 		// just limit recursion depth.
 		if depth <= 0 {
@@ -676,10 +830,46 @@ func isInlinableMemmoveSize(sz int64, c *Config) bool {
 	switch c.arch {
 	case "amd64", "amd64p32":
 		return sz <= 16
-	case "386", "ppc64", "s390x", "ppc64le":
+	case "386", "ppc64", "s390x", "ppc64le", "arm64":
 		return sz <= 8
 	case "arm", "mips", "mips64", "mipsle", "mips64le":
 		return sz <= 4
 	}
 	return false
+}
+
+// encodes the lsb and width for arm64 bitfield ops into the expected auxInt format.
+func arm64BFAuxInt(lsb, width int64) int64 {
+	if lsb < 0 || lsb > 63 {
+		panic("ARM64 bit field lsb constant out of range")
+	}
+	if width < 1 || width > 64 {
+		panic("ARM64 bit field width constant out of range")
+	}
+	return width | lsb<<8
+}
+
+// returns the lsb part of the auxInt field of arm64 bitfield ops.
+func getARM64BFlsb(bfc int64) int64 {
+	return int64(uint64(bfc) >> 8)
+}
+
+// returns the width part of the auxInt field of arm64 bitfield ops.
+func getARM64BFwidth(bfc int64) int64 {
+	return bfc & 0xff
+}
+
+// checks if mask >> rshift applied at lsb is a valid arm64 bitfield op mask.
+func isARM64BFMask(lsb, mask, rshift int64) bool {
+	shiftedMask := int64(uint64(mask) >> uint64(rshift))
+	return shiftedMask != 0 && isPowerOfTwo(shiftedMask+1) && nto(shiftedMask)+lsb < 64
+}
+
+// returns the bitfield width of mask >> rshift for arm64 bitfield ops
+func arm64BFWidth(mask, rshift int64) int64 {
+	shiftedMask := int64(uint64(mask) >> uint64(rshift))
+	if shiftedMask == 0 {
+		panic("ARM64 BF mask is zero")
+	}
+	return nto(shiftedMask)
 }

@@ -191,7 +191,7 @@ func init() {
 		{name: "SBBLconst", argLength: 2, reg: gp1carry1, asm: "SBBL", aux: "Int32", resultInArg0: true, clobberFlags: true}, // arg0-auxint-borrow(arg1), where arg1 is flags
 
 		{name: "MULL", argLength: 2, reg: gp21, asm: "IMULL", commutative: true, resultInArg0: true, clobberFlags: true}, // arg0 * arg1
-		{name: "MULLconst", argLength: 1, reg: gp11, asm: "IMULL", aux: "Int32", resultInArg0: true, clobberFlags: true}, // arg0 * auxint
+		{name: "MULLconst", argLength: 1, reg: gp11, asm: "IMUL3L", aux: "Int32", clobberFlags: true},                    // arg0 * auxint
 
 		{name: "HMULL", argLength: 2, reg: gp21hmul, commutative: true, asm: "IMULL", clobberFlags: true}, // (arg0 * arg1) >> width
 		{name: "HMULLU", argLength: 2, reg: gp21hmul, commutative: true, asm: "MULL", clobberFlags: true}, // (arg0 * arg1) >> width
@@ -439,7 +439,7 @@ func init() {
 		// Scheduler ensures LoweredGetClosurePtr occurs only in entry block,
 		// and sorts it to the very beginning of the block to prevent other
 		// use of DX (the closure pointer)
-		{name: "LoweredGetClosurePtr", reg: regInfo{outputs: []regMask{buildReg("DX")}}},
+		{name: "LoweredGetClosurePtr", reg: regInfo{outputs: []regMask{buildReg("DX")}}, zeroWidth: true},
 		// LoweredGetCallerPC evaluates to the PC to which its "caller" will return.
 		// I.e., if f calls g "calls" getcallerpc,
 		// the result should be the PC within f that g will return to.
@@ -450,12 +450,16 @@ func init() {
 		//arg0=ptr,arg1=mem, returns void.  Faults if ptr is nil.
 		{name: "LoweredNilCheck", argLength: 2, reg: regInfo{inputs: []regMask{gpsp}}, clobberFlags: true, nilCheck: true, faultOnNilArg0: true},
 
+		// LoweredWB invokes runtime.gcWriteBarrier. arg0=destptr, arg1=srcptr, arg2=mem, aux=runtime.gcWriteBarrier
+		// It saves all GP registers if necessary, but may clobber others.
+		{name: "LoweredWB", argLength: 3, reg: regInfo{inputs: []regMask{buildReg("DI"), ax}, clobbers: callerSave &^ gp}, clobberFlags: true, aux: "Sym", symEffect: "None"},
+
 		// MOVLconvert converts between pointers and integers.
 		// We have a special op for this so as to not confuse GC
 		// (particularly stack maps).  It takes a memory arg so it
 		// gets correctly ordered with respect to GC safepoints.
 		// arg0=ptr/int arg1=mem, output=int/ptr
-		{name: "MOVLconvert", argLength: 2, reg: gp11, asm: "MOVL", resultInArg0: true},
+		{name: "MOVLconvert", argLength: 2, reg: gp11, asm: "MOVL", resultInArg0: true, zeroWidth: true},
 
 		// Constant flag values. For any comparison, there are 5 possible
 		// outcomes: the three from the signed total order (<,==,>) and the

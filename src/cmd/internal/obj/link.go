@@ -213,6 +213,8 @@ const (
 	NAME_DELETED_AUTO
 )
 
+//go:generate stringer -type AddrType
+
 type AddrType uint8
 
 const (
@@ -393,6 +395,7 @@ type FuncInfo struct {
 	dwarfLocSym    *LSym
 	dwarfRangesSym *LSym
 	dwarfAbsFnSym  *LSym
+	dwarfIsStmtSym *LSym
 
 	GCArgs   LSym
 	GCLocals LSym

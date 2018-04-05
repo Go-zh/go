@@ -13,6 +13,8 @@ package syscall
 
 import "unsafe"
 
+func rawSyscallNoError(trap, a1, a2, a3 uintptr) (r1, r2 uintptr)
+
 /*
  * Wrapped
  */
@@ -831,7 +833,7 @@ func Mount(source string, target string, fstype string, flags uintptr, data stri
 //sys	Fdatasync(fd int) (err error)
 //sys	Flock(fd int, how int) (err error)
 //sys	Fsync(fd int) (err error)
-//sys	Getdents(fd int, buf []byte) (n int, err error) = _SYS_getdents
+//sys	Getdents(fd int, buf []byte) (n int, err error) = SYS_GETDENTS64
 //sysnb	Getpgid(pid int) (pgid int, err error)
 
 func Getpgrp() (pid int) {
@@ -920,140 +922,3 @@ func Munmap(b []byte) (err error) {
 //sys	Munlock(b []byte) (err error)
 //sys	Mlockall(flags int) (err error)
 //sys	Munlockall() (err error)
-
-/*
- * Unimplemented
- */
-// AddKey
-// AfsSyscall
-// Alarm
-// ArchPrctl
-// Brk
-// Capget
-// Capset
-// ClockGetres
-// ClockGettime
-// ClockNanosleep
-// ClockSettime
-// Clone
-// CreateModule
-// DeleteModule
-// EpollCtlOld
-// EpollPwait
-// EpollWaitOld
-// Eventfd
-// Execve
-// Fadvise64
-// Fgetxattr
-// Flistxattr
-// Fork
-// Fremovexattr
-// Fsetxattr
-// Futex
-// GetKernelSyms
-// GetMempolicy
-// GetRobustList
-// GetThreadArea
-// Getitimer
-// Getpmsg
-// IoCancel
-// IoDestroy
-// IoGetevents
-// IoSetup
-// IoSubmit
-// Ioctl
-// IoprioGet
-// IoprioSet
-// KexecLoad
-// Keyctl
-// Lgetxattr
-// Llistxattr
-// LookupDcookie
-// Lremovexattr
-// Lsetxattr
-// Mbind
-// MigratePages
-// Mincore
-// ModifyLdt
-// Mount
-// MovePages
-// Mprotect
-// MqGetsetattr
-// MqNotify
-// MqOpen
-// MqTimedreceive
-// MqTimedsend
-// MqUnlink
-// Mremap
-// Msgctl
-// Msgget
-// Msgrcv
-// Msgsnd
-// Msync
-// Newfstatat
-// Nfsservctl
-// Personality
-// Poll
-// Ppoll
-// Prctl
-// Pselect6
-// Ptrace
-// Putpmsg
-// QueryModule
-// Quotactl
-// Readahead
-// Readv
-// RemapFilePages
-// RequestKey
-// RestartSyscall
-// RtSigaction
-// RtSigpending
-// RtSigprocmask
-// RtSigqueueinfo
-// RtSigreturn
-// RtSigsuspend
-// RtSigtimedwait
-// SchedGetPriorityMax
-// SchedGetPriorityMin
-// SchedGetaffinity
-// SchedGetparam
-// SchedGetscheduler
-// SchedRrGetInterval
-// SchedSetaffinity
-// SchedSetparam
-// SchedYield
-// Security
-// Semctl
-// Semget
-// Semop
-// Semtimedop
-// SetMempolicy
-// SetRobustList
-// SetThreadArea
-// SetTidAddress
-// Shmat
-// Shmctl
-// Shmdt
-// Shmget
-// Sigaltstack
-// Signalfd
-// Swapoff
-// Swapon
-// Sysfs
-// TimerCreate
-// TimerDelete
-// TimerGetoverrun
-// TimerGettime
-// TimerSettime
-// Timerfd
-// Tkill (obsolete)
-// Tuxcall
-// Umount2
-// Uselib
-// Utimensat
-// Vfork
-// Vhangup
-// Vmsplice
-// Vserver
-// Waitid
-// _Sysctl

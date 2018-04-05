@@ -148,8 +148,12 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		ssa.OpARM64OR,
 		ssa.OpARM64XOR,
 		ssa.OpARM64BIC,
+		ssa.OpARM64EON,
+		ssa.OpARM64ORN,
 		ssa.OpARM64MUL,
 		ssa.OpARM64MULW,
+		ssa.OpARM64MNEG,
+		ssa.OpARM64MNEGW,
 		ssa.OpARM64MULH,
 		ssa.OpARM64UMULH,
 		ssa.OpARM64MULL,
@@ -171,6 +175,8 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		ssa.OpARM64FSUBD,
 		ssa.OpARM64FMULS,
 		ssa.OpARM64FMULD,
+		ssa.OpARM64FNMULS,
+		ssa.OpARM64FNMULD,
 		ssa.OpARM64FDIVS,
 		ssa.OpARM64FDIVD:
 		r := v.Reg()
@@ -182,12 +188,30 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p.Reg = r1
 		p.To.Type = obj.TYPE_REG
 		p.To.Reg = r
+	case ssa.OpARM64FMADDS,
+		ssa.OpARM64FMADDD,
+		ssa.OpARM64FNMADDS,
+		ssa.OpARM64FNMADDD,
+		ssa.OpARM64FMSUBS,
+		ssa.OpARM64FMSUBD,
+		ssa.OpARM64FNMSUBS,
+		ssa.OpARM64FNMSUBD:
+		rt := v.Reg()
+		ra := v.Args[0].Reg()
+		rm := v.Args[1].Reg()
+		rn := v.Args[2].Reg()
+		p := s.Prog(v.Op.Asm())
+		p.Reg = ra
+		p.From.Type = obj.TYPE_REG
+		p.From.Reg = rm
+		p.SetFrom3(obj.Addr{Type: obj.TYPE_REG, Reg: rn})
+		p.To.Type = obj.TYPE_REG
+		p.To.Reg = rt
 	case ssa.OpARM64ADDconst,
 		ssa.OpARM64SUBconst,
 		ssa.OpARM64ANDconst,
 		ssa.OpARM64ORconst,
 		ssa.OpARM64XORconst,
-		ssa.OpARM64BICconst,
 		ssa.OpARM64SLLconst,
 		ssa.OpARM64SRLconst,
 		ssa.OpARM64SRAconst,
@@ -199,11 +223,22 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p.Reg = v.Args[0].Reg()
 		p.To.Type = obj.TYPE_REG
 		p.To.Reg = v.Reg()
+	case ssa.OpARM64EXTRconst,
+		ssa.OpARM64EXTRWconst:
+		p := s.Prog(v.Op.Asm())
+		p.From.Type = obj.TYPE_CONST
+		p.From.Offset = v.AuxInt
+		p.SetFrom3(obj.Addr{Type: obj.TYPE_REG, Reg: v.Args[0].Reg()})
+		p.Reg = v.Args[1].Reg()
+		p.To.Type = obj.TYPE_REG
+		p.To.Reg = v.Reg()
 	case ssa.OpARM64ADDshiftLL,
 		ssa.OpARM64SUBshiftLL,
 		ssa.OpARM64ANDshiftLL,
 		ssa.OpARM64ORshiftLL,
 		ssa.OpARM64XORshiftLL,
+		ssa.OpARM64EONshiftLL,
+		ssa.OpARM64ORNshiftLL,
 		ssa.OpARM64BICshiftLL:
 		genshift(s, v.Op.Asm(), v.Args[0].Reg(), v.Args[1].Reg(), v.Reg(), arm64.SHIFT_LL, v.AuxInt)
 	case ssa.OpARM64ADDshiftRL,
@@ -211,6 +246,8 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		ssa.OpARM64ANDshiftRL,
 		ssa.OpARM64ORshiftRL,
 		ssa.OpARM64XORshiftRL,
+		ssa.OpARM64EONshiftRL,
+		ssa.OpARM64ORNshiftRL,
 		ssa.OpARM64BICshiftRL:
 		genshift(s, v.Op.Asm(), v.Args[0].Reg(), v.Args[1].Reg(), v.Reg(), arm64.SHIFT_LR, v.AuxInt)
 	case ssa.OpARM64ADDshiftRA,
@@ -218,6 +255,8 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		ssa.OpARM64ANDshiftRA,
 		ssa.OpARM64ORshiftRA,
 		ssa.OpARM64XORshiftRA,
+		ssa.OpARM64EONshiftRA,
+		ssa.OpARM64ORNshiftRA,
 		ssa.OpARM64BICshiftRA:
 		genshift(s, v.Op.Asm(), v.Args[0].Reg(), v.Args[1].Reg(), v.Reg(), arm64.SHIFT_AR, v.AuxInt)
 	case ssa.OpARM64MOVDconst:
@@ -350,6 +389,45 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p.To.Type = obj.TYPE_MEM
 		p.To.Reg = v.Args[0].Reg()
 		gc.AddAux(&p.To, v)
+	case ssa.OpARM64BFI,
+		ssa.OpARM64BFXIL:
+		r := v.Reg()
+		if r != v.Args[0].Reg() {
+			v.Fatalf("input[0] and output not in same register %s", v.LongString())
+		}
+		p := s.Prog(v.Op.Asm())
+		p.From.Type = obj.TYPE_CONST
+		p.From.Offset = v.AuxInt >> 8
+		p.SetFrom3(obj.Addr{Type: obj.TYPE_CONST, Offset: v.AuxInt & 0xff})
+		p.Reg = v.Args[1].Reg()
+		p.To.Type = obj.TYPE_REG
+		p.To.Reg = r
+	case ssa.OpARM64SBFIZ,
+		ssa.OpARM64SBFX,
+		ssa.OpARM64UBFIZ,
+		ssa.OpARM64UBFX:
+		p := s.Prog(v.Op.Asm())
+		p.From.Type = obj.TYPE_CONST
+		p.From.Offset = v.AuxInt >> 8
+		p.SetFrom3(obj.Addr{Type: obj.TYPE_CONST, Offset: v.AuxInt & 0xff})
+		p.Reg = v.Args[0].Reg()
+		p.To.Type = obj.TYPE_REG
+		p.To.Reg = v.Reg()
+	case ssa.OpARM64LoweredMuluhilo:
+		r0 := v.Args[0].Reg()
+		r1 := v.Args[1].Reg()
+		p := s.Prog(arm64.AUMULH)
+		p.From.Type = obj.TYPE_REG
+		p.From.Reg = r1
+		p.Reg = r0
+		p.To.Type = obj.TYPE_REG
+		p.To.Reg = v.Reg0()
+		p1 := s.Prog(arm64.AMUL)
+		p1.From.Type = obj.TYPE_REG
+		p1.From.Reg = r1
+		p1.Reg = r0
+		p1.To.Type = obj.TYPE_REG
+		p1.To.Reg = v.Reg1()
 	case ssa.OpARM64LoweredAtomicExchange64,
 		ssa.OpARM64LoweredAtomicExchange32:
 		// LDAXR	(Rarg0), Rout
@@ -528,6 +606,8 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		fallthrough
 	case ssa.OpARM64MVN,
 		ssa.OpARM64NEG,
+		ssa.OpARM64FMOVDfpgp,
+		ssa.OpARM64FMOVDgpfp,
 		ssa.OpARM64FNEGS,
 		ssa.OpARM64FNEGD,
 		ssa.OpARM64FSQRTD,
@@ -555,21 +635,38 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		ssa.OpARM64RBIT,
 		ssa.OpARM64RBITW,
 		ssa.OpARM64CLZ,
-		ssa.OpARM64CLZW:
+		ssa.OpARM64CLZW,
+		ssa.OpARM64FRINTAD,
+		ssa.OpARM64FRINTMD,
+		ssa.OpARM64FRINTPD,
+		ssa.OpARM64FRINTZD:
 		p := s.Prog(v.Op.Asm())
 		p.From.Type = obj.TYPE_REG
 		p.From.Reg = v.Args[0].Reg()
 		p.To.Type = obj.TYPE_REG
 		p.To.Reg = v.Reg()
-	case ssa.OpARM64CSELULT,
-		ssa.OpARM64CSELULT0:
+	case ssa.OpARM64LoweredRound32F, ssa.OpARM64LoweredRound64F:
+		// input is already rounded
+	case ssa.OpARM64VCNT:
+		p := s.Prog(v.Op.Asm())
+		p.From.Type = obj.TYPE_REG
+		p.From.Reg = (v.Args[0].Reg()-arm64.REG_F0)&31 + arm64.REG_ARNG + ((arm64.ARNG_8B & 15) << 5)
+		p.To.Type = obj.TYPE_REG
+		p.To.Reg = (v.Reg()-arm64.REG_F0)&31 + arm64.REG_ARNG + ((arm64.ARNG_8B & 15) << 5)
+	case ssa.OpARM64VUADDLV:
+		p := s.Prog(v.Op.Asm())
+		p.From.Type = obj.TYPE_REG
+		p.From.Reg = (v.Args[0].Reg()-arm64.REG_F0)&31 + arm64.REG_ARNG + ((arm64.ARNG_8B & 15) << 5)
+		p.To.Type = obj.TYPE_REG
+		p.To.Reg = v.Reg() - arm64.REG_F0 + arm64.REG_V0
+	case ssa.OpARM64CSEL, ssa.OpARM64CSEL0:
 		r1 := int16(arm64.REGZERO)
-		if v.Op == ssa.OpARM64CSELULT {
+		if v.Op != ssa.OpARM64CSEL0 {
 			r1 = v.Args[1].Reg()
 		}
 		p := s.Prog(v.Op.Asm())
 		p.From.Type = obj.TYPE_REG // assembler encodes conditional bits in Reg
-		p.From.Reg = arm64.COND_LO
+		p.From.Reg = condBits[v.Aux.(ssa.Op)]
 		p.Reg = v.Args[0].Reg()
 		p.SetFrom3(obj.Addr{Type: obj.TYPE_REG, Reg: r1})
 		p.To.Type = obj.TYPE_REG
@@ -636,6 +733,11 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		gc.Patch(p4, p)
 	case ssa.OpARM64CALLstatic, ssa.OpARM64CALLclosure, ssa.OpARM64CALLinter:
 		s.Call(v)
+	case ssa.OpARM64LoweredWB:
+		p := s.Prog(obj.ACALL)
+		p.To.Type = obj.TYPE_MEM
+		p.To.Name = obj.NAME_EXTERN
+		p.To.Sym = v.Aux.(*obj.LSym)
 	case ssa.OpARM64LoweredNilCheck:
 		// Issue a load which will fault if arg is nil.
 		p := s.Prog(arm64.AMOVB)

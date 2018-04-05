@@ -29,8 +29,24 @@ TEXT	foo(SB), DUPOK|NOSPLIT, $-8
 	ADD	R1<<22, R2, R3
 	ADD	R1->33, R2, R3
 	AND	R1@>33, R2, R3
-	ADD	R1.UXTB, R2, R3                 // 4360218b
-	ADD	R1.UXTB<<4, R2, R3              // 4370218b
+	ADD	R1.UXTB, R2, R3                 // 4300218b
+	ADD	R1.UXTB<<4, R2, R3              // 4310218b
+	ADD	R2, RSP, RSP                    // ff63228b
+	ADD	R2.SXTX<<1, RSP, RSP            // ffe7228b
+	ADD	ZR.SXTX<<1, R2, R3              // 43e43f8b
+	ADDW	R2.SXTW, R10, R12               // 4cc1220b
+	ADD	R18.UXTX, R14, R17              // d161328b
+	ADDSW	R18.UXTW, R14, R17              // d141322b
+	ADDS	R12.SXTX, R3, R1                // 61e02cab
+	SUB	R19.UXTH<<4, R2, R21            // 553033cb
+	SUBW	R1.UXTX<<1, R3, R2              // 6264214b
+	SUBS	R3.UXTX, R8, R9                 // 096123eb
+	SUBSW	R17.UXTH, R15, R21              // f521316b
+	SUBW	ZR<<14, R19, R13                // 6d3a1f4b
+	CMP	R2.SXTH, R13                    // bfa122eb
+	CMN	R1.SXTX<<2, R10                 // 5fe921ab
+	CMPW	R2.UXTH<<3, R11                 // 7f2d226b
+	CMNW	R1.SXTB, R9                     // 3f81212b
 	VADDP	V1.B16, V2.B16, V3.B16          // 43bc214e
 	VADDP	V1.S4, V2.S4, V3.S4             // 43bca14e
 	VADDP	V1.D2, V2.D2, V3.D2             // 43bce14e
@@ -56,6 +72,34 @@ TEXT	foo(SB), DUPOK|NOSPLIT, $-8
 	VADD	V1, V3, V3                      // 6384e15e
 	VSUB	V12, V30, V30                   // de87ec7e
 	VSUB	V12, V20, V30                   // 9e86ec7e
+	VFMLA	V1.D2, V12.D2, V1.D2            // 81cd614e
+	VFMLA	V1.S2, V12.S2, V1.S2            // 81cd210e
+	VFMLA	V1.S4, V12.S4, V1.S4            // 81cd214e
+	VFMLS	V1.D2, V12.D2, V1.D2            // 81cde14e
+	VFMLS	V1.S2, V12.S2, V1.S2            // 81cda10e
+	VFMLS	V1.S4, V12.S4, V1.S4            // 81cda14e
+	VPMULL	V2.D1, V1.D1, V3.Q1             // 23e0e20e
+	VPMULL2	V2.D2, V1.D2, V4.Q1             // 24e0e24e
+	VPMULL	V2.B8, V1.B8, V3.H8             // 23e0220e
+	VPMULL2	V2.B16, V1.B16, V4.H8           // 24e0224e
+	VEXT	$4, V2.B8, V1.B8, V3.B8         // 2320022e
+	VEXT	$8, V2.B16, V1.B16, V3.B16      // 2340026e
+	VRBIT	V24.B16, V24.B16                // 185b606e
+	VRBIT	V24.B8, V24.B8                  // 185b602e
+	VUSHR	$56, V1.D2, V2.D2               // 2204486f
+	VUSHR	$24, V1.S4, V2.S4               // 2204286f
+	VUSHR	$24, V1.S2, V2.S2               // 2204282f
+	VUSHR	$8, V1.H4, V2.H4                // 2204182f
+	VUSHR	$8, V1.H8, V2.H8                // 2204186f
+	VUSHR	$2, V1.B8, V2.B8                // 22040e2f
+	VUSHR	$2, V1.B16, V2.B16              // 22040e6f
+	VSHL	$56, V1.D2, V2.D2               // 2254784f
+	VSHL	$24, V1.S4, V2.S4               // 2254384f
+	VSHL	$24, V1.S2, V2.S2               // 2254380f
+	VSHL	$8, V1.H4, V2.H4                // 2254180f
+	VSHL	$8, V1.H8, V2.H8                // 2254184f
+	VSHL	$2, V1.B8, V2.B8                // 22540a0f
+	VSHL	$2, V1.B16, V2.B16              // 22540a4f
 
 //	LTYPE1 imsr ',' spreg ','
 //	{
@@ -82,6 +126,13 @@ TEXT	foo(SB), DUPOK|NOSPLIT, $-8
 	ORR	$(1<<63-1), R1 // ORR	$9223372036854775807, R1  // 21f840b2
 	EOR	$(1<<63), R1   // EOR	$-9223372036854775808, R1 // 210041d2
 	EOR	$(1<<63-1), R1 // EOR	$9223372036854775807, R1  // 21f840d2
+
+	AND	$8, R0, RSP // 1f007d92
+	ORR	$8, R0, RSP // 1f007db2
+	EOR	$8, R0, RSP // 1f007dd2
+	BIC	$8, R0, RSP // 1ff87c92
+	ORN	$8, R0, RSP // 1ff87cb2
+	EON	$8, R0, RSP // 1ff87cd2
 
 //
 // CLS
@@ -115,14 +166,37 @@ TEXT	foo(SB), DUPOK|NOSPLIT, $-8
 	VLD1.P	(R3), [V31.H8, V0.H8]                           // 7fa4df4c
 	VLD1.P	(R8)(R20), [V21.B16, V22.B16]                   // VLD1.P	(R8)(R20*1), [V21.B16,V22.B16] // 15a1d44c
 	VLD1.P	64(R1), [V5.B16, V6.B16, V7.B16, V8.B16]        // 2520df4c
+	VLD1.P	1(R0), V4.B[15]                                 // 041cdf4d
+	VLD1.P	2(R0), V4.H[7]                                  // 0458df4d
+	VLD1.P	4(R0), V4.S[3]                                  // 0490df4d
+	VLD1.P	8(R0), V4.D[1]                                  // 0484df4d
+	VLD1.P	(R0)(R1), V4.D[1]                               // VLD1.P	(R0)(R1*1), V4.D[1] // 0484c14d
+	VLD1	(R0), V4.D[1]                                   // 0484404d
 	VST1.P	[V4.S4, V5.S4], 32(R1)                          // 24a89f4c
 	VST1	[V0.S4, V1.S4], (R0)                            // 00a8004c
+	VLD1	(R30), [V15.S2, V16.S2]                         // cfab400c
+	VLD1.P	24(R30), [V3.S2,V4.S2,V5.S2]                    // c36bdf0c
+	VST1.P	[V24.S2], 8(R2)                                 // 58789f0c
+	VST1	[V29.S2, V30.S2], (R29)                         // bdab000c
+	VST1	[V14.H4, V15.H4, V16.H4], (R27)                 // 6e67000c
+	VST1.P	V4.B[15], 1(R0)                                 // 041c9f4d
+	VST1.P	V4.H[7], 2(R0)                                  // 04589f4d
+	VST1.P	V4.S[3], 4(R0)                                  // 04909f4d
+	VST1.P	V4.D[1], 8(R0)                                  // 04849f4d
+	VST1.P	V4.D[1], (R0)(R1)                               // VST1.P	V4.D[1], (R0)(R1*1) // 0484814d
+	VST1	V4.D[1], (R0)                                   // 0484004d
 	VMOVS	V20, (R0)                                       // 140000bd
 	VMOVS.P	V20, 4(R0)                                      // 144400bc
 	VMOVS.W	V20, 4(R0)                                      // 144c00bc
 	VMOVS	(R0), V20                                       // 140040bd
 	VMOVS.P	8(R0), V20                                      // 148440bc
 	VMOVS.W	8(R0), V20                                      // 148c40bc
+	PRFM	(R2), PLDL1KEEP                                 // 400080f9
+	PRFM	16(R2), PLDL1KEEP                               // 400880f9
+	PRFM	48(R6), PSTL2STRM                               // d31880f9
+	PRFM	8(R12), PLIL3STRM                               // 8d0580f9
+	PRFM	(R8), $25                                       // 190180f9
+	PRFM	8(R9), $30                                      // 3e0580f9
 
 	// small offset fits into instructions
 	MOVB	1(R1), R2 // 22048039
@@ -186,16 +260,22 @@ TEXT	foo(SB), DUPOK|NOSPLIT, $-8
 //		outcode($1, &$2, NREG, &$4);
 //	}
 	MOVK	$1, R1
-	VMOV	V8.S[1], R1       // 013d0c0e
-	VMOV	V0.D[0], R11      // 0b3c084e
-	VMOV	V0.D[1], R11      // 0b3c184e
-	VMOV	R20, V1.S[0]      // 811e044e
-	VMOV	R1, V9.H4         // 290c020e
-	VMOV	R22, V11.D2       // cb0e084e
-	VMOV 	V2.B16, V4.B16    // 441ca24e
-	VMOV	V20.S[0], V20     // 9406045e
-	VREV32	V5.B16, V5.B16    // a508206e
-	VDUP	V19.S[0], V17.S4  // 7106044e
+	VMOV	V8.S[1], R1           // 013d0c0e
+	VMOV	V0.D[0], R11          // 0b3c084e
+	VMOV	V0.D[1], R11          // 0b3c184e
+	VMOV	R20, V1.S[0]          // 811e044e
+	VMOV	R20, V1.S[1]          // 811e0c4e
+	VMOV	R1, V9.H4             // 290c020e
+	VMOV	R22, V11.D2           // cb0e084e
+	VMOV	V2.B16, V4.B16        // 441ca24e
+	VMOV	V20.S[0], V20         // 9406045e
+	VMOV	V12.D[0], V12.D[1]    // 8c05186e
+	VMOV	V10.S[0], V12.S[1]    // 4c050c6e
+	VMOV	V9.H[0], V12.H[1]     // 2c05066e
+	VMOV	V8.B[0], V12.B[1]     // 0c05036e
+	VMOV	V8.B[7], V4.B[8]      // 043d116e
+	VREV32	V5.B16, V5.B16        // a508206e
+	VDUP	V19.S[0], V17.S4      // 7106044e
 //
 // B/BL
 //
@@ -349,6 +429,15 @@ again:
 //	}
 //	MADD	R1, R2, R3, R4
 
+	FMADDS	F1, F3, F2, F4          // 440c011f
+	FMADDD	F4, F5, F4, F4          // 8414441f
+	FMSUBS	F13, F21, F13, F19      // b3d50d1f
+	FMSUBD	F11, F7, F15, F31       // ff9d4b1f
+	FNMADDS	F1, F3, F2, F4          // 440c211f
+	FNMADDD	F1, F3, F2, F4          // 440c611f
+	FNMSUBS	F1, F3, F2, F4          // 448c211f
+	FNMSUBD	F1, F3, F2, F4          // 448c611f
+
 // DMB, HINT
 //
 //		LDMB imm
@@ -364,8 +453,22 @@ again:
 //	{
 //		outcode($1, &$2, &$4, &$6);
 //	}
-	LDAXRW	(R0), R2
-	STLXRW	R1, (R0), R3
+	LDARB	(R25), R2                            // 22ffdf08
+	LDARH	(R5), R7                             // a7fcdf48
+	LDAXPW	(R10), (R20, R16)                    // 54c17f88
+	LDAXP	(R25), (R30, R11)                    // 3eaf7fc8
+	LDAXRW	(R0), R2                             // 02fc5f88
+	LDXPW	(R24), (R23, R11)                    // 172f7f88
+	LDXP	(R0), (R16, R13)                     // 10347fc8
+	STLRB	R11, (R22)                           // cbfe9f08
+	STLRH	R16, (R23)                           // f0fe9f48
+	STLXP	(R6, R3), (R10), R2                  // 468d22c8
+	STLXPW	(R6, R11), (R22), R21                // c6ae3588
+	STLXRW	R1, (R0), R3                         // 01fc0388
+	STXP	(R1, R2), (R3), R10                  // 61082ac8
+	STXP	(R1, R2), (RSP), R10                 // e10b2ac8
+	STXPW	(R1, R2), (R3), R10                  // 61082a88
+	STXPW	(R1, R2), (RSP), R10                 // e10b2a88
 
 // RET
 //
@@ -375,6 +478,7 @@ again:
 //	}
 	BEQ	2(PC)
 	RET
+	RET	foo(SB)
 
 // More B/BL cases, and canonical names JMP, CALL.
 
@@ -388,18 +492,86 @@ again:
 	CALL	foo(SB)
 
 // LDP/STP
-	LDP	(R0), (R1, R2)
-	LDP	8(R0), (R1, R2)
-	LDP.W	8(R0), (R1, R2)
-	LDP.P	8(R0), (R1, R2)
+	LDP	(R0), (R1, R2)      // 010840a9
+	LDP	8(R0), (R1, R2)     // 018840a9
+	LDP	-8(R0), (R1, R2)    // 01887fa9
+	LDP	11(R0), (R1, R2)    // 1b2c0091610b40a9
+	LDP	1024(R0), (R1, R2)  // 1b001091610b40a9
+	LDP.W	8(R0), (R1, R2)     // 0188c0a9
+	LDP.P	8(R0), (R1, R2)     // 0188c0a8
+	LDP	(RSP), (R1, R2)     // e10b40a9
+	LDP	8(RSP), (R1, R2)    // e18b40a9
+	LDP	-8(RSP), (R1, R2)   // e18b7fa9
+	LDP	11(RSP), (R1, R2)   // fb2f0091610b40a9
+	LDP	1024(RSP), (R1, R2) // fb031091610b40a9
+	LDP.W	8(RSP), (R1, R2)    // e18bc0a9
+	LDP.P	8(RSP), (R1, R2)    // e18bc0a8
 	LDP	x(SB), (R1, R2)
 	LDP	x+8(SB), (R1, R2)
-	STP	(R3, R4), (R5)
-	STP	(R3, R4), 8(R5)
-	STP.W	(R3, R4), 8(R5)
-	STP.P	(R3, R4), 8(R5)
+	LDPW	(R0), (R1, R2)      // 01084029
+	LDPW	4(R0), (R1, R2)     // 01884029
+	LDPW	-4(R0), (R1, R2)    // 01887f29
+	LDPW.W	4(R0), (R1, R2)     // 0188c029
+	LDPW.P	4(R0), (R1, R2)     // 0188c028
+	LDPW	11(R0), (R1, R2)    // 1b2c0091610b4029
+	LDPW	1024(R0), (R1, R2)  // 1b001091610b4029
+	LDPW	(RSP), (R1, R2)     // e10b4029
+	LDPW	4(RSP), (R1, R2)    // e18b4029
+	LDPW	-4(RSP), (R1, R2)   // e18b7f29
+	LDPW.W	4(RSP), (R1, R2)    // e18bc029
+	LDPW.P	4(RSP), (R1, R2)    // e18bc028
+	LDPW	11(RSP), (R1, R2)   // fb2f0091610b4029
+	LDPW	1024(RSP), (R1, R2) // fb031091610b4029
+	LDPW	x(SB), (R1, R2)
+	LDPW	x+8(SB), (R1, R2)
+	LDPSW	(R0), (R1, R2)      // 01084069
+	LDPSW	4(R0), (R1, R2)     // 01884069
+	LDPSW	-4(R0), (R1, R2)    // 01887f69
+	LDPSW.W	4(R0), (R1, R2)     // 0188c069
+	LDPSW.P	4(R0), (R1, R2)     // 0188c068
+	LDPSW	11(R0), (R1, R2)    // 1b2c0091610b4069
+	LDPSW	1024(R0), (R1, R2)  // 1b001091610b4069
+	LDPSW	(RSP), (R1, R2)     // e10b4069
+	LDPSW	4(RSP), (R1, R2)    // e18b4069
+	LDPSW	-4(RSP), (R1, R2)   // e18b7f69
+	LDPSW.W	4(RSP), (R1, R2)    // e18bc069
+	LDPSW.P	4(RSP), (R1, R2)    // e18bc068
+	LDPSW	11(RSP), (R1, R2)   // fb2f0091610b4069
+	LDPSW	1024(RSP), (R1, R2) // fb031091610b4069
+	LDPSW	x(SB), (R1, R2)
+	LDPSW	x+8(SB), (R1, R2)
+	STP	(R3, R4), (R5)      // a31000a9
+	STP	(R3, R4), 8(R5)     // a39000a9
+	STP.W	(R3, R4), 8(R5)     // a39080a9
+	STP.P	(R3, R4), 8(R5)     // a39080a8
+	STP	(R3, R4), -8(R5)    // a3903fa9
+	STP	(R3, R4), 11(R0)    // 1b2c0091631300a9
+	STP	(R3, R4), 1024(R0)  // 1b001091631300a9
+	STP	(R3, R4), (RSP)     // e31300a9
+	STP	(R3, R4), 8(RSP)    // e39300a9
+	STP.W	(R3, R4), 8(RSP)    // e39380a9
+	STP.P	(R3, R4), 8(RSP)    // e39380a8
+	STP	(R3, R4), -8(RSP)   // e3933fa9
+	STP	(R3, R4), 11(RSP)   // fb2f0091631300a9
+	STP	(R3, R4), 1024(RSP) // fb031091631300a9
 	STP	(R3, R4), x(SB)
 	STP	(R3, R4), x+8(SB)
+	STPW	(R3, R4), (R5)      // a3100029
+	STPW	(R3, R4), 4(R5)     // a3900029
+	STPW.W	(R3, R4), 4(R5)     // a3908029
+	STPW.P	(R3, R4), 4(R5)     // a3908028
+	STPW	(R3, R4), -4(R5)    // a3903f29
+	STPW	(R3, R4), 11(R0)    // 1b2c009163130029
+	STPW	(R3, R4), 1024(R0)  // 1b00109163130029
+	STPW	(R3, R4), (RSP)     // e3130029
+	STPW	(R3, R4), 4(RSP)    // e3930029
+	STPW.W	(R3, R4), 4(RSP)    // e3938029
+	STPW.P	(R3, R4), 4(RSP)    // e3938028
+	STPW	(R3, R4), -4(RSP)   // e3933f29
+	STPW	(R3, R4), 11(RSP)   // fb2f009163130029
+	STPW	(R3, R4), 1024(RSP) // fb03109163130029
+	STPW	(R3, R4), x(SB)
+	STPW	(R3, R4), x+8(SB)
 
 // END
 //

@@ -62,7 +62,7 @@ func (pkg *Package) prettyPath() string {
 	// Also convert everything to slash-separated paths for uniform handling.
 	path = filepath.Clean(filepath.ToSlash(pkg.build.Dir))
 	// Can we find a decent prefix?
-	goroot := filepath.Join(build.Default.GOROOT, "src")
+	goroot := filepath.Join(buildCtx.GOROOT, "src")
 	if p, ok := trim(path, filepath.ToSlash(goroot)); ok {
 		return p
 	}
@@ -622,7 +622,7 @@ func (pkg *Package) symbolDoc(symbol string) bool {
 						// This a standalone identifier, as in the case of iota usage.
 						// Thus, assume the type comes from the previous type.
 						vspec.Type = &ast.Ident{
-							Name:    string(pkg.oneLineNode(typ)),
+							Name:    pkg.oneLineNode(typ),
 							NamePos: vspec.End() - 1,
 						}
 					}

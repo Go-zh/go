@@ -91,8 +91,8 @@ type parseContentTypeTest struct {
 
 var parseContentTypeTests = []parseContentTypeTest{
 	{false, stringMap{"Content-Type": {"text/plain"}}},
-	// Empty content type is legal - should be treated as
-	// application/octet-stream (RFC 2616, section 7.2.1)
+	// Empty content type is legal - may be treated as
+	// application/octet-stream (RFC 7231, section 3.1.1.5)
 	{false, stringMap{}},
 	{true, stringMap{"Content-Type": {"text/plain; boundary="}}},
 	{false, stringMap{"Content-Type": {"application/unknown"}}},
@@ -139,6 +139,16 @@ func TestMultipartReader(t *testing.T) {
 		Body:   ioutil.NopCloser(new(bytes.Buffer)),
 	}
 	multipart, err := req.MultipartReader()
+	if multipart == nil {
+		t.Errorf("expected multipart; error: %v", err)
+	}
+
+	req = &Request{
+		Method: "POST",
+		Header: Header{"Content-Type": {`multipart/mixed; boundary="foo123"`}},
+		Body:   ioutil.NopCloser(new(bytes.Buffer)),
+	}
+	multipart, err = req.MultipartReader()
 	if multipart == nil {
 		t.Errorf("expected multipart; error: %v", err)
 	}

@@ -385,8 +385,16 @@ func TestARM64Encoder(t *testing.T) {
 	testEndToEnd(t, "arm64", "arm64enc")
 }
 
+func TestARM64Errors(t *testing.T) {
+	testErrors(t, "arm64", "arm64error")
+}
+
 func TestAMD64EndToEnd(t *testing.T) {
 	testEndToEnd(t, "amd64", "amd64")
+}
+
+func Test386Encoder(t *testing.T) {
+	testEndToEnd(t, "386", "386enc")
 }
 
 func TestAMD64Encoder(t *testing.T) {
@@ -405,6 +413,10 @@ func TestMIPSEndToEnd(t *testing.T) {
 
 func TestPPC64EndToEnd(t *testing.T) {
 	testEndToEnd(t, "ppc64", "ppc64")
+}
+
+func TestPPC64Encoder(t *testing.T) {
+	testEndToEnd(t, "ppc64", "ppc64enc")
 }
 
 func TestS390XEndToEnd(t *testing.T) {

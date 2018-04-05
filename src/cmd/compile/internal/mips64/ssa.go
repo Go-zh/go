@@ -354,7 +354,8 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		ssa.OpMIPS64MOVFD,
 		ssa.OpMIPS64MOVDF,
 		ssa.OpMIPS64NEGF,
-		ssa.OpMIPS64NEGD:
+		ssa.OpMIPS64NEGD,
+		ssa.OpMIPS64SQRTD:
 		p := s.Prog(v.Op.Asm())
 		p.From.Type = obj.TYPE_REG
 		p.From.Reg = v.Args[0].Reg()
@@ -483,6 +484,11 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		gc.Patch(p6, p2)
 	case ssa.OpMIPS64CALLstatic, ssa.OpMIPS64CALLclosure, ssa.OpMIPS64CALLinter:
 		s.Call(v)
+	case ssa.OpMIPS64LoweredWB:
+		p := s.Prog(obj.ACALL)
+		p.To.Type = obj.TYPE_MEM
+		p.To.Name = obj.NAME_EXTERN
+		p.To.Sym = v.Aux.(*obj.LSym)
 	case ssa.OpMIPS64LoweredAtomicLoad32, ssa.OpMIPS64LoweredAtomicLoad64:
 		as := mips.AMOVV
 		if v.Op == ssa.OpMIPS64LoweredAtomicLoad32 {

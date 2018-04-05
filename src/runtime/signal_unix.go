@@ -360,6 +360,12 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 // the signal handler. The effect is that the program will act as
 // though the function that got the signal simply called sigpanic
 // instead.
+//
+// This must NOT be nosplit because the linker doesn't know where
+// sigpanic calls can be injected.
+//
+// The signal handler must not inject a call to sigpanic if
+// getg().throwsplit, since sigpanic may need to grow the stack.
 func sigpanic() {
 	g := getg()
 	if !canpanic(g) {
@@ -478,7 +484,10 @@ func raisebadsignal(sig uint32, c *sigctxt) {
 	// re-installing sighandler. At this point we can just
 	// return and the signal will be re-raised and caught by
 	// the default handler with the correct context.
-	if (isarchive || islibrary) && handler == _SIG_DFL && c.sigcode() != _SI_USER {
+	//
+	// On FreeBSD, the libthr sigaction code prevents
+	// this from working so we fall through to raise.
+	if GOOS != "freebsd" && (isarchive || islibrary) && handler == _SIG_DFL && c.sigcode() != _SI_USER {
 		return
 	}
 

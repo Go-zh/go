@@ -87,6 +87,8 @@ type dirInfo struct {
 func epipecheck(file *File, e error) {
 }
 
+// DevNull is the name of the operating system's ``null device.''
+// On Unix-like systems, it is "/dev/null"; on Windows, "NUL".
 const DevNull = "NUL"
 
 func (f *file) isdir() bool { return f != nil && f.dirinfo != nil }
@@ -350,11 +352,6 @@ func Link(oldname, newname string) error {
 // Symlink creates newname as a symbolic link to oldname.
 // If there is an error, it will be of type *LinkError.
 func Symlink(oldname, newname string) error {
-	// CreateSymbolicLink is not supported before Windows Vista
-	if syscall.LoadCreateSymbolicLink() != nil {
-		return &LinkError{"symlink", oldname, newname, syscall.EWINDOWS}
-	}
-
 	// '/' does not work in link's content
 	oldname = fromSlash(oldname)
 

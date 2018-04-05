@@ -362,6 +362,18 @@ func TestHttpsInsecure(t *testing.T) {
 	if runtime.GOOS == "nacl" {
 		t.Skip("test assumes tcp available")
 	}
+	saveHome := os.Getenv(homeEnv())
+	tempdir, err := ioutil.TempDir("", "home")
+	if err != nil {
+		t.Fatal("creating temp dir: ", err)
+	}
+	defer os.RemoveAll(tempdir)
+
+	// pprof writes to $HOME/pprof by default which is not necessarily
+	// writeable (e.g. on a Debian buildd) so set $HOME to something we
+	// know we can write to for the duration of the test.
+	os.Setenv(homeEnv(), tempdir)
+	defer os.Setenv(homeEnv(), saveHome)
 
 	baseVars := pprofVariables
 	pprofVariables = baseVars.makeCopy()
@@ -411,14 +423,9 @@ func TestHttpsInsecure(t *testing.T) {
 		Timeout:   10,
 		Symbolize: "remote",
 	}
-	rx := "Saved profile in"
-	if runtime.GOOS == "darwin" && (runtime.GOARCH == "arm" || runtime.GOARCH == "arm64") {
-		// On iOS, $HOME points to the app root directory and is not writable.
-		rx += "|Could not use temp dir"
-	}
 	o := &plugin.Options{
 		Obj: &binutils.Binutils{},
-		UI:  &proftest.TestUI{T: t, AllowRx: rx},
+		UI:  &proftest.TestUI{T: t, AllowRx: "Saved profile in"},
 	}
 	o.Sym = &symbolizer.Symbolizer{Obj: o.Obj, UI: o.UI}
 	p, err := fetchProfiles(s, o)

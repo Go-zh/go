@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// HTTP client implementation. See RFC 2616.
+// HTTP client implementation. See RFC 7230 through 7235.
 //
 // This is the low-level Transport implementation of RoundTripper.
 // The high-level interface is in client.go.
@@ -1077,12 +1077,6 @@ func (pconn *persistConn) addTLS(name string, trace *httptrace.ClientTrace) erro
 			trace.TLSHandshakeDone(tls.ConnectionState{}, err)
 		}
 		return err
-	}
-	if !cfg.InsecureSkipVerify {
-		if err := tlsConn.VerifyHostname(cfg.ServerName); err != nil {
-			plainConn.Close()
-			return err
-		}
 	}
 	cs := tlsConn.ConnectionState()
 	if trace != nil && trace.TLSHandshakeDone != nil {

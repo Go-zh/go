@@ -25,7 +25,6 @@
 #define SYS_madvise (SYS_BASE + 75)
 #define SYS_setitimer (SYS_BASE + 83)
 #define SYS_fcntl (SYS_BASE + 92)
-#define SYS_getrlimit (SYS_BASE + 194)
 #define SYS___sysctl (SYS_BASE + 202)
 #define SYS_nanosleep (SYS_BASE + 240)
 #define SYS_clock_gettime (SYS_BASE + 232)
@@ -60,6 +59,7 @@ TEXT runtime·thr_new(SB),NOSPLIT,$0
 	MOVW size+4(FP), R1
 	MOVW $SYS_thr_new, R7
 	SWI $0
+	MOVW	R0, ret+8(FP)
 	RET
 
 TEXT runtime·thr_start(SB),NOSPLIT,$0
@@ -74,7 +74,7 @@ TEXT runtime·thr_start(SB),NOSPLIT,$0
 	RET
 
 // Exit the entire program (like C exit)
-TEXT runtime·exit(SB),NOSPLIT,$-8
+TEXT runtime·exit(SB),NOSPLIT|NOFRAME,$0
 	MOVW code+0(FP), R0	// arg 1 exit status
 	MOVW $SYS_exit, R7
 	SWI $0
@@ -99,7 +99,7 @@ storeloop:
 	MOVW.CS	R8, (R8)
 	JMP	0(PC)
 
-TEXT runtime·open(SB),NOSPLIT,$-8
+TEXT runtime·open(SB),NOSPLIT|NOFRAME,$0
 	MOVW name+0(FP), R0	// arg 1 name
 	MOVW mode+4(FP), R1	// arg 2 mode
 	MOVW perm+8(FP), R2	// arg 3 perm
@@ -109,7 +109,7 @@ TEXT runtime·open(SB),NOSPLIT,$-8
 	MOVW	R0, ret+12(FP)
 	RET
 
-TEXT runtime·read(SB),NOSPLIT,$-8
+TEXT runtime·read(SB),NOSPLIT|NOFRAME,$0
 	MOVW fd+0(FP), R0	// arg 1 fd
 	MOVW p+4(FP), R1	// arg 2 buf
 	MOVW n+8(FP), R2	// arg 3 count
@@ -119,7 +119,7 @@ TEXT runtime·read(SB),NOSPLIT,$-8
 	MOVW	R0, ret+12(FP)
 	RET
 
-TEXT runtime·write(SB),NOSPLIT,$-8
+TEXT runtime·write(SB),NOSPLIT|NOFRAME,$0
 	MOVW fd+0(FP), R0	// arg 1 fd
 	MOVW p+4(FP), R1	// arg 2 buf
 	MOVW n+8(FP), R2	// arg 3 count
@@ -129,20 +129,12 @@ TEXT runtime·write(SB),NOSPLIT,$-8
 	MOVW	R0, ret+12(FP)
 	RET
 
-TEXT runtime·closefd(SB),NOSPLIT,$-8
+TEXT runtime·closefd(SB),NOSPLIT|NOFRAME,$0
 	MOVW fd+0(FP), R0	// arg 1 fd
 	MOVW $SYS_close, R7
 	SWI $0
 	MOVW.CS	$-1, R0
 	MOVW	R0, ret+4(FP)
-	RET
-
-TEXT runtime·getrlimit(SB),NOSPLIT,$-8
-	MOVW kind+0(FP), R0
-	MOVW limit+4(FP), R1
-	MOVW $SYS_getrlimit, R7
-	SWI $0
-	MOVW	R0, ret+8(FP)
 	RET
 
 TEXT runtime·raise(SB),NOSPLIT,$8
@@ -168,7 +160,7 @@ TEXT runtime·raiseproc(SB),NOSPLIT,$0
 	SWI $0
 	RET
 
-TEXT runtime·setitimer(SB), NOSPLIT, $-8
+TEXT runtime·setitimer(SB), NOSPLIT|NOFRAME, $0
 	MOVW mode+0(FP), R0
 	MOVW new+4(FP), R1
 	MOVW old+8(FP), R2
@@ -216,14 +208,14 @@ TEXT runtime·nanotime(SB), NOSPLIT, $32
 	MOVW R1, ret_hi+4(FP)
 	RET
 
-TEXT runtime·sigaction(SB),NOSPLIT,$-8
+TEXT runtime·asmSigaction(SB),NOSPLIT|NOFRAME,$0
 	MOVW sig+0(FP), R0		// arg 1 sig
 	MOVW new+4(FP), R1		// arg 2 act
 	MOVW old+8(FP), R2		// arg 3 oact
 	MOVW $SYS_sigaction, R7
 	SWI $0
-	MOVW.CS $0, R8 // crash on syscall failure
-	MOVW.CS R8, (R8)
+	MOVW.CS	$-1, R0
+	MOVW	R0, ret+12(FP)
 	RET
 
 TEXT runtime·sigtramp(SB),NOSPLIT,$12
@@ -283,7 +275,7 @@ TEXT runtime·madvise(SB),NOSPLIT,$0
 	// ignore failure - maybe pages are locked
 	RET
 	
-TEXT runtime·sigaltstack(SB),NOSPLIT,$-8
+TEXT runtime·sigaltstack(SB),NOSPLIT|NOFRAME,$0
 	MOVW new+0(FP), R0
 	MOVW old+4(FP), R1
 	MOVW $SYS_sigaltstack, R7
@@ -335,7 +327,7 @@ TEXT runtime·sysctl(SB),NOSPLIT,$0
 	MOVW	R0, ret+24(FP)
 	RET
 
-TEXT runtime·osyield(SB),NOSPLIT,$-4
+TEXT runtime·osyield(SB),NOSPLIT|NOFRAME,$0
 	MOVW $SYS_sched_yield, R7
 	SWI $0
 	RET
@@ -382,11 +374,11 @@ TEXT runtime·closeonexec(SB),NOSPLIT,$0
 	RET
 
 // TODO: this is only valid for ARMv7+
-TEXT ·publicationBarrier(SB),NOSPLIT,$-4-0
+TEXT ·publicationBarrier(SB),NOSPLIT|NOFRAME,$0-0
 	B	runtime·armPublicationBarrier(SB)
 
 // TODO(minux): this only supports ARMv6K+.
-TEXT runtime·read_tls_fallback(SB),NOSPLIT,$-4
+TEXT runtime·read_tls_fallback(SB),NOSPLIT|NOFRAME,$0
 	WORD $0xee1d0f70 // mrc p15, 0, r0, c13, c0, 3
 	RET
 

@@ -78,10 +78,10 @@ func TestIntendedInlining(t *testing.T) {
 			"heapBits.morePointers",
 			"heapBits.next",
 			"heapBitsForAddr",
-			"inheap",
 			"markBits.isMarked",
 			"muintptr.ptr",
 			"puintptr.ptr",
+			"spanOf",
 			"spanOfUnchecked",
 			"(*gcWork).putFast",
 			"(*gcWork).tryGetFast",
@@ -132,6 +132,9 @@ func TestIntendedInlining(t *testing.T) {
 		},
 		"regexp": {
 			"(*bitState).push",
+		},
+		"math/big": {
+			"bigEndianWord",
 		},
 	}
 

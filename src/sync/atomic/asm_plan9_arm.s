@@ -8,7 +8,7 @@
 	MOVB	runtime·goarm(SB), R11; \
 	CMP	$7, R11; \
 	BLT	2(PC); \
-	WORD	$0xf57ff05b	// dmb ish
+	DMB	MB_ISH
 
 // Plan9/ARM atomic operations.
 // TODO(minux): this only supports ARMv6K or higher.
@@ -43,7 +43,7 @@ TEXT ·SwapUintptr(SB),NOSPLIT,$0
 TEXT ·CompareAndSwapInt64(SB),NOSPLIT,$0
 	B ·CompareAndSwapUint64(SB)
 
-TEXT ·CompareAndSwapUint64(SB),NOSPLIT,$-4
+TEXT ·CompareAndSwapUint64(SB),NOSPLIT|NOFRAME,$0
 	B ·armCompareAndSwapUint64(SB)
 
 TEXT ·AddInt64(SB),NOSPLIT,$0
