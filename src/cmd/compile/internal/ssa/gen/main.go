@@ -180,10 +180,12 @@ func genOp() {
 			}
 			if v.resultInArg0 {
 				fmt.Fprintln(w, "resultInArg0: true,")
-				if v.reg.inputs[0] != v.reg.outputs[0] {
+				// OpConvert's register mask is selected dynamically,
+				// so don't try to check it in the static table.
+				if v.name != "Convert" && v.reg.inputs[0] != v.reg.outputs[0] {
 					log.Fatalf("%s: input[0] and output[0] must use the same registers for %s", a.name, v.name)
 				}
-				if v.commutative && v.reg.inputs[1] != v.reg.outputs[0] {
+				if v.name != "Convert" && v.commutative && v.reg.inputs[1] != v.reg.outputs[0] {
 					log.Fatalf("%s: input[1] and output[0] must use the same registers for %s", a.name, v.name)
 				}
 			}
@@ -225,7 +227,7 @@ func genOp() {
 				if !needEffect {
 					log.Fatalf("symEffect with aux %s not allowed", v.aux)
 				}
-				fmt.Fprintf(w, "symEffect: Sym%s,\n", v.symEffect)
+				fmt.Fprintf(w, "symEffect: Sym%s,\n", strings.Replace(v.symEffect, ",", "|Sym", -1))
 			} else if needEffect {
 				log.Fatalf("symEffect needed for aux %s", v.aux)
 			}

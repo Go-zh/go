@@ -28,8 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang_org/x/net/lex/httplex"
-	"golang_org/x/net/proxy"
+	"golang_org/x/net/http/httpguts"
 )
 
 // DefaultTransport is the default implementation of Transport and is
@@ -364,11 +363,11 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 	isHTTP := scheme == "http" || scheme == "https"
 	if isHTTP {
 		for k, vv := range req.Header {
-			if !httplex.ValidHeaderFieldName(k) {
+			if !httpguts.ValidHeaderFieldName(k) {
 				return nil, fmt.Errorf("net/http: invalid header field name %q", k)
 			}
 			for _, v := range vv {
-				if !httplex.ValidHeaderFieldValue(v) {
+				if !httpguts.ValidHeaderFieldValue(v) {
 					return nil, fmt.Errorf("net/http: invalid header field value %q for key %v", v, k)
 				}
 			}
@@ -1013,23 +1012,6 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (*persistC
 	}
 }
 
-type oneConnDialer <-chan net.Conn
-
-func newOneConnDialer(c net.Conn) proxy.Dialer {
-	ch := make(chan net.Conn, 1)
-	ch <- c
-	return oneConnDialer(ch)
-}
-
-func (d oneConnDialer) Dial(network, addr string) (net.Conn, error) {
-	select {
-	case c := <-d:
-		return c, nil
-	default:
-		return nil, io.EOF
-	}
-}
-
 // The connect method and the transport can both specify a TLS
 // Host name.  The transport's name takes precedence if present.
 func chooseTLSHost(cm connectMethod, t *Transport) string {
@@ -1156,18 +1138,22 @@ func (t *Transport) dialConn(ctx context.Context, cm connectMethod) (*persistCon
 		// Do nothing. Not using a proxy.
 	case cm.proxyURL.Scheme == "socks5":
 		conn := pconn.conn
-		var auth *proxy.Auth
+		d := socksNewDialer("tcp", conn.RemoteAddr().String())
+		d.ProxyDial = func(_ context.Context, _, _ string) (net.Conn, error) {
+			return conn, nil
+		}
 		if u := cm.proxyURL.User; u != nil {
-			auth = &proxy.Auth{}
-			auth.User = u.Username()
+			auth := &socksUsernamePassword{
+				Username: u.Username(),
+			}
 			auth.Password, _ = u.Password()
+			d.AuthMethods = []socksAuthMethod{
+				socksAuthMethodNotRequired,
+				socksAuthMethodUsernamePassword,
+			}
+			d.Authenticate = auth.Authenticate
 		}
-		p, err := proxy.SOCKS5("", cm.addr(), auth, newOneConnDialer(conn))
-		if err != nil {
-			conn.Close()
-			return nil, err
-		}
-		if _, err := p.Dial("tcp", cm.targetAddr); err != nil {
+		if _, err := d.DialContext(ctx, "tcp", cm.targetAddr); err != nil {
 			conn.Close()
 			return nil, err
 		}

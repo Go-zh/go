@@ -331,26 +331,11 @@ func convlit1(n *Node, t *types.Type, explicit bool, reuse canReuseNode) *Node {
 		case TARRAY:
 			goto bad
 
-		case TPTR32,
-			TPTR64,
-			TINTER,
-			TMAP,
-			TCHAN,
-			TFUNC,
-			TSLICE,
-			TUNSAFEPTR:
-			break
+		case TPTR32, TPTR64, TUNSAFEPTR:
+			n.SetVal(Val{new(Mpint)})
 
-		// A nil literal may be converted to uintptr
-		// if it is an unsafe.Pointer
-		case TUINTPTR:
-			if n.Type.Etype == TUNSAFEPTR {
-				i := new(Mpint)
-				i.SetInt64(0)
-				n.SetVal(Val{i})
-			} else {
-				goto bad
-			}
+		case TCHAN, TFUNC, TINTER, TMAP, TSLICE:
+			break
 		}
 
 	case CTSTR, CTBOOL:
@@ -1014,10 +999,10 @@ func evconst(n *Node) {
 		v.U.(*Mpcplx).Imag.Sub(&rv.U.(*Mpcplx).Imag)
 
 	case OMUL_ | CTCPLX_:
-		cmplxmpy(v.U.(*Mpcplx), rv.U.(*Mpcplx))
+		v.U.(*Mpcplx).Mul(rv.U.(*Mpcplx))
 
 	case ODIV_ | CTCPLX_:
-		if !cmplxdiv(v.U.(*Mpcplx), rv.U.(*Mpcplx)) {
+		if !v.U.(*Mpcplx).Div(rv.U.(*Mpcplx)) {
 			yyerror("complex division by zero")
 			rv.U.(*Mpcplx).Real.SetFloat64(1.0)
 			rv.U.(*Mpcplx).Imag.SetFloat64(0.0)
@@ -1199,9 +1184,8 @@ func setconst(n *Node, v Val) {
 	// Ensure n.Orig still points to a semantically-equivalent
 	// expression after we rewrite n into a constant.
 	if n.Orig == n {
-		var ncopy Node
-		n.Orig = &ncopy
-		ncopy = *n
+		n.Orig = n.copy()
+		n.Orig.Orig = n.Orig
 	}
 
 	*n = Node{
@@ -1360,6 +1344,8 @@ func defaultlitreuse(n *Node, t *types.Type, reuse canReuseNode) *Node {
 		default:
 			yyerror("defaultlit: unknown literal: %v", n)
 		}
+		lineno = lno
+		return n
 
 	case CTxxx:
 		Fatalf("defaultlit: idealkind is CTxxx: %+v", n)
@@ -1370,28 +1356,19 @@ func defaultlitreuse(n *Node, t *types.Type, reuse canReuseNode) *Node {
 			t1 = t
 		}
 		n = convlit1(n, t1, false, reuse)
+		lineno = lno
+		return n
 
 	case CTINT:
 		t1 = types.Types[TINT]
-		goto num
-
 	case CTRUNE:
 		t1 = types.Runetype
-		goto num
-
 	case CTFLT:
 		t1 = types.Types[TFLOAT64]
-		goto num
-
 	case CTCPLX:
 		t1 = types.Types[TCOMPLEX128]
-		goto num
 	}
 
-	lineno = lno
-	return n
-
-num:
 	// Note: n.Val().Ctype() can be CTxxx (not a constant) here
 	// in the case of an untyped non-constant value, like 1<<i.
 	v1 := n.Val()
@@ -1522,104 +1499,14 @@ func nonnegintconst(n *Node) int64 {
 	return vi.Int64()
 }
 
-// complex multiply v *= rv
-//	(a, b) * (c, d) = (a*c - b*d, b*c + a*d)
-func cmplxmpy(v *Mpcplx, rv *Mpcplx) {
-	var ac Mpflt
-	var bd Mpflt
-	var bc Mpflt
-	var ad Mpflt
-
-	ac.Set(&v.Real)
-	ac.Mul(&rv.Real) // ac
-
-	bd.Set(&v.Imag)
-
-	bd.Mul(&rv.Imag) // bd
-
-	bc.Set(&v.Imag)
-
-	bc.Mul(&rv.Real) // bc
-
-	ad.Set(&v.Real)
-
-	ad.Mul(&rv.Imag) // ad
-
-	v.Real.Set(&ac)
-
-	v.Real.Sub(&bd) // ac-bd
-
-	v.Imag.Set(&bc)
-
-	v.Imag.Add(&ad) // bc+ad
-}
-
-// complex divide v /= rv
-//	(a, b) / (c, d) = ((a*c + b*d), (b*c - a*d))/(c*c + d*d)
-func cmplxdiv(v *Mpcplx, rv *Mpcplx) bool {
-	if rv.Real.CmpFloat64(0) == 0 && rv.Imag.CmpFloat64(0) == 0 {
-		return false
-	}
-
-	var ac Mpflt
-	var bd Mpflt
-	var bc Mpflt
-	var ad Mpflt
-	var cc_plus_dd Mpflt
-
-	cc_plus_dd.Set(&rv.Real)
-
-	cc_plus_dd.Mul(&rv.Real) // cc
-
-	ac.Set(&rv.Imag)
-
-	ac.Mul(&rv.Imag) // dd
-
-	cc_plus_dd.Add(&ac) // cc+dd
-
-	// We already checked that c and d are not both zero, but we can't
-	// assume that c²+d² != 0 follows, because for tiny values of c
-	// and/or d c²+d² can underflow to zero.  Check that c²+d² is
-	// nonzero,return if it's not.
-	if cc_plus_dd.CmpFloat64(0) == 0 {
-		return false
-	}
-
-	ac.Set(&v.Real)
-
-	ac.Mul(&rv.Real) // ac
-
-	bd.Set(&v.Imag)
-
-	bd.Mul(&rv.Imag) // bd
-
-	bc.Set(&v.Imag)
-
-	bc.Mul(&rv.Real) // bc
-
-	ad.Set(&v.Real)
-
-	ad.Mul(&rv.Imag) // ad
-
-	v.Real.Set(&ac)
-
-	v.Real.Add(&bd)         // ac+bd
-	v.Real.Quo(&cc_plus_dd) // (ac+bd)/(cc+dd)
-
-	v.Imag.Set(&bc)
-
-	v.Imag.Sub(&ad)         // bc-ad
-	v.Imag.Quo(&cc_plus_dd) // (bc+ad)/(cc+dd)
-
-	return true
-}
-
-// Is n a Go language constant (as opposed to a compile-time constant)?
+// isGoConst reports whether n is a Go language constant (as opposed to a
+// compile-time constant).
+//
 // Expressions derived from nil, like string([]byte(nil)), while they
 // may be known at compile time, are not Go language constants.
 // Only called for expressions known to evaluated to compile-time
 // constants.
-func isgoconst(n *Node) bool {
+func (n *Node) isGoConst() bool {
 	if n.Orig != nil {
 		n = n.Orig
 	}
@@ -1653,18 +1540,18 @@ func isgoconst(n *Node) bool {
 		OCOMPLEX,
 		OREAL,
 		OIMAG:
-		if isgoconst(n.Left) && (n.Right == nil || isgoconst(n.Right)) {
+		if n.Left.isGoConst() && (n.Right == nil || n.Right.isGoConst()) {
 			return true
 		}
 
 	case OCONV:
-		if okforconst[n.Type.Etype] && isgoconst(n.Left) {
+		if okforconst[n.Type.Etype] && n.Left.isGoConst() {
 			return true
 		}
 
 	case OLEN, OCAP:
 		l := n.Left
-		if isgoconst(l) {
+		if l.isGoConst() {
 			return true
 		}
 

@@ -165,10 +165,6 @@ func (ctxt *Link) CanReuseProgs() bool {
 	return !ctxt.Debugasm
 }
 
-func (ctxt *Link) Dconv(a *Addr) string {
-	return Dconv(nil, a)
-}
-
 func Dconv(p *Prog, a *Addr) string {
 	var str string
 
@@ -218,7 +214,12 @@ func Dconv(p *Prog, a *Addr) string {
 	case TYPE_MEM:
 		str = Mconv(a)
 		if a.Index != REG_NONE {
-			str += fmt.Sprintf("(%v*%d)", Rconv(int(a.Index)), int(a.Scale))
+			if a.Scale == 0 {
+				// arm64 shifted or extended register offset, scale = 0.
+				str += fmt.Sprintf("(%v)", Rconv(int(a.Index)))
+			} else {
+				str += fmt.Sprintf("(%v*%d)", Rconv(int(a.Index)), int(a.Scale))
+			}
 		}
 
 	case TYPE_CONST:
@@ -393,6 +394,7 @@ const (
 	RBaseARM64 = 8 * 1024  // range [8k, 13k)
 	RBaseMIPS  = 13 * 1024 // range [13k, 14k)
 	RBaseS390X = 14 * 1024 // range [14k, 15k)
+	RBaseWasm  = 16 * 1024
 )
 
 // RegisterRegister binds a pretty-printer (Rconv) for register
@@ -492,6 +494,7 @@ var Anames = []string{
 	"NOP",
 	"PCDATA",
 	"RET",
+	"GETCALLERPC",
 	"TEXT",
 	"UNDEF",
 }
