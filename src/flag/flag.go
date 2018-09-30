@@ -5,7 +5,7 @@
 /*
 	Package flag implements command-line flag parsing.
 
-	Usage:
+	Usage
 
 	Define flags using flag.String(), Bool(), Int(), etc.
 
@@ -35,7 +35,10 @@
 	slice flag.Args() or individually as flag.Arg(i).
 	The arguments are indexed from 0 through flag.NArg()-1.
 
-	Command line flag syntax:
+	Command line flag syntax
+
+	The following forms are permitted:
+
 		-flag
 		-flag=x
 		-flag x  // non-boolean flags only
@@ -469,7 +472,7 @@ func (f *FlagSet) PrintDefaults() {
 			// for both 4- and 8-space tab stops.
 			s += "\n    \t"
 		}
-		s += strings.Replace(usage, "\n", "\n    \t", -1)
+		s += strings.ReplaceAll(usage, "\n", "\n    \t")
 
 		if !isZeroValue(flag, flag.DefValue) {
 			if _, ok := flag.Value.(*stringValue); ok {

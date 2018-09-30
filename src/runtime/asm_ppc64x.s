@@ -24,6 +24,7 @@ TEXT runtime·rt0_go(SB),NOSPLIT,$0
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
 	MOVD	$runtime·g0(SB), g
+	BL	runtime·save_g(SB)
 	MOVD	$(-64*1024), R31
 	ADD	R31, R1, R3
 	MOVD	R3, g_stackguard0(g)
@@ -139,6 +140,7 @@ TEXT runtime·gogo(SB), NOSPLIT, $16-8
 	MOVD	0(g), R4
 	MOVD	gobuf_sp(R5), R1
 	MOVD	gobuf_lr(R5), R31
+	MOVD	24(R1), R2	// restore R2
 	MOVD	R31, LR
 	MOVD	gobuf_ret(R5), R3
 	MOVD	gobuf_ctxt(R5), R11
@@ -388,15 +390,36 @@ TEXT NAME(SB), WRAPPER, $MAXSIZE-24;		\
 	/* copy arguments to stack */		\
 	MOVD	arg+16(FP), R3;			\
 	MOVWZ	argsize+24(FP), R4;			\
-	MOVD	R1, R5;				\
-	ADD	$(FIXED_FRAME-1), R5;			\
-	SUB	$1, R3;				\
-	ADD	R5, R4;				\
-	CMP	R5, R4;				\
-	BEQ	4(PC);				\
-	MOVBZU	1(R3), R6;			\
-	MOVBZU	R6, 1(R5);			\
-	BR	-4(PC);				\
+	MOVD    R1, R5;				\
+	CMP	R4, $8;				\
+	BLT	tailsetup;			\
+	/* copy 8 at a time if possible */	\
+	ADD	$(FIXED_FRAME-8), R5;			\
+	SUB	$8, R3;				\
+top: \
+	MOVDU	8(R3), R7;			\
+	MOVDU	R7, 8(R5);			\
+	SUB	$8, R4;				\
+	CMP	R4, $8;				\
+	BGE	top;				\
+	/* handle remaining bytes */	\
+	CMP	$0, R4;			\
+	BEQ	callfn;			\
+	ADD	$7, R3;			\
+	ADD	$7, R5;			\
+	BR	tail;			\
+tailsetup: \
+	CMP	$0, R4;			\
+	BEQ	callfn;			\
+	ADD     $(FIXED_FRAME-1), R5;	\
+	SUB     $1, R3;			\
+tail: \
+	MOVBU	1(R3), R6;		\
+	MOVBU	R6, 1(R5);		\
+	SUB	$1, R4;			\
+	CMP	$0, R4;			\
+	BGT	tail;			\
+callfn: \
 	/* call function */			\
 	MOVD	f+8(FP), R11;			\
 	MOVD	(R11), R12;			\
@@ -455,7 +478,19 @@ CALLFN(·call268435456, 268435456)
 CALLFN(·call536870912, 536870912)
 CALLFN(·call1073741824, 1073741824)
 
-TEXT runtime·procyield(SB),NOSPLIT,$0-0
+TEXT runtime·procyield(SB),NOSPLIT|NOFRAME,$0-4
+	MOVW	cycles+0(FP), R7
+	// POWER does not have a pause/yield instruction equivalent.
+	// Instead, we can lower the program priority by setting the
+	// Program Priority Register prior to the wait loop and set it
+	// back to default afterwards. On Linux, the default priority is
+	// medium-low. For details, see page 837 of the ISA 3.0.
+	OR	R1, R1, R1	// Set PPR priority to low
+again:
+	SUB	$1, R7
+	CMP	$0, R7
+	BNE	again
+	OR	R6, R6, R6	// Set PPR priority back to medium-low
 	RET
 
 // void jmpdefer(fv, sp);
@@ -709,18 +744,11 @@ TEXT runtime·abort(SB),NOSPLIT|NOFRAME,$0-0
 	MOVW	(R0), R0
 	UNDEF
 
-#define	TBRL	268
-#define	TBRU	269		/* Time base Upper/Lower */
+#define	TBR	268
 
 // int64 runtime·cputicks(void)
 TEXT runtime·cputicks(SB),NOSPLIT,$0-8
-	MOVW	SPR(TBRU), R4
-	MOVW	SPR(TBRL), R3
-	MOVW	SPR(TBRU), R5
-	CMPW	R4, R5
-	BNE	-4(PC)
-	SLD	$32, R5
-	OR	R5, R3
+	MOVD	SPR(TBR), R3
 	MOVD	R3, ret+0(FP)
 	RET
 

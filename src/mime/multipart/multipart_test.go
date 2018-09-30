@@ -105,7 +105,7 @@ never read data
 
 useless trailer
 `
-	testBody = strings.Replace(testBody, "\n", sep, -1)
+	testBody = strings.ReplaceAll(testBody, "\n", sep)
 	return strings.Replace(testBody, "[longline]", longLine, 1)
 }
 
@@ -151,7 +151,7 @@ func testMultipart(t *testing.T, r io.Reader, onlyNewlines bool) {
 
 	adjustNewlines := func(s string) string {
 		if onlyNewlines {
-			return strings.Replace(s, "\r\n", "\n", -1)
+			return strings.ReplaceAll(s, "\r\n", "\n")
 		}
 		return s
 	}
@@ -299,7 +299,7 @@ foo-bar: baz
 
 Oh no, premature EOF!
 `
-	body := strings.Replace(testBody, "\n", "\r\n", -1)
+	body := strings.ReplaceAll(testBody, "\n", "\r\n")
 	bodyReader := strings.NewReader(body)
 	r := NewReader(bodyReader, "MyBoundary")
 
@@ -879,4 +879,12 @@ func roundTripParseTest() parseTest {
 	t.in = buf.String()
 	t.sep = w.Boundary()
 	return t
+}
+
+func TestNoBoundary(t *testing.T) {
+	mr := NewReader(strings.NewReader(""), "")
+	_, err := mr.NextPart()
+	if got, want := fmt.Sprint(err), "multipart: boundary is empty"; got != want {
+		t.Errorf("NextPart error = %v; want %v", got, want)
+	}
 }

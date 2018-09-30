@@ -6,7 +6,7 @@
 
 <!--{
 	"Title": "The Go Programming Language Specification",
-	"Subtitle": "Version of May 9, 2018",
+	"Subtitle": "Version of September 24, 2018",
 	"Path": "/ref/spec"
 }-->
 
@@ -155,7 +155,7 @@ language.
 <div class="english">
 <p>
 Source code is Unicode text encoded in
-<a href="http://en.wikipedia.org/wiki/UTF-8">UTF-8</a>. The text is not
+<a href="https://en.wikipedia.org/wiki/UTF-8">UTF-8</a>. The text is not
 canonicalized, so a single accented code point is distinct from the
 same character constructed from combining an accent and a letter;
 those are treated as two code points.  For simplicity, this document
@@ -240,7 +240,7 @@ Unicode数字 = /* 类型为“数值，十进制数字”的 Unicode 码点 */ 
 
 <div class="english">
 <p>
-In <a href="http://www.unicode.org/versions/Unicode8.0.0/">The Unicode Standard 8.0</a>,
+In <a href="https://www.unicode.org/versions/Unicode8.0.0/">The Unicode Standard 8.0</a>,
 Section 4.5 "General Category" defines a set of character categories.
 Go treats all characters in any of the Letter categories Lu, Ll, Lt, Lm, or Lo
 as Unicode letters, and those in the Number category Nd as Unicode digits.
@@ -1597,7 +1597,7 @@ rune        int32 的别名
 <div class="english">
 <p>
 The value of an <i>n</i>-bit integer is <i>n</i> bits wide and represented using
-<a href="http://en.wikipedia.org/wiki/Two's_complement">two's complement arithmetic</a>.
+<a href="https://en.wikipedia.org/wiki/Two's_complement">two's complement arithmetic</a>.
 </p>
 </div>
 
@@ -4111,8 +4111,8 @@ with initializer expressions but no types:
 i, j := 0, 10
 f := func() int { return 7 }
 ch := make(chan int)
-r, w := os.Pipe(fd)  // os.Pipe() returns two values
-_, y, _ := coord(p)  // coord() returns three values; only interested in y coordinate
+r, w, _ := os.Pipe()  // os.Pipe() returns a connected pair of Files and an error, if any
+_, y, _ := coord(p)   // coord() returns three values; only interested in y coordinate
 </pre>
 </div>
 
@@ -6904,7 +6904,7 @@ x = q*y + r  and  |r| &lt; |y|
 
 <p>
 with <code>x / y</code> truncated towards zero
-(<a href="http://en.wikipedia.org/wiki/Modulo_operation">"truncated division"</a>).
+(<a href="https://en.wikipedia.org/wiki/Modulo_operation">"truncated division"</a>).
 </p>
 </div>
 
@@ -10728,7 +10728,10 @@ executes, the function value and parameters to the call are
 and saved anew but the actual function is not invoked.
 Instead, deferred functions are invoked immediately before
 the surrounding function returns, in the reverse order
-they were deferred.
+they were deferred. That is, if the surrounding function
+returns through an explicit <a href="#Return_statements">return statement</a>,
+deferred functions are executed <i>after</i> any result parameters are set
+by that return statement but <i>before</i> the function returns to its caller.
 If a deferred function value evaluates
 to <code>nil</code>, execution <a href="#Handling_panics">panics</a>
 when the function is invoked, not when the "defer" statement is executed.
@@ -10754,12 +10757,13 @@ for i := 0; i &lt;= 3; i++ {
 	defer fmt.Print(i)
 }
 
-// f returns 1
+// f returns 42
 func f() (result int) {
 	defer func() {
-		result++
+		// result is accessed after it was set to 6 by the return statement
+		result *= 7
 	}()
-	return 0
+	return 6
 }
 </pre>
 </div>
@@ -11819,7 +11823,7 @@ package and may be relative to a repository of installed packages.
 <p>
 Implementation restriction: A compiler may restrict ImportPaths to
 non-empty strings using only characters belonging to
-<a href="http://www.unicode.org/versions/Unicode6.3.0/">Unicode's</a>
+<a href="https://www.unicode.org/versions/Unicode6.3.0/">Unicode's</a>
 L, M, N, P, and S general categories (the Graphic characters without
 spaces) and may also exclude the characters
 <code>!"#$%&amp;'()*,:;&lt;=&gt;?[\]^`{|}</code>

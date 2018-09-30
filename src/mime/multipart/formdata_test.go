@@ -13,7 +13,7 @@ import (
 )
 
 func TestReadForm(t *testing.T) {
-	b := strings.NewReader(strings.Replace(message, "\n", "\r\n", -1))
+	b := strings.NewReader(strings.ReplaceAll(message, "\n", "\r\n"))
 	r := NewReader(b, boundary)
 	f, err := r.ReadForm(25)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestReadForm(t *testing.T) {
 }
 
 func TestReadFormWithNamelessFile(t *testing.T) {
-	b := strings.NewReader(strings.Replace(messageWithFileWithoutName, "\n", "\r\n", -1))
+	b := strings.NewReader(strings.ReplaceAll(messageWithFileWithoutName, "\n", "\r\n"))
 	r := NewReader(b, boundary)
 	f, err := r.ReadForm(25)
 	if err != nil {
@@ -47,17 +47,14 @@ func TestReadFormWithNamelessFile(t *testing.T) {
 	}
 	defer f.RemoveAll()
 
-	fd := testFile(t, f.File["hiddenfile"][0], "", filebContents)
-	if _, ok := fd.(sectionReadCloser); !ok {
-		t.Errorf("file has unexpected underlying type %T", fd)
+	if g, e := f.Value["hiddenfile"][0], filebContents; g != e {
+		t.Errorf("hiddenfile value = %q, want %q", g, e)
 	}
-	fd.Close()
-
 }
 
 func TestReadFormWithTextContentType(t *testing.T) {
 	// From https://github.com/golang/go/issues/24041
-	b := strings.NewReader(strings.Replace(messageWithTextContentType, "\n", "\r\n", -1))
+	b := strings.NewReader(strings.ReplaceAll(messageWithTextContentType, "\n", "\r\n"))
 	r := NewReader(b, boundary)
 	f, err := r.ReadForm(25)
 	if err != nil {
@@ -187,7 +184,7 @@ Content-Disposition: form-data; name="largetext"
 --MyBoundary--
 `
 
-	testBody := strings.Replace(message, "\n", "\r\n", -1)
+	testBody := strings.ReplaceAll(message, "\n", "\r\n")
 	testCases := []struct {
 		name      string
 		maxMemory int64

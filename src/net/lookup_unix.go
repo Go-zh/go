@@ -8,7 +8,9 @@ package net
 
 import (
 	"context"
+	"internal/bytealg"
 	"sync"
+	"syscall"
 
 	"golang_org/x/net/dns/dnsmessage"
 )
@@ -26,7 +28,7 @@ func readProtocols() {
 
 	for line, ok := file.readLine(); ok; line, ok = file.readLine() {
 		// tcp    6   TCP    # transmission control protocol
-		if i := byteIndex(line, '#'); i >= 0 {
+		if i := bytealg.IndexByteString(line, '#'); i >= 0 {
 			line = line[0:i]
 		}
 		f := getFields(line)
@@ -298,11 +300,21 @@ func (r *Resolver) lookupTXT(ctx context.Context, name string) ([]string, error)
 				Server: server,
 			}
 		}
-		if len(txts) == 0 {
-			txts = txt.TXT
-		} else {
-			txts = append(txts, txt.TXT...)
+		// Multiple strings in one TXT record need to be
+		// concatenated without separator to be consistent
+		// with previous Go resolver.
+		n := 0
+		for _, s := range txt.TXT {
+			n += len(s)
 		}
+		txtJoin := make([]byte, 0, n)
+		for _, s := range txt.TXT {
+			txtJoin = append(txtJoin, s...)
+		}
+		if len(txts) == 0 {
+			txts = make([]string, 0, 1)
+		}
+		txts = append(txts, string(txtJoin))
 	}
 	return txts, nil
 }
@@ -314,4 +326,28 @@ func (r *Resolver) lookupAddr(ctx context.Context, addr string) ([]string, error
 		}
 	}
 	return r.goLookupPTR(ctx, addr)
+}
+
+// concurrentThreadsLimit returns the number of threads we permit to
+// run concurrently doing DNS lookups via cgo. A DNS lookup may use a
+// file descriptor so we limit this to less than the number of
+// permitted open files. On some systems, notably Darwin, if
+// getaddrinfo is unable to open a file descriptor it simply returns
+// EAI_NONAME rather than a useful error. Limiting the number of
+// concurrent getaddrinfo calls to less than the permitted number of
+// file descriptors makes that error less likely. We don't bother to
+// apply the same limit to DNS lookups run directly from Go, because
+// there we will return a meaningful "too many open files" error.
+func concurrentThreadsLimit() int {
+	var rlim syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rlim); err != nil {
+		return 500
+	}
+	r := int(rlim.Cur)
+	if r > 500 {
+		r = 500
+	} else if r > 30 {
+		r -= 30
+	}
+	return r
 }

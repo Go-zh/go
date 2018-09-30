@@ -323,12 +323,10 @@ func Background() Context {
 // TODO returns a non-nil, empty Context. Code should use context.TODO when
 // it's unclear which Context to use or it is not yet available (because the
 // surrounding function has not yet been extended to accept a Context
-// parameter). TODO is recognized by static analysis tools that determine
-// whether Contexts are propagated correctly in a program.
+// parameter).
 
-// TODO 返回一个非 nil 的空 context 。当不知道该使用哪一个 Context 时，代码可以使用
-// context.TODO 。TODO 可以被静态分析工具正确的识别，用以判断是否 Context 在代码中
-// 是否被正确得传递。
+// TODO 返回一个非 nil 的空 Context 。当不确定该使用哪一个 Context 或在它不可用时
+// （因为包围它的函数尚未被扩展为接受一个 Context 参数），代码会使用 context.TODO 。
 func TODO() Context {
 	return todo
 }

@@ -100,7 +100,7 @@ func splitList(path string) []string {
 
 	// Remove quotes.
 	for i, s := range list {
-		list[i] = strings.Replace(s, `"`, ``, -1)
+		list[i] = strings.ReplaceAll(s, `"`, ``)
 	}
 
 	return list
@@ -134,7 +134,14 @@ func joinNonEmpty(elem []string) string {
 	if len(elem[0]) == 2 && elem[0][1] == ':' {
 		// First element is drive letter without terminating slash.
 		// Keep path relative to current directory on that drive.
-		return Clean(elem[0] + strings.Join(elem[1:], string(Separator)))
+		// Skip empty elements.
+		i := 1
+		for ; i < len(elem); i++ {
+			if elem[i] != "" {
+				break
+			}
+		}
+		return Clean(elem[0] + strings.Join(elem[i:], string(Separator)))
 	}
 	// The following logic prevents Join from inadvertently creating a
 	// UNC path on Windows. Unless the first element is a UNC path, Join

@@ -22,9 +22,7 @@ const (
 //sysnb	InotifyInit() (fd int, err error)
 //sys	Ioperm(from int, num int, on int) (err error)
 //sys	Iopl(level int) (err error)
-//sys	Lchown(path string, uid int, gid int) (err error)
 //sys	Listen(s int, n int) (err error)
-//sys	Lstat(path string, stat *Stat_t) (err error)
 //sys	Pread(fd int, p []byte, offset int64) (n int, err error) = SYS_PREAD64
 //sys	Pwrite(fd int, p []byte, offset int64) (n int, err error) = SYS_PWRITE64
 //sys	Seek(fd int, offset int64, whence int) (off int64, err error) = SYS_LSEEK
@@ -60,9 +58,18 @@ const (
 //sys	recvmsg(s int, msg *Msghdr, flags int) (n int, err error)
 //sys	sendmsg(s int, msg *Msghdr, flags int) (n int, err error)
 //sys	mmap(addr uintptr, length uintptr, prot int, flags int, fd int, offset int64) (xaddr uintptr, err error)
+//sys	EpollWait(epfd int, events []EpollEvent, msec int) (n int, err error)
 
 func Stat(path string, stat *Stat_t) (err error) {
 	return fstatat(_AT_FDCWD, path, stat, 0)
+}
+
+func Lchown(path string, uid int, gid int) (err error) {
+	return Fchownat(_AT_FDCWD, path, uid, gid, _AT_SYMLINK_NOFOLLOW)
+}
+
+func Lstat(path string, stat *Stat_t) (err error) {
+	return fstatat(_AT_FDCWD, path, stat, _AT_SYMLINK_NOFOLLOW)
 }
 
 //go:noescape

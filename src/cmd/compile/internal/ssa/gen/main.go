@@ -63,9 +63,14 @@ type blockData struct {
 }
 
 type regInfo struct {
-	inputs   []regMask
+	// inputs[i] encodes the set of registers allowed for the i'th input.
+	// Inputs that don't use registers (flags, memory, etc.) should be 0.
+	inputs []regMask
+	// clobbers encodes the set of registers that are overwritten by
+	// the instruction (other than the output registers).
 	clobbers regMask
-	outputs  []regMask
+	// outpus[i] encodes the set of registers allowed for the i'th output.
+	outputs []regMask
 }
 
 type regMask uint64
@@ -301,6 +306,7 @@ func genOp() {
 			continue
 		}
 		fmt.Fprintf(w, "var registers%s = [...]Register {\n", a.name)
+		var gcRegN int
 		for i, r := range a.regnames {
 			pkg := a.pkg[len("cmd/internal/obj/"):]
 			var objname string // name in cmd/internal/obj/$ARCH
@@ -315,7 +321,18 @@ func genOp() {
 			default:
 				objname = pkg + ".REG_" + r
 			}
-			fmt.Fprintf(w, "  {%d, %s, \"%s\"},\n", i, objname, r)
+			// Assign a GC register map index to registers
+			// that may contain pointers.
+			gcRegIdx := -1
+			if a.gpregmask&(1<<uint(i)) != 0 {
+				gcRegIdx = gcRegN
+				gcRegN++
+			}
+			fmt.Fprintf(w, "  {%d, %s, %d, \"%s\"},\n", i, objname, gcRegIdx, r)
+		}
+		if gcRegN > 32 {
+			// Won't fit in a uint32 mask.
+			log.Fatalf("too many GC registers (%d > 32) on %s", gcRegN, a.name)
 		}
 		fmt.Fprintln(w, "}")
 		fmt.Fprintf(w, "var gpRegMask%s = regMask(%d)\n", a.name, a.gpregmask)
