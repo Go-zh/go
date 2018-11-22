@@ -1,6 +1,6 @@
 <!--{
 	"Title": "Go 编程语言规范",
-	"Subtitle": "版本：2017 年 5 月 9 日  译者：Oling Cat",
+	"Subtitle": "版本：2018 年 9 月 24 日  译者：Oling Cat",
 	"Path": "/ref/spec"
 }-->
 
@@ -165,7 +165,7 @@ in the source text.
 </div>
 
 <p>
-源码为采用 <a href="http://en.wikipedia.org/wiki/UTF-8">UTF-8</a> 编码的 Unicode 文本，
+源码为采用 <a href="https://en.wikipedia.org/wiki/UTF-8">UTF-8</a> 编码的 Unicode 文本，
 其文本并未标准化。因此单个带变音符号的码点不同于结合了字母与变音符号的字符结构，
 它们应视作两个码点。为简单起见，本文档将使用非正式的术语<b>字符</b>在源文本中指代 Unicode 码点。
 </p>
@@ -248,7 +248,7 @@ as Unicode letters, and those in the Number category Nd as Unicode digits.
 </div>
 
 <p>
-在<a href="http://www.unicode.org/versions/Unicode8.0.0/">Unicode 标准 8.0</a>，
+在<a href="https://www.unicode.org/versions/Unicode8.0.0/">Unicode 标准 8.0</a>，
 章节 4.5“一般类别”中定义了字符集类别。其中类别 Lu，Ll，Lt，Lm 及 Lo 被视为
 Unicode 字母，类别 Nd 被视为 Unicode 数字。
 </p>
@@ -1603,7 +1603,7 @@ The value of an <i>n</i>-bit integer is <i>n</i> bits wide and represented using
 
 <p>
 <i>n</i> 位的整数值是 <i>n</i> 位宽的，它使用
-<a href="http://en.wikipedia.org/wiki/Two's_complement">二进制补码运算</a>表示。
+<a href="https://en.wikipedia.org/wiki/Two's_complement">二进制补码运算</a>表示。
 </p>
 
 <div class="english">
@@ -2142,6 +2142,7 @@ struct {
 并成为结构体的<a href="#类型标识">类型标识</a>的一部分，其它情况下会被忽略。
 
 </p>
+<pre>
 struct {
 	x, y float64 ""  // 空标注字符串相当于没有标注
 	name string  "任何字符串都允许作为标注"
@@ -3024,6 +3025,7 @@ by a value of type <code>T</code>.
 <li>
 当 <code>x</code> 的类型 <code>V</code> 和 <code>T</code> 有相同的
 <a href="#类型">底层类型</a> 且在 <code>V</code> 或 <code>T</code> 中至少有一个不是<a href="#类型">已命名类型</a>时。
+</li>
 <li>
 当 <code>T</code> 为接口类型且 <code>x</code> <a href="#接口类型">实现</a>了 <code>T</code>时。
 </li>
@@ -3792,15 +3794,31 @@ of the last non-empty expression list.
 <p>
 A type declaration binds an identifier, the <i>type name</i>, to a <a href="#Types">type</a>.
 Type declarations come in two forms: alias declarations and type definitions.
-<p>
+</p>
 
 <pre class="ebnf">
 TypeDecl = "type" ( TypeSpec | "(" { TypeSpec ";" } ")" ) .
 TypeSpec = AliasDecl | TypeDef .
 </pre>
+</div>
 
+<p>
+类型声明将标识符，即<b>类型名</b>绑定至<a href="#类型">类型</a>。
+类型声明有两种形式：别名声明和类型定义。
+</p>
+
+<pre class="ebnf">
+类型声明     = "type" ( 类型实现 | "(" { 类型实现 ";" } ")" ) .
+类型实现     = 别名声明 | 类型定义 .
+</pre>
+
+<div class="english">
 <h4 id="Alias_declarations">Alias declarations</h4>
+</div>
 
+<h4 id="别名声明">别名声明</h4>
+
+<div class="english">
 <p>
 An alias declaration binds an identifier to the given type.
 </p>
@@ -3811,16 +3829,14 @@ AliasDecl = identifier "=" Type .
 </div>
 
 <p>
-类型声明将标识符，即<b>类型名</b>绑定至一个与现存类型有相同的
-<a href="#类型">底层类型</a>的新类型，现有类型定义的操作也会为该新类型定义。
-新的类型<a href="#类型标识">不同</a>于现有类型。
+别名声明将标识符绑定至给定的类型。
 </p>
 
 <pre class="ebnf">
-类型声明     = "type" ( 类型实现 | "(" { 类型实现 ";" } ")" ) .
-类型实现     = 标识符 类型 .
+别名声明 = 标识符 "=" 类型 .
 </pre>
 
+<div class="english">
 <p>
 Within the <a href="#Declarations_and_scope">scope</a> of
 the identifier, it serves as an <i>alias</i> for the type.
@@ -3832,10 +3848,27 @@ type (
 	Polar    = polar    // Polar and polar denote identical types
 )
 </pre>
+</div>
 
+<p>
+在标识符的<a href="#Declarations_and_scope">作用域</a>中，它会作为该类型的
+<b>别名</b>。
+</p>
 
+<pre>
+type (
+	nodeList = []*Node  // nodeList 和 []*Node 是相同的类型
+	Polar    = polar    // Polar 和 polar 表示相同的类型
+)
+</pre>
+
+<div class="english">
 <h4 id="Type_definitions">Type definitions</h4>
+</div>
 
+<h4 id="类型定义">类型定义</h4>
+
+<div class="english">
 <p>
 A type definition creates a new, distinct type with the same
 <a href="#Types">underlying type</a> and operations as the given type,
@@ -3845,7 +3878,18 @@ and binds an identifier to it.
 <pre class="ebnf">
 TypeDef = identifier Type .
 </pre>
+</div>
 
+<p>
+类型定义创建一个新的，不同的类型并将一个标识符绑定至它，但它和给定的类型拥有相同的
+<a href="#类型">底层类型</a>和操作。
+</p>
+
+<pre class="ebnf">
+类型定义 = 标识符 类型 .
+</pre>
+
+<div class="english">
 <p>
 The new type is called a <i>defined type</i>.
 It is <a href="#Type_identity">different</a> from any other type,
@@ -3856,6 +3900,30 @@ including the type it is created from.
 type (
 	Point struct{ x, y float64 }  // Point and struct{ x, y float64 } are different types
 	polar Point                   // polar and Point denote different types
+)
+
+type TreeNode struct {
+	left, right *TreeNode
+	value *Comparable
+}
+
+type Block interface {
+	BlockSize() int
+	Encrypt(src, dst []byte)
+	Decrypt(src, dst []byte)
+}
+</pre>
+</div>
+
+<p>
+新的类型叫做<b>定义的类型</b>。它与其它任何类型，包括用于创建它的类型都
+<a href="#类型标识">不同</a>。
+</p>
+
+<pre>
+type (
+	Point struct{ x, y float64 }  // Point 和 struct{ x, y float64 } 是不同的类型
+	polar Point                   // polar 和 Point 表示不同的类型
 )
 
 type TreeNode struct {
@@ -3903,8 +3971,9 @@ type MyBlock Block
 </div>
 
 <p>
-声明类型不继承任何<a href="#方法声明">方法</a>绑定到现存类型，
-但接口类型或复合类型元素的<a href="#方法集">方法集</a>保持不变：
+定义的类型可拥有关联到它的<a href="#方法声明">方法</a>。
+它不继承任何绑定到给定类型的<a href="#方法声明">方法</a>，
+但接口类型或复合类型的元素的<a href="#方法集">方法集</a>保持不变：
 </p>
 
 <pre>
@@ -3916,12 +3985,11 @@ func (m *Mutex) Unlock()  { /* Unlock 实现 */ }
 // NewMutex 和 Mutex 拥有相同的组成，但它的方法集为空.
 type NewMutex Mutex
 
-// PtrMutex 的<a href="#指针类型">基础类型</a>的方法集保持不变.
+// PtrMutex 的<a href="#指针类型">底层类型</a> *Mutex 的方法集保持不变，
 // 但 PtrMutex 的方法集为空.
 type PtrMutex *Mutex
 
-// *PrintableMutex 的方法集包含方法
-// Lock 和 Unlock 绑定至其匿名字段 Mutex.
+// *PrintableMutex 的方法集包含绑定至其匿名字段 Mutex 的方法 Lock 和 Unlock.
 type PrintableMutex struct {
 	Mutex
 }
@@ -3938,7 +4006,7 @@ or string types and associate methods with them:
 </div>
 
 <p>
-类型声明可用来定义不同的布尔值、数字或字符串类型并对其附上方法：
+类型定义可用来定义不同的布尔值、数值或字符串类型并对其附上方法：
 </p>
 
 <pre>
@@ -4128,8 +4196,8 @@ _, y, _ := coord(p)   // coord() returns three values; only interested in y coor
 i, j := 0, 10
 f := func() int { return 7 }
 ch := make(chan int)
-r, w := os.Pipe(fd)  // os.Pipe() 返回两个值
-_, y, _ := coord(p)  // coord() 返回三个值；只与和 y 同位的值相关
+r, w := os.Pipe(fd)  // os.Pipe() 返回一对相关连的文件，若存在错误同样也会返回
+_, y, _ := coord(p)  // coord() 返回三个值；只关心与和 y 同位的值
 </pre>
 
 <div class="english">
@@ -6918,7 +6986,7 @@ x = q*y + r  且  |r| &lt; |y|
 </pre>
 
 <p>
-将 <code>x / y</code> 向零截断（“<a href="http://en.wikipedia.org/wiki/Modulo_operation">除法截断</a>”）。
+将 <code>x / y</code> 向零截断（“<a href="https://en.wikipedia.org/wiki/Modulo_operation">除法截断</a>”）。
 </p>
 
 <pre>
@@ -10776,8 +10844,15 @@ func f() (result int) {
 "defer"语句每执行一次，它所调用的函数值与形参就会
 <a href="#函数与方法的调用">像平时一样求值</a>并重新保存，但实际的函数并不会被调用。
 取而代之的是，在外围的函数返回前，被推迟的函数会按照它们被推迟的相反顺序立即执行。
-若已推迟函数值求值为 <code>nil</code>，当该函数被调用时就会执行 <a href="#恐慌处理">panic</a>
+That is, if the surrounding function
+returns through an explicit <a href="#Return_statements">return statement</a>,
+deferred functions are executed <i>after</i> any result parameters are set
+by that return statement but <i>before</i> the function returns to its caller.
+If a deferred function value evaluates
+to <code>nil</code>, execution <a href="#Handling_panics">panics</a>
 when the function is invoked, not when the "defer" statement is executed.
+若已推迟函数值求值为 <code>nil</code>，当该函数被调用而非在“defer”语句被执行时，
+就会执行 <a href="#恐慌处理">panic</a>。
 </p>
 
 <p>
@@ -10796,12 +10871,13 @@ for i := 0; i &lt;= 3; i++ {
 	defer fmt.Print(i)
 }
 
-// f 返回 1
+// f 返回 42
 func f() (result int) {
 	defer func() {
-		result++
+		// result 在它被 return 语句置为 6 后访问
+		result *= 7
 	}()
-	return 0
+	return 6
 }
 </pre>
 
@@ -12665,7 +12741,7 @@ The following minimal alignment properties are guaranteed:
 </li>
 
 <li>For a variable <code>x</code> of struct type: <code>unsafe.Alignof(x)</code> is the largest of
-   all the values <code>unsafe.Alignof(x.f)</code> for each field <code>f</code> of <code>x</code>, but at least 1.
+    all the values <code>unsafe.Alignof(x.f)</code> for each field <code>f</code> of <code>x</code>, but at least 1.
 </li>
 
 <li>For a variable <code>x</code> of array type: <code>unsafe.Alignof(x)</code> is the same as
