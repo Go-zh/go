@@ -415,16 +415,16 @@ func (p *Profile) String() string {
 	for _, m := range p.Mapping {
 		bits := ""
 		if m.HasFunctions {
-			bits = bits + "[FN]"
+			bits += "[FN]"
 		}
 		if m.HasFilenames {
-			bits = bits + "[FL]"
+			bits += "[FL]"
 		}
 		if m.HasLineNumbers {
-			bits = bits + "[LN]"
+			bits += "[LN]"
 		}
 		if m.HasInlineFrames {
-			bits = bits + "[IN]"
+			bits += "[IN]"
 		}
 		ss = append(ss, fmt.Sprintf("%d: %#x/%#x/%#x %s %s %s",
 			m.ID,
@@ -573,7 +573,7 @@ func (p *Profile) Demangle(d Demangler) error {
 	return nil
 }
 
-// Empty returns true if the profile contains no samples.
+// Empty reports whether the profile contains no samples.
 func (p *Profile) Empty() bool {
 	return len(p.Sample) == 0
 }

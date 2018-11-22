@@ -133,7 +133,7 @@ func genplt(ctxt *ld.Link) {
 }
 
 func genaddmoduledata(ctxt *ld.Link) {
-	addmoduledata := ctxt.Syms.ROLookup("runtime.addmoduledata", 0)
+	addmoduledata := ctxt.Syms.ROLookup("runtime.addmoduledata", sym.SymVerABI0)
 	if addmoduledata.Type == sym.STEXT && ctxt.BuildMode != ld.BuildModePlugin {
 		return
 	}
@@ -374,6 +374,13 @@ func adddynrel(ctxt *ld.Link, s *sym.Symbol, r *sym.Reloc) bool {
 }
 
 func elfreloc1(ctxt *ld.Link, r *sym.Reloc, sectoff int64) bool {
+	// Beware that bit0~bit15 start from the third byte of a instruction in Big-Endian machines.
+	if r.Type == objabi.R_ADDR || r.Type == objabi.R_POWER_TLS ||  r.Type == objabi.R_CALLPOWER {
+	} else {
+		if ctxt.Arch.ByteOrder == binary.BigEndian {
+			sectoff += 2
+		}
+	}
 	ctxt.Out.Write64(uint64(sectoff))
 
 	elfsym := r.Xsym.ElfsymForReloc()
@@ -692,6 +699,11 @@ func archreloc(ctxt *ld.Link, r *sym.Reloc, s *sym.Symbol, val int64) (int64, bo
 		// Runtime Handling" of "Power Architecture 64-Bit ELF V2 ABI
 		// Specification".
 		v := r.Sym.Value - 0x7000
+		if ctxt.HeadType == objabi.Haix {
+			// On AIX, the thread pointer points 0x7800 bytes after
+			// the TLS.
+			v -= 0x800
+		}
 		if int64(int16(v)) != v {
 			ld.Errorf(s, "TLS offset out of range %d", v)
 		}
@@ -941,6 +953,13 @@ func asmb(ctxt *ld.Link) {
 	ctxt.Out.SeekSet(int64(ld.Segdwarf.Fileoff))
 	ld.Dwarfblk(ctxt, int64(ld.Segdwarf.Vaddr), int64(ld.Segdwarf.Filelen))
 
+	loadersize := uint64(0)
+	if ctxt.HeadType == objabi.Haix && ctxt.BuildMode == ld.BuildModeExe {
+		loadero := uint64(ld.Rnd(int64(ld.Segdwarf.Fileoff+ld.Segdwarf.Filelen), int64(*ld.FlagRound)))
+		ctxt.Out.SeekSet(int64(loadero))
+		loadersize = ld.Loaderblk(ctxt, loadero)
+	}
+
 	/* output symbol table */
 	ld.Symsize = 0
 
@@ -960,6 +979,16 @@ func asmb(ctxt *ld.Link) {
 
 		case objabi.Hplan9:
 			symo = uint32(ld.Segdata.Fileoff + ld.Segdata.Filelen)
+
+		case objabi.Haix:
+			symo = uint32(ld.Segdwarf.Fileoff + ld.Segdwarf.Filelen)
+
+			// Add loader size if needed
+			if ctxt.BuildMode == ld.BuildModeExe {
+				symo = uint32(ld.Rnd(int64(symo), int64(*ld.FlagRound)))
+				symo += uint32(loadersize)
+			}
+			symo = uint32(ld.Rnd(int64(symo), int64(*ld.FlagRound)))
 		}
 
 		ctxt.Out.SeekSet(int64(symo))
@@ -988,6 +1017,10 @@ func asmb(ctxt *ld.Link) {
 				ctxt.Out.Write(sym.P)
 				ctxt.Out.Flush()
 			}
+
+		case objabi.Haix:
+			ld.Asmaixsym(ctxt)
+			ctxt.Out.Flush()
 		}
 	}
 
@@ -1013,6 +1046,9 @@ func asmb(ctxt *ld.Link) {
 		objabi.Hopenbsd,
 		objabi.Hnacl:
 		ld.Asmbelf(ctxt, int64(symo))
+
+	case objabi.Haix:
+		ld.Asmbxcoff(ctxt)
 	}
 
 	ctxt.Out.Flush()

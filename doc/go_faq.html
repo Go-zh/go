@@ -39,7 +39,7 @@ garbage collection, or at least some sort of safe automatic memory management wa
 
 <p>
 These considerations led to
-<a href="https://commandcenter.blogspot.com/2017/09/go-ten-years-and-climbing.html">a 
+<a href="https://commandcenter.blogspot.com/2017/09/go-ten-years-and-climbing.html">a
 series of discussions</a> from which Go arose, first as a set of ideas and
 desiderata, then as a language.
 An overarching goal was that Go do more to help the working programmer
@@ -804,7 +804,7 @@ type Fooer interface {
 <p>
 A type must then implement the <code>ImplementsFooer</code> method to be a
 <code>Fooer</code>, clearly documenting the fact and announcing it in
-<a href="/cmd/godoc/">godoc</a>'s output.
+<a href="/cmd/go/#hdr-Show_documentation_for_package_or_symbol">go doc</a>'s output.
 </p>
 
 <pre>
@@ -1282,7 +1282,7 @@ Why does "go get" use HTTPS when cloning a repository?</h3>
 
 <p>
 Companies often permit outgoing traffic only on the standard TCP ports 80 (HTTP)
-and 443 (HTTPS), blocking outgoing traffic on other ports, including TCP port 9418 
+and 443 (HTTPS), blocking outgoing traffic on other ports, including TCP port 9418
 (git) and TCP port 22 (SSH).
 When using HTTPS instead of HTTP, <code>git</code> enforces certificate validation by
 default, providing protection against man-in-the-middle, eavesdropping and tampering attacks.
@@ -1672,6 +1672,7 @@ to speed it up.
 For more detail on this topic see the talk entitled
 <a href="//blog.golang.org/2013/01/concurrency-is-not-parallelism.html">Concurrency
 is not Parallelism</a>.
+</p>
 
 <h3 id="number_cpus">
 How can I control the number of CPUs?</h3>
@@ -2282,6 +2283,7 @@ as the language and tools have developed.
 See the blog post about
 <a href="//blog.golang.org/2011/06/profiling-go-programs.html">profiling
 Go programs</a> for an informative example.
+</p>
 
 <h2 id="change_from_c">Changes from C</h2>
 

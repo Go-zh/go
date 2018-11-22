@@ -7,6 +7,7 @@ package main_test
 import (
 	"bytes"
 	"cmd/internal/sys"
+	"context"
 	"debug/elf"
 	"debug/macho"
 	"flag"
@@ -108,6 +109,12 @@ var testGo string
 var testTmpDir string
 var testBin string
 
+// testCtx is canceled when the test binary is about to time out.
+//
+// If https://golang.org/issue/28135 is accepted, uses of this variable in test
+// functions should be replaced by t.Context().
+var testCtx = context.Background()
+
 // The TestMain function creates a go command for testing purposes and
 // deletes it after the tests have been run.
 func TestMain(m *testing.M) {
@@ -120,6 +127,20 @@ func TestMain(m *testing.M) {
 	os.Unsetenv("GOROOT_FINAL")
 
 	flag.Parse()
+
+	timeoutFlag := flag.Lookup("test.timeout")
+	if timeoutFlag != nil {
+		// TODO(golang.org/issue/28147): The go command does not pass the
+		// test.timeout flag unless either -timeout or -test.timeout is explicitly
+		// set on the command line.
+		if d := timeoutFlag.Value.(flag.Getter).Get().(time.Duration); d != 0 {
+			aBitShorter := d * 95 / 100
+			var cancel context.CancelFunc
+			testCtx, cancel = context.WithTimeout(testCtx, aBitShorter)
+			defer cancel()
+		}
+	}
+
 	if *proxyAddr != "" {
 		StartProxy()
 		select {}
@@ -1441,8 +1462,38 @@ func TestInstallIntoGOPATH(t *testing.T) {
 func TestBuildOutputToDevNull(t *testing.T) {
 	tg := testgo(t)
 	defer tg.cleanup()
+	fi1, err1 := os.Lstat(os.DevNull)
 	tg.setenv("GOPATH", filepath.Join(tg.pwd(), "testdata"))
 	tg.run("build", "-o", os.DevNull, "go-cmd-test")
+	fi2, err2 := os.Lstat(os.DevNull)
+	if err1 == nil {
+		if err2 != nil {
+			t.Errorf("second stat of /dev/null failed: %v", err2)
+		} else if !os.SameFile(fi1, fi2) {
+			t.Errorf("/dev/null changed: now %v was %v", fi1, fi2)
+		}
+	}
+}
+
+// Issue 28549.
+func TestTestOutputToDevNull(t *testing.T) {
+	tg := testgo(t)
+	defer tg.cleanup()
+	fi1, err1 := os.Lstat(os.DevNull)
+	tg.makeTempdir()
+	tg.setenv("GOPATH", tg.path("."))
+	tg.tempFile("src/p/p.go", "package p\n")
+	tg.tempFile("src/p/p_test.go", "package p\nimport \"testing\"\nfunc TestX(t *testing.T) {}\n")
+	tg.run("test", "-o", os.DevNull, "-c", "p")
+	tg.mustNotExist("p.test")
+	fi2, err2 := os.Lstat(os.DevNull)
+	if err1 == nil {
+		if err2 != nil {
+			t.Errorf("second stat of /dev/null failed: %v", err2)
+		} else if !os.SameFile(fi1, fi2) {
+			t.Errorf("/dev/null changed: now %v was %v", fi1, fi2)
+		}
+	}
 }
 
 func TestPackageMainTestImportsArchiveNotBinary(t *testing.T) {

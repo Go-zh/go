@@ -146,6 +146,11 @@ func LastIndex(s, substr string) int {
 	return -1
 }
 
+// IndexByte returns the index of the first instance of c in s, or -1 if c is not present in s.
+func IndexByte(s string, c byte) int {
+	return bytealg.IndexByteString(s, c)
+}
+
 // IndexRune returns the index of the first instance of the Unicode code point
 // r, or -1 if rune is not present in s.
 // If r is utf8.RuneError, it returns the first instance of any
@@ -463,8 +468,18 @@ func Map(mapping func(rune) rune, s string) string {
 
 	for i, c := range s {
 		r := mapping(c)
-		if r == c {
+		if r == c && c != utf8.RuneError {
 			continue
+		}
+
+		var width int
+		if c == utf8.RuneError {
+			c, width = utf8.DecodeRuneInString(s[i:])
+			if width != 1 && r == c {
+				continue
+			}
+		} else {
+			width = utf8.RuneLen(c)
 		}
 
 		b.Grow(len(s) + utf8.UTFMax)
@@ -473,17 +488,7 @@ func Map(mapping func(rune) rune, s string) string {
 			b.WriteRune(r)
 		}
 
-		if c == utf8.RuneError {
-			// RuneError is the result of either decoding
-			// an invalid sequence or '\uFFFD'. Determine
-			// the correct number of bytes we need to advance.
-			_, w := utf8.DecodeRuneInString(s[i:])
-			i += w
-		} else {
-			i += utf8.RuneLen(c)
-		}
-
-		s = s[i:]
+		s = s[i+width:]
 		break
 	}
 
@@ -1040,5 +1045,4 @@ func indexRabinKarp(s, substr string) int {
 		}
 	}
 	return -1
-
 }

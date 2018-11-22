@@ -342,12 +342,21 @@
 // 	cd go/src/encoding/json; go doc decode
 //
 // Flags:
+// 	-all
+// 		Show all the documentation for the package.
 // 	-c
 // 		Respect case when matching symbols.
 // 	-cmd
 // 		Treat a command (package main) like a regular package.
 // 		Otherwise package main's exported symbols are hidden
 // 		when showing the package's top-level documentation.
+// 	-src
+// 		Show the full source code for the symbol. This will
+// 		display the full Go source of its declaration and
+// 		definition, such as a function definition (including
+// 		the body), type declaration or enclosing const
+// 		block. The output may therefore include unexported
+// 		details.
 // 	-u
 // 		Show documentation for unexported as well as exported
 // 		symbols, methods, and fields.
@@ -963,6 +972,8 @@
 // and -dropreplace editing flags may be repeated, and the changes
 // are applied in the order given.
 //
+// The -go=version flag sets the expected Go language version.
+//
 // The -print flag prints the final go.mod in its text format instead of
 // writing it back to go.mod.
 //
@@ -975,7 +986,8 @@
 // 	}
 //
 // 	type GoMod struct {
-// 		Module Module
+// 		Module  Module
+// 		Go      string
 // 		Require []Require
 // 		Exclude []Module
 // 		Replace []Replace
@@ -1287,15 +1299,24 @@
 //
 // Usage:
 //
-// 	go vet [-n] [-x] [build flags] [vet flags] [packages]
+// 	go vet [-n] [-x] [-vettool prog] [build flags] [vet flags] [packages]
 //
 // Vet runs the Go vet command on the packages named by the import paths.
 //
 // For more about vet and its flags, see 'go doc cmd/vet'.
 // For more about specifying packages, see 'go help packages'.
+// For a list of checkers and their flags, see 'go tool vet help'.
+// For details of a specific checker such as 'printf', see 'go tool vet help printf'.
 //
 // The -n flag prints commands that would be executed.
 // The -x flag prints commands as they are executed.
+//
+// The -vettool=prog flag selects a different analysis tool with alternative
+// or additional checks.
+// For example, the 'shadow' analyzer can be built and run using these commands:
+//
+//   go install golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow
+//   go vet -vettool=$(which shadow)
 //
 // The build flags supported by go vet are those that control package resolution
 // and execution, such as -n, -x, -v, -tags, and -toolexec.
@@ -1488,6 +1509,10 @@
 // 		The command to use to compile C++ code.
 // 	PKG_CONFIG
 // 		Path to pkg-config tool.
+// 	AR
+// 		The command to use to manipulate library archives when
+// 		building with the gccgo compiler.
+// 		The default is 'ar'.
 //
 // Architecture-specific environment variables:
 //
@@ -1595,17 +1620,20 @@
 // verb followed by arguments. For example:
 //
 // 	module my/thing
+// 	go 1.12
 // 	require other/thing v1.0.2
-// 	require new/thing v2.3.4
+// 	require new/thing/v2 v2.3.4
 // 	exclude old/thing v1.2.3
 // 	replace bad/thing v1.4.5 => good/thing v1.4.5
 //
-// The verbs are module, to define the module path; require, to require
-// a particular module at a given version or later; exclude, to exclude
-// a particular module version from use; and replace, to replace a module
-// version with a different module version. Exclude and replace apply only
-// in the main module's go.mod and are ignored in dependencies.
-// See https://research.swtch.com/vgo-mvs for details.
+// The verbs are
+// 	module, to define the module path;
+// 	go, to set the expected language version;
+// 	require, to require a particular module at a given version or later;
+// 	exclude, to exclude a particular module version from use; and
+// 	replace, to replace a module version with a different module version.
+// Exclude and replace apply only in the main module's go.mod and are ignored
+// in dependencies.  See https://research.swtch.com/vgo-mvs for details.
 //
 // The leading verb can be factored out of adjacent lines to create a block,
 // like in Go imports:
@@ -2490,7 +2518,7 @@
 // In general, adding a new dependency may require upgrading
 // existing dependencies to keep a working build, and 'go get' does
 // this automatically. Similarly, downgrading one dependency may
-// require downgrading other dependenceis, and 'go get' does
+// require downgrading other dependencies, and 'go get' does
 // this automatically as well.
 //
 // The -m flag instructs get to stop here, after resolving, upgrading,
@@ -2652,6 +2680,8 @@
 // 	    Run enough iterations of each benchmark to take t, specified
 // 	    as a time.Duration (for example, -benchtime 1h30s).
 // 	    The default is 1 second (1s).
+// 	    The special syntax Nx means to run the benchmark N times
+// 	    (for example, -benchtime 100x).
 //
 // 	-count n
 // 	    Run each test and benchmark n times (default 1).

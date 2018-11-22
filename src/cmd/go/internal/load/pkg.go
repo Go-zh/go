@@ -440,6 +440,10 @@ const (
 // this package, as part of a bigger load operation, and by GOPATH-based "go get".
 // TODO(rsc): When GOPATH-based "go get" is removed, unexport this function.
 func LoadImport(path, srcDir string, parent *Package, stk *ImportStack, importPos []token.Position, mode int) *Package {
+	if path == "" {
+		panic("LoadImport called with empty package path")
+	}
+
 	stk.Push(path)
 	defer stk.Pop()
 
@@ -1339,6 +1343,7 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 
 	// SWIG adds imports of some standard packages.
 	if p.UsesSwig() {
+		addImport("unsafe", true)
 		if cfg.BuildContext.Compiler != "gccgo" {
 			addImport("runtime/cgo", true)
 		}
@@ -1750,6 +1755,9 @@ func LoadPackageNoFlags(arg string, stk *ImportStack) *Package {
 // loadPackage accepts pseudo-paths beginning with cmd/ to denote commands
 // in the Go command directory, as well as paths to those directories.
 func loadPackage(arg string, stk *ImportStack) *Package {
+	if arg == "" {
+		panic("loadPackage called with empty package path")
+	}
 	if build.IsLocalImport(arg) {
 		dir := arg
 		if !filepath.IsAbs(dir) {
@@ -1848,6 +1856,9 @@ func PackagesAndErrors(patterns []string) []*Package {
 
 	for _, m := range matches {
 		for _, pkg := range m.Pkgs {
+			if pkg == "" {
+				panic(fmt.Sprintf("ImportPaths returned empty package for pattern %s", m.Pattern))
+			}
 			p := loadPackage(pkg, &stk)
 			p.Match = append(p.Match, m.Pattern)
 			p.Internal.CmdlinePkg = true

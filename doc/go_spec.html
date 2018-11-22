@@ -1,12 +1,12 @@
 <!--{
 	"Title": "Go 编程语言规范",
-	"Subtitle": "版本：2018 年 9 月 24 日  译者：Oling Cat",
+	"Subtitle": "版本：2018 年 11 月 16 日  译者：Oling Cat",
 	"Path": "/ref/spec"
 }-->
 
 <!--{
 	"Title": "The Go Programming Language Specification",
-	"Subtitle": "Version of September 24, 2018",
+	"Subtitle": "Version of November 16, 2018",
 	"Path": "/ref/spec"
 }-->
 
@@ -1634,7 +1634,7 @@ To avoid portability issues all numeric types are <a href="#Type_definitions">de
 types</a> and thus distinct except
 <code>byte</code>, which is an <a href="#Alias_declarations">alias</a> for <code>uint8</code>, and
 <code>rune</code>, which is an alias for <code>int32</code>.
-Conversions
+Explicit conversions
 are required when different numeric types are mixed in an expression
 or assignment. For instance, <code>int32</code> and <code>int</code>
 are not the same type even though they may have the same size on a
@@ -1660,6 +1660,7 @@ particular architecture.
 <p>
 A <i>string type</i> represents the set of string values.
 A string value is a (possibly empty) sequence of bytes.
+The number of bytes is called the length of the string and is never negative.
 Strings are immutable: once created,
 it is impossible to change the contents of a string.
 The predeclared string type is <code>string</code>;
@@ -1674,7 +1675,7 @@ it is a <a href="#Type_definitions">defined type</a>.
 
 <div class="english">
 <p>
-The length of a string <code>s</code> (its size in bytes) can be discovered using
+The length of a string <code>s</code> can be discovered using
 the built-in function <a href="#Length_and_capacity"><code>len</code></a>.
 The length is a compile-time constant if the string is a constant.
 A string's bytes can be accessed by integer <a href="#Index_expressions">indices</a>
@@ -1686,7 +1687,7 @@ string, <code>&amp;s[i]</code> is invalid.
 </div>
 
 <p>
-字符串 <code>s</code> 的长度（即其字节大小）可使用内建函数
+字符串 <code>s</code> 的长度可使用内建函数
 <a href="#长度与容量"><code>len</code></a> 获取。若该字符串为常量，则其长度即为编译时常量。
 字符串的字节可通过整数（§<a href="#下标">下标</a>）0 至 <code>len(s)-1</code> 访问。
 获取这样一个元素的地址是非法的；若 <code>s[i]</code> 为字符串的第 <code>i</code>
@@ -1704,8 +1705,7 @@ string, <code>&amp;s[i]</code> is invalid.
 <p>
 An array is a numbered sequence of elements of a single
 type, called the element type.
-The number of elements is called the length and is never
-negative.
+The number of elements is called the length of the array and is never negative.
 </p>
 
 <pre class="ebnf">
@@ -1774,6 +1774,7 @@ multi-dimensional types.
 A slice is a descriptor for a contiguous segment of an <i>underlying array</i> and
 provides access to a numbered sequence of elements from that array.
 A slice type denotes the set of all slices of arrays of its element type.
+The number of elements is called the length of the slice and is never negative.
 The value of an uninitialized slice is <code>nil</code>.
 </p>
 
@@ -1793,8 +1794,7 @@ SliceType = "[" "]" ElementType .
 
 <div class="english">
 <p>
-Like arrays, slices are indexable and have a length.  The length of a
-slice <code>s</code> can be discovered by the built-in function
+The length of a slice <code>s</code> can be discovered by the built-in function
 <a href="#Length_and_capacity"><code>len</code></a>; unlike with arrays it may change during
 execution.  The elements can be addressed by integer <a href="#Index_expressions">indices</a>
 0 through <code>len(s)-1</code>.  The slice index of a
@@ -1804,7 +1804,7 @@ underlying array.
 </div>
 
 <p>
-类似于数组，切片是可索引的且拥有一个长度。切片 <code>s</code> 的长度可通过内建函数
+切片 <code>s</code> 的长度可通过内建函数
 <a href="#长度与容量"><code>len</code></a>获取；不同于数组的是，切片可在执行过程中被改变，
 其元素可通过整数（§<a href="#下标表达式">下标</a>） 0 到 <code>len(s)-1</code> 寻址。
 给定元素的切片下标可能小于它在其底层数组中的下标。
@@ -2682,7 +2682,8 @@ The optional <code>&lt;-</code> operator specifies the channel <i>direction</i>,
 <i>send</i> or <i>receive</i>. If no direction is given, the channel is
 <i>bidirectional</i>.
 A channel may be constrained only to send or only to receive by
-<a href="#Conversions">conversion</a> or <a href="#Assignments">assignment</a>.
+<a href="#Assignments">assignment</a> or
+explicit <a href="#Conversions">conversion</a>.
 </p>
 
 <pre>
@@ -4098,9 +4099,9 @@ Otherwise, each variable is initialized to its <a href="#The_zero_value">zero va
 If a type is present, each variable is given that type.
 Otherwise, each variable is given the type of the corresponding
 initialization value in the assignment.
-If that value is an untyped constant, it is first
+If that value is an untyped constant, it is first implicitly
 <a href="#Conversions">converted</a> to its <a href="#Constants">default type</a>;
-if it is an untyped boolean value, it is first converted to type <code>bool</code>.
+if it is an untyped boolean value, it is first implicitly converted to type <code>bool</code>.
 The predeclared value <code>nil</code> cannot be used to initialize a variable
 with no explicit type.
 </p>
@@ -4378,11 +4379,11 @@ Receiver   = Parameters .
 <p>
 The receiver is specified via an extra parameter section preceding the method
 name. That parameter section must declare a single non-variadic parameter, the receiver.
-Its type must be of the form <code>T</code> or <code>*T</code> (possibly using
-parentheses) where <code>T</code> is a type name. The type denoted by <code>T</code> is called
-the receiver <i>base type</i>; it must not be a pointer or interface type and
-it must be <a href="#Type_definitions">defined</a> in the same package as the method.
-The method is said to be <i>bound</i> to the base type and the method name
+Its type must be a <a href="#Type_definitions">defined</a> type <code>T</code> or a
+pointer to a defined type <code>T</code>. <code>T</code> is called the receiver
+<i>base type</i>. A receiver base type cannot be a pointer or interface type and
+it must be defined in the same package as the method.
+The method is said to be <i>bound</i> to its receiver base type and the method name
 is visible only within <a href="#Selectors">selectors</a> for type <code>T</code>
 or <code>*T</code>.
 </p>
@@ -4425,12 +4426,12 @@ the non-blank method and field names must be distinct.
 
 <div class="english">
 <p>
-Given type <code>Point</code>, the declarations
+Given defined type <code>Point</code>, the declarations
 </p>
 </div>
 
 <p>
-给定 <code>Point</code> 类型，声明
+给定定义的类型 <code>Point</code>，声明
 </p>
 
 <pre>
@@ -6428,14 +6429,14 @@ var v, ok T1 = x.(T)
 yields an additional untyped boolean value. The value of <code>ok</code> is <code>true</code>
 if the assertion holds. Otherwise it is <code>false</code> and the value of <code>v</code> is
 the <a href="#The_zero_value">zero value</a> for type <code>T</code>.
-No run-time panic occurs in this case.
+No <a href="#Run_time_panics">run-time panic</a> occurs in this case.
 </p>
 </div>
 
 <p>
 产生一个附加的无类型化布尔值。若该断言成立，<code>ok</code> 的值为 <code>true</code>，否则即为
 <code>false</code>，且 <code>v</code> 的值为类型为 <code>T</code> 的<a href="#零值">零值</a>。
-此种情况不会触发运行时恐慌。
+此种情况不会触发<a href="#运行时恐慌">运行时恐慌</a>。
 </p>
 
 
@@ -6755,14 +6756,14 @@ For operations involving constants only, see the section on
 <div class="english">
 <p>
 Except for shift operations, if one operand is an untyped <a href="#Constants">constant</a>
-and the other operand is not, the constant is <a href="#Conversions">converted</a>
+and the other operand is not, the constant is implicitly <a href="#Conversions">converted</a>
 to the type of the other operand.
 </p>
 </div>
 
 <p>
 除移位操作外，若其中一个操作数为无类型化<a href="#常量">常量</a>而另一个不是，
-该常量需<a href="#类型转换">类型转换</a>为另一个操作数的类型。
+该常量会隐式地<a href="#类型转换">类型转换</a>为另一个操作数的类型。
 </p>
 
 <div class="english">
@@ -6771,7 +6772,7 @@ The right operand in a shift expression must have unsigned integer type
 or be an untyped constant <a href="#Representability">representable</a> by a
 value of type <code>uint</code>.
 If the left operand of a non-constant shift expression is an untyped constant,
-it is first converted to the type it would assume if the shift expression were
+it is first implicitly converted to the type it would assume if the shift expression were
 replaced by its left operand alone.
 </p>
 
@@ -7134,7 +7135,7 @@ For signed integers, the operations <code>+</code>,
 <code>-</code>, <code>*</code>, <code>/</code>, and <code>&lt;&lt;</code> may legally
 overflow and the resulting value exists and is deterministically defined
 by the signed integer representation, the operation, and its operands.
-No exception is raised as a result of overflow.
+Overflow does not cause a <a href="#Run_time_panics">run-time panic</a>.
 A compiler may not optimize code under the assumption that overflow does
 not occur. For instance, it may not assume that <code>x &lt; x + 1</code> is always true.
 </p>
@@ -7175,7 +7176,7 @@ occurs is implementation-specific.
 An implementation may combine multiple floating-point operations into a single
 fused operation, possibly across statements, and produce a result that differs
 from the value obtained by executing and rounding the instructions individually.
-A floating-point type <a href="#Conversions">conversion</a> explicitly rounds to
+An explicit floating-point type <a href="#Conversions">conversion</a> rounds to
 the precision of the target type, preventing fusion that would discard that rounding.
 </p>
 
@@ -7662,7 +7663,14 @@ channel is closed and empty.
 
 <div class="english">
 <p>
-Conversions are expressions of the form <code>T(x)</code>
+A conversion changes the <a href="#Types">type</a> of an expression
+to the type specified by the conversion.
+A conversion may appear literally in the source, or it may be <i>implied</i>
+by the context in which an expression appears.
+</p>
+
+<p>
+An <i>explicit</i> conversion is an expression of the form <code>T(x)</code>
 where <code>T</code> is a type and <code>x</code> is an expression
 that can be converted to type <code>T</code>.
 </p>
@@ -7673,7 +7681,12 @@ Conversion = Type "(" Expression [ "," ] ")" .
 </div>
 
 <p>
-类型转换是形式为 <code>T(x)</code> 的表达式，其中 <code>T</code> 为类型，而
+类型转换用于将表达式的<a href="#类型">类型</a>更改为指定的类型。类型转换可直接出现在源码中，
+或者<b>隐含</b>在表达式出现的上下文中。
+</p>
+
+<p>
+<b>显式</b>类型转换是形式为 <code>T(x)</code> 的表达式，其中 <code>T</code> 为类型，而
 <code>x</code> 是可转换为类型 <code>T</code> 的表达式。
 </p>
 
@@ -7720,7 +7733,7 @@ func()(x)        // 函数签名 func() x
 A <a href="#Constants">constant</a> value <code>x</code> can be converted to
 type <code>T</code> if <code>x</code> is <a href="#Representability">representable</a>
 by a value of <code>T</code>.
-As a special case, an integer constant <code>x</code> can be converted to a
+As a special case, an integer constant <code>x</code> can be explicitly converted to a
 <a href="#String_types">string type</a> using the
 <a href="#Conversions_to_and_from_a_string_type">same rule</a>
 as for non-constant <code>x</code>.
@@ -7730,8 +7743,8 @@ as for non-constant <code>x</code>.
 <p>
 当<a href="#常量">常量</a>值 <code>x</code> <a href="#可表示性">可表示</a>为一个
 <code>T</code> 类型的值时，<code>x</code> 可转换为类型 <code>T</code>。
-作为一个特殊情况，整数常量 <code>x</code> 可作为非常量 <code>x</code> 使用
-<a href="#字符串类型的转换">同一规则</a>被转换为<a href="#字符串类型">字符串类型</a>。
+作为一种特例，整数常量 <code>x</code> 可作为非常量 <code>x</code> 使用
+<a href="#字符串类型的转换">同一规则</a>被显式转换为<a href="#字符串类型">字符串类型</a>。
 </p>
 
 <div class="english">
@@ -9139,13 +9152,13 @@ to the type of the operand to which it is assigned, with the following special c
 <li>
 	If an untyped constant
 	is assigned to a variable of interface type or the blank identifier,
-	the constant is first <a href="#Conversions">converted</a> to its
+	the constant is first implicitly <a href="#Conversions">converted</a> to its
 	 <a href="#Constants">default type</a>.
 </li>
 
 <li>
 	If an untyped boolean value is assigned to a variable of interface type or
-	the blank identifier, it is first converted to type <code>bool</code>.
+	the blank identifier, it is first implicitly converted to type <code>bool</code>.
 </li>
 </ol>
 </div>
@@ -9165,7 +9178,7 @@ to the type of the operand to which it is assigned, with the following special c
 </li>
 
 <li>
-	若无类型化布尔值被赋予一个接口类型的变量或空白标识符，它首先会转换为布尔类型。
+	若无类型化布尔值被赋予一个接口类型的变量或空白标识符，它首先会被隐式转换为布尔类型。
 </li>
 </ol>
 
@@ -9301,6 +9314,7 @@ ExprSwitchCase = "case" ExpressionList | "default" .
 </div>
 
 <p>
+
 在表达式选择中，switch 表达式会被求值，而 case 表达式无需为常量，它按从上到下，从左到右的顺序求值；
 第一个等于 switch 表达式的 case 表达式将引发相应情况的语句的执行；其它的情况将被跳过。
 若没有情况匹配且有"default"情况，则该语句将被执行。
@@ -9316,22 +9330,22 @@ ExprSwitchCase = "case" ExpressionList | "default" .
 
 <div class="english">
 <p>
-If the switch expression evaluates to an untyped constant, it is first
+If the switch expression evaluates to an untyped constant, it is first implicitly
 <a href="#Conversions">converted</a> to its <a href="#Constants">default type</a>;
-if it is an untyped boolean value, it is first converted to type <code>bool</code>.
+if it is an untyped boolean value, it is first implicitly converted to type <code>bool</code>.
 The predeclared untyped value <code>nil</code> cannot be used as a switch expression.
 </p>
 </div>
 
 <p>
-若 switch 求值出一个无类型化的常量，它首先会<a href="#类型转换">转换</a>为其<a href="#创两">默认类型</a>；
+若 switch 求值出一个无类型化的常量，它首先会隐式<a href="#类型转换">转换</a>为其<a href="#常量">默认类型</a>；
 若它是无类型化的布尔值，它首先会转换为 <code>bool</code> 类型。
 预声明的无类型化值 <code>nil</code> 无法用作 switch 表达式。
 </p>
 
 <div class="english">
 <p>
-If a case expression is untyped, it is first <a href="#Conversions">converted</a>
+If a case expression is untyped, it is first implicitly <a href="#Conversions">converted</a>
 to the type of the switch expression.
 For each (possibly converted) case expression <code>x</code> and the value <code>t</code>
 of the switch expression, <code>x == t</code> must be a valid <a href="#Comparison_operators">comparison</a>.
@@ -9339,7 +9353,7 @@ of the switch expression, <code>x == t</code> must be a valid <a href="#Comparis
 </div>
 
 <p>
-若 case 表达式为无类型化的，它首先会<a href="#类型转换">转换</a>为 switch 表达式的类型。
+若 case 表达式为无类型化的，它首先会隐式<a href="#类型转换">转换</a>为 switch 表达式的类型。
 对于每个（可能已转换的）case 表达式 <code>x</code> 与 switch 表达式的值 <code>t</code>，
 <code>x == t</code> 必须为有效的 <a href="#比较操作符">比较</a>。
 </p>
@@ -11443,7 +11457,7 @@ floating-point type and the return type is the complex type
 with the corresponding floating-point constituents:
 <code>complex64</code> for <code>float32</code> arguments, and
 <code>complex128</code> for <code>float64</code> arguments.
-If one of the arguments evaluates to an untyped constant, it is first
+If one of the arguments evaluates to an untyped constant, it is first implicitly
 <a href="#Conversions">converted</a> to the type of the other argument.
 If both arguments evaluate to untyped constants, they must be non-complex
 numbers or their imaginary parts must be zero, and the return value of
