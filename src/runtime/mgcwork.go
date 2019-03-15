@@ -93,6 +93,17 @@ type gcWork struct {
 	// termination check. Specifically, this indicates that this
 	// gcWork may have communicated work to another gcWork.
 	flushedWork bool
+
+	// pauseGen causes put operations to spin while pauseGen ==
+	// gcWorkPauseGen if debugCachedWork is true.
+	pauseGen uint32
+
+	// putGen is the pauseGen of the last putGen.
+	putGen uint32
+
+	// pauseStack is the stack at which this P was paused if
+	// debugCachedWork is true.
+	pauseStack [16]uintptr
 }
 
 // Most of the methods of gcWork are go:nowritebarrierrec because the
@@ -111,13 +122,59 @@ func (w *gcWork) init() {
 	w.wbuf2 = wbuf2
 }
 
+func (w *gcWork) checkPut(ptr uintptr, ptrs []uintptr) {
+	if debugCachedWork {
+		alreadyFailed := w.putGen == w.pauseGen
+		w.putGen = w.pauseGen
+		if m := getg().m; m.locks > 0 || m.mallocing != 0 || m.preemptoff != "" || m.p.ptr().status != _Prunning {
+			// If we were to spin, the runtime may
+			// deadlock: the condition above prevents
+			// preemption (see newstack), which could
+			// prevent gcMarkDone from finishing the
+			// ragged barrier and releasing the spin.
+			return
+		}
+		for atomic.Load(&gcWorkPauseGen) == w.pauseGen {
+		}
+		if throwOnGCWork {
+			printlock()
+			if alreadyFailed {
+				println("runtime: checkPut already failed at this generation")
+			}
+			println("runtime: late gcWork put")
+			if ptr != 0 {
+				gcDumpObject("ptr", ptr, ^uintptr(0))
+			}
+			for _, ptr := range ptrs {
+				gcDumpObject("ptrs", ptr, ^uintptr(0))
+			}
+			println("runtime: paused at")
+			for _, pc := range w.pauseStack {
+				if pc == 0 {
+					break
+				}
+				f := findfunc(pc)
+				if f.valid() {
+					// Obviously this doesn't
+					// relate to ancestor
+					// tracebacks, but this
+					// function prints what we
+					// want.
+					printAncestorTracebackFuncInfo(f, pc)
+				} else {
+					println("\tunknown PC ", hex(pc), "\n")
+				}
+			}
+			throw("throwOnGCWork")
+		}
+	}
+}
+
 // put enqueues a pointer for the garbage collector to trace.
 // obj must point to the beginning of a heap object or an oblet.
 //go:nowritebarrierrec
 func (w *gcWork) put(obj uintptr) {
-	if throwOnGCWork {
-		throw("throwOnGCWork")
-	}
+	w.checkPut(obj, nil)
 
 	flushed := false
 	wbuf := w.wbuf1
@@ -153,9 +210,7 @@ func (w *gcWork) put(obj uintptr) {
 // otherwise it returns false and the caller needs to call put.
 //go:nowritebarrierrec
 func (w *gcWork) putFast(obj uintptr) bool {
-	if throwOnGCWork {
-		throw("throwOnGCWork")
-	}
+	w.checkPut(obj, nil)
 
 	wbuf := w.wbuf1
 	if wbuf == nil {
@@ -178,9 +233,7 @@ func (w *gcWork) putBatch(obj []uintptr) {
 		return
 	}
 
-	if throwOnGCWork {
-		throw("throwOnGCWork")
-	}
+	w.checkPut(0, obj)
 
 	flushed := false
 	wbuf := w.wbuf1
@@ -303,16 +356,12 @@ func (w *gcWork) balance() {
 		return
 	}
 	if wbuf := w.wbuf2; wbuf.nobj != 0 {
-		if throwOnGCWork {
-			throw("throwOnGCWork")
-		}
+		w.checkPut(0, wbuf.obj[:wbuf.nobj])
 		putfull(wbuf)
 		w.flushedWork = true
 		w.wbuf2 = getempty()
 	} else if wbuf := w.wbuf1; wbuf.nobj > 4 {
-		if throwOnGCWork {
-			throw("throwOnGCWork")
-		}
+		w.checkPut(0, wbuf.obj[:wbuf.nobj])
 		w.wbuf1 = handoff(wbuf)
 		w.flushedWork = true // handoff did putfull
 	} else {

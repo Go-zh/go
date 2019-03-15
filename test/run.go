@@ -559,6 +559,19 @@ func (t *test) run() {
 		}
 		args = args[1:]
 	}
+	if action == "errorcheck" {
+		found := false
+		for i, f := range flags {
+			if strings.HasPrefix(f, "-d=") {
+				flags[i] = f + ",ssa/check/on"
+				found = true
+				break
+			}
+		}
+		if !found {
+			flags = append(flags, "-d=ssa/check/on")
+		}
+	}
 
 	t.makeTempDir()
 	if !*keep {
@@ -629,7 +642,8 @@ func (t *test) run() {
 		// against a set of regexps in comments.
 		ops := t.wantedAsmOpcodes(long)
 		for _, env := range ops.Envs() {
-			cmdline := []string{"build", "-gcflags", "-S"}
+			// -S=2 forces outermost line numbers when disassembling inlined code.
+			cmdline := []string{"build", "-gcflags", "-S=2"}
 			cmdline = append(cmdline, flags...)
 			cmdline = append(cmdline, long)
 			cmd := exec.Command(goTool(), cmdline...)
@@ -1199,7 +1213,7 @@ func (t *test) updateErrors(out, file string) {
 		msg := errStr[colon2+2:]
 		msg = strings.Replace(msg, file, base, -1) // normalize file mentions in error itself
 		msg = strings.TrimLeft(msg, " \t")
-		for _, r := range []string{`\`, `*`, `+`, `[`, `]`, `(`, `)`} {
+		for _, r := range []string{`\`, `*`, `+`, `?`, `[`, `]`, `(`, `)`} {
 			msg = strings.Replace(msg, r, `\`+r, -1)
 		}
 		msg = strings.Replace(msg, `"`, `.`, -1)
@@ -1368,9 +1382,10 @@ var (
 		"arm64":   {},
 		"mips":    {"GOMIPS", "hardfloat", "softfloat"},
 		"mips64":  {"GOMIPS64", "hardfloat", "softfloat"},
-		"ppc64":   {},
-		"ppc64le": {},
+		"ppc64":   {"GOPPC64", "power8", "power9"},
+		"ppc64le": {"GOPPC64", "power8", "power9"},
 		"s390x":   {},
+		"wasm":    {},
 	}
 )
 
@@ -1449,6 +1464,9 @@ func (t *test) wantedAsmOpcodes(fn string) asmChecks {
 				os, arch, subarch = "linux", archspec[0], archspec[1][1:]
 			default: // 1 component: "386"
 				os, arch, subarch = "linux", archspec[0], ""
+				if arch == "wasm" {
+					os = "js"
+				}
 			}
 
 			if _, ok := archVariants[arch]; !ok {

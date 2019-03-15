@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -90,7 +91,9 @@ func ImportPaths(patterns []string) []*search.Match {
 				// the exact version of a particular module increases during
 				// the loader iterations.
 				m.Pkgs = str.StringList(fsDirs[i])
-				for i, pkg := range m.Pkgs {
+				pkgs := m.Pkgs
+				m.Pkgs = m.Pkgs[:0]
+				for _, pkg := range pkgs {
 					dir := pkg
 					if !filepath.IsAbs(dir) {
 						dir = filepath.Join(cwd, pkg)
@@ -101,41 +104,48 @@ func ImportPaths(patterns []string) []*search.Match {
 					// Note: The checks for @ here are just to avoid misinterpreting
 					// the module cache directories (formerly GOPATH/src/mod/foo@v1.5.2/bar).
 					// It's not strictly necessary but helpful to keep the checks.
-					if dir == ModRoot {
+					if modRoot != "" && dir == modRoot {
 						pkg = Target.Path
-					} else if strings.HasPrefix(dir, ModRoot+string(filepath.Separator)) && !strings.Contains(dir[len(ModRoot):], "@") {
-						suffix := filepath.ToSlash(dir[len(ModRoot):])
+					} else if modRoot != "" && strings.HasPrefix(dir, modRoot+string(filepath.Separator)) && !strings.Contains(dir[len(modRoot):], "@") {
+						suffix := filepath.ToSlash(dir[len(modRoot):])
 						if strings.HasPrefix(suffix, "/vendor/") {
 							// TODO getmode vendor check
 							pkg = strings.TrimPrefix(suffix, "/vendor/")
+						} else if targetInGorootSrc && Target.Path == "std" {
+							// Don't add the prefix "std/" to packages in the "std" module.
+							// It's the one module path that isn't a prefix of its packages.
+							pkg = strings.TrimPrefix(suffix, "/")
+							if pkg == "builtin" {
+								// "builtin" is a pseudo-package with a real source file.
+								// It's not included in "std", so it shouldn't be included in
+								// "./..." within module "std" either.
+								continue
+							}
 						} else {
 							pkg = Target.Path + suffix
 						}
-					} else if sub := search.InDir(dir, cfg.GOROOTsrc); sub != "" && !strings.Contains(sub, "@") {
+					} else if sub := search.InDir(dir, cfg.GOROOTsrc); sub != "" && sub != "." && !strings.Contains(sub, "@") {
 						pkg = filepath.ToSlash(sub)
 					} else if path := pathInModuleCache(dir); path != "" {
 						pkg = path
 					} else {
 						pkg = ""
 						if !iterating {
+							ModRoot()
 							base.Errorf("go: directory %s outside available modules", base.ShortPath(dir))
 						}
 					}
 					info, err := os.Stat(dir)
 					if err != nil || !info.IsDir() {
-						// If the directory does not exist,
-						// don't turn it into an import path
-						// that will trigger a lookup.
-						pkg = ""
-						if !iterating {
-							if err != nil {
-								base.Errorf("go: no such directory %v", m.Pattern)
-							} else {
-								base.Errorf("go: %s is not a directory", m.Pattern)
-							}
+						// If the directory is local but does not exist, don't return it
+						// while loader is iterating, since this would trigger a fetch.
+						// After loader is done iterating, we still need to return the
+						// path, so that "go list -e" produces valid output.
+						if iterating {
+							continue
 						}
 					}
-					m.Pkgs[i] = pkg
+					m.Pkgs = append(m.Pkgs, pkg)
 				}
 
 			case strings.Contains(m.Pattern, "..."):
@@ -166,9 +176,7 @@ func ImportPaths(patterns []string) []*search.Match {
 		updateMatches(true)
 		for _, m := range matches {
 			for _, pkg := range m.Pkgs {
-				if pkg != "" {
-					roots = append(roots, pkg)
-				}
+				roots = append(roots, pkg)
 			}
 		}
 		return roots
@@ -251,21 +259,25 @@ func ImportFromFiles(gofiles []string) {
 // DirImportPath returns the effective import path for dir,
 // provided it is within the main module, or else returns ".".
 func DirImportPath(dir string) string {
+	if modRoot == "" {
+		return "."
+	}
+
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(cwd, dir)
 	} else {
 		dir = filepath.Clean(dir)
 	}
 
-	if dir == ModRoot {
-		return Target.Path
+	if dir == modRoot {
+		return targetPrefix
 	}
-	if strings.HasPrefix(dir, ModRoot+string(filepath.Separator)) {
-		suffix := filepath.ToSlash(dir[len(ModRoot):])
+	if strings.HasPrefix(dir, modRoot+string(filepath.Separator)) {
+		suffix := filepath.ToSlash(dir[len(modRoot):])
 		if strings.HasPrefix(suffix, "/vendor/") {
 			return strings.TrimPrefix(suffix, "/vendor/")
 		}
-		return Target.Path + suffix
+		return targetPrefix + suffix
 	}
 	return "."
 }
@@ -393,12 +405,16 @@ func ModuleUsedDirectly(path string) bool {
 }
 
 // Lookup returns the source directory, import path, and any loading error for
-// the package at path.
+// the package at path as imported from the package in parentDir.
 // Lookup requires that one of the Load functions in this package has already
 // been called.
-func Lookup(path string) (dir, realPath string, err error) {
+func Lookup(parentPath string, parentIsStd bool, path string) (dir, realPath string, err error) {
 	if path == "" {
 		panic("Lookup called with empty package path")
+	}
+
+	if parentIsStd {
+		path = loaded.stdVendor(parentPath, path)
 	}
 	pkg, ok := loaded.pkgCache.Get(path).(*loadPkg)
 	if !ok {
@@ -433,10 +449,11 @@ func Lookup(path string) (dir, realPath string, err error) {
 // TODO(rsc): It might be nice to make the loader take and return
 // a buildList rather than hard-coding use of the global.
 type loader struct {
-	tags      map[string]bool // tags for scanDir
-	testRoots bool            // include tests for roots
-	isALL     bool            // created with LoadALL
-	testAll   bool            // include tests for all packages
+	tags           map[string]bool // tags for scanDir
+	testRoots      bool            // include tests for roots
+	isALL          bool            // created with LoadALL
+	testAll        bool            // include tests for all packages
+	forceStdVendor bool            // if true, load standard-library dependencies from the vendor subtree
 
 	// reset on each iteration
 	roots    []*loadPkg
@@ -456,6 +473,13 @@ func newLoader() *loader {
 	ld := new(loader)
 	ld.tags = imports.Tags()
 	ld.testRoots = LoadTests
+
+	// Inside the "std" and "cmd" modules, we prefer to use the vendor directory
+	// unless the command explicitly changes the module graph.
+	if !targetInGorootSrc || (cfg.CmdName != "get" && !strings.HasPrefix(cfg.CmdName, "mod ")) {
+		ld.forceStdVendor = true
+	}
+
 	return ld
 }
 
@@ -630,7 +654,11 @@ func (ld *loader) doPkg(item interface{}) {
 		}
 	}
 
+	inStd := (search.IsStandardImportPath(pkg.path) && search.InDir(pkg.dir, cfg.GOROOTsrc) != "")
 	for _, path := range imports {
+		if inStd {
+			path = ld.stdVendor(pkg.path, path)
+		}
 		pkg.imports = append(pkg.imports, ld.pkg(path, false))
 	}
 
@@ -639,6 +667,31 @@ func (ld *loader) doPkg(item interface{}) {
 	if pkg.test != nil {
 		ld.work.Add(pkg.test)
 	}
+}
+
+// stdVendor returns the canonical import path for the package with the given
+// path when imported from the standard-library package at parentPath.
+func (ld *loader) stdVendor(parentPath, path string) string {
+	if search.IsStandardImportPath(path) {
+		return path
+	}
+
+	if str.HasPathPrefix(parentPath, "cmd") {
+		if ld.forceStdVendor || Target.Path != "cmd" {
+			vendorPath := pathpkg.Join("cmd", "vendor", path)
+			if _, err := os.Stat(filepath.Join(cfg.GOROOTsrc, filepath.FromSlash(vendorPath))); err == nil {
+				return vendorPath
+			}
+		}
+	} else if ld.forceStdVendor || Target.Path != "std" {
+		vendorPath := pathpkg.Join("vendor", path)
+		if _, err := os.Stat(filepath.Join(cfg.GOROOTsrc, filepath.FromSlash(vendorPath))); err == nil {
+			return vendorPath
+		}
+	}
+
+	// Not vendored: resolve from modules.
+	return path
 }
 
 // computePatternAll returns the list of packages matching pattern "all",
@@ -810,7 +863,7 @@ func WhyDepth(path string) int {
 // a module.Version with Path == "".
 func Replacement(mod module.Version) module.Version {
 	if modFile == nil {
-		// Happens during testing.
+		// Happens during testing and if invoking 'go get' or 'go list' outside a module.
 		return module.Version{}
 	}
 
@@ -887,7 +940,7 @@ func readVendorList() {
 	vendorOnce.Do(func() {
 		vendorList = nil
 		vendorMap = make(map[string]module.Version)
-		data, _ := ioutil.ReadFile(filepath.Join(ModRoot, "vendor/modules.txt"))
+		data, _ := ioutil.ReadFile(filepath.Join(ModRoot(), "vendor/modules.txt"))
 		var m module.Version
 		for _, line := range strings.Split(string(data), "\n") {
 			if strings.HasPrefix(line, "# ") {
@@ -917,7 +970,7 @@ func (r *mvsReqs) modFileToList(f *modfile.File) []module.Version {
 
 func (r *mvsReqs) required(mod module.Version) ([]module.Version, error) {
 	if mod == Target {
-		if modFile.Go != nil {
+		if modFile != nil && modFile.Go != nil {
 			r.versions.LoadOrStore(mod, modFile.Go.Version)
 		}
 		var list []module.Version
@@ -931,13 +984,26 @@ func (r *mvsReqs) required(mod module.Version) ([]module.Version, error) {
 		return vendorList, nil
 	}
 
+	if targetInGorootSrc {
+		// When inside "std" or "cmd", only fetch and read go.mod files if we're
+		// explicitly running a command that can change the module graph. If we have
+		// to resolve a new dependency, we might pick the wrong version, but 'go mod
+		// tidy' will fix it — and new standard-library dependencies should be rare
+		// anyway.
+		//
+		// TODO(golang.org/issue/30240): Drop this special-case.
+		if cfg.CmdName != "get" && !strings.HasPrefix(cfg.CmdName, "mod ") {
+			return nil, nil
+		}
+	}
+
 	origPath := mod.Path
 	if repl := Replacement(mod); repl.Path != "" {
 		if repl.Version == "" {
 			// TODO: need to slip the new version into the tags list etc.
 			dir := repl.Path
 			if !filepath.IsAbs(dir) {
-				dir = filepath.Join(ModRoot, dir)
+				dir = filepath.Join(ModRoot(), dir)
 			}
 			gomod := filepath.Join(dir, "go.mod")
 			data, err := ioutil.ReadFile(gomod)
@@ -1052,13 +1118,13 @@ func (*mvsReqs) next(m module.Version) (module.Version, error) {
 
 func fetch(mod module.Version) (dir string, isLocal bool, err error) {
 	if mod == Target {
-		return ModRoot, true, nil
+		return ModRoot(), true, nil
 	}
 	if r := Replacement(mod); r.Path != "" {
 		if r.Version == "" {
 			dir = r.Path
 			if !filepath.IsAbs(dir) {
-				dir = filepath.Join(ModRoot, dir)
+				dir = filepath.Join(ModRoot(), dir)
 			}
 			return dir, true, nil
 		}

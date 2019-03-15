@@ -9,6 +9,7 @@ import (
 	"cmd/go/internal/modfetch/codehost"
 	"cmd/go/internal/module"
 	"cmd/go/internal/semver"
+	"cmd/go/internal/str"
 	"fmt"
 	pathpkg "path"
 	"strings"
@@ -131,6 +132,10 @@ func Query(path, query string, allowed func(module.Version) bool) (*modfetch.Rev
 		return &modfetch.RevInfo{Version: Target.Version}, nil
 	}
 
+	if str.HasPathPrefix(path, "std") || str.HasPathPrefix(path, "cmd") {
+		return nil, fmt.Errorf("explicit requirement on standard-library module %s not allowed", path)
+	}
+
 	// Load versions and execute query.
 	repo, err := modfetch.Lookup(path)
 	if err != nil {
@@ -210,14 +215,16 @@ func matchSemverPrefix(p, v string) bool {
 // If the path is in the main module and the query is "latest",
 // QueryPackage returns Target as the version.
 func QueryPackage(path, query string, allowed func(module.Version) bool) (module.Version, *modfetch.RevInfo, error) {
-	if _, ok := dirInModule(path, Target.Path, ModRoot, true); ok {
-		if query != "latest" {
-			return module.Version{}, nil, fmt.Errorf("can't query specific version (%q) for package %s in the main module (%s)", query, path, Target.Path)
+	if HasModRoot() {
+		if _, ok := dirInModule(path, targetPrefix, modRoot, true); ok {
+			if query != "latest" {
+				return module.Version{}, nil, fmt.Errorf("can't query specific version (%q) for package %s in the main module (%s)", query, path, Target.Path)
+			}
+			if !allowed(Target) {
+				return module.Version{}, nil, fmt.Errorf("internal error: package %s is in the main module (%s), but version is not allowed", path, Target.Path)
+			}
+			return Target, &modfetch.RevInfo{Version: Target.Version}, nil
 		}
-		if !allowed(Target) {
-			return module.Version{}, nil, fmt.Errorf("internal error: package %s is in the main module (%s), but version is not allowed", path, Target.Path)
-		}
-		return Target, &modfetch.RevInfo{Version: Target.Version}, nil
 	}
 
 	finalErr := errMissing

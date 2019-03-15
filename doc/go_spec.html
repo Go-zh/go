@@ -1,12 +1,12 @@
 <!--{
 	"Title": "Go 编程语言规范",
-	"Subtitle": "版本：2018 年 11 月 16 日  译者：Oling Cat",
+	"Subtitle": "版本：2019 年 3 月 13 日  译者：Oling Cat",
 	"Path": "/ref/spec"
 }-->
 
 <!--{
 	"Title": "The Go Programming Language Specification",
-	"Subtitle": "Version of November 16, 2018",
+	"Subtitle": "Version of March 13, 2019",
 	"Path": "/ref/spec"
 }-->
 
@@ -273,6 +273,7 @@ The underscore character <code>_</code> (U+005F) is considered a letter.
 <pre class="ebnf">
 letter        = unicode_letter | "_" .
 decimal_digit = "0" … "9" .
+binary_digit  = "0" | "1" .
 octal_digit   = "0" … "7" .
 hex_digit     = "0" … "9" | "A" … "F" | "a" … "f" .
 </pre>
@@ -598,15 +599,30 @@ The following character sequences represent <a href="#Operators">operators</a>
 <p>
 An integer literal is a sequence of digits representing an
 <a href="#Constants">integer constant</a>.
-An optional prefix sets a non-decimal base: <code>0</code> for octal, <code>0x</code> or
-<code>0X</code> for hexadecimal.  In hexadecimal literals, letters
-<code>a-f</code> and <code>A-F</code> represent values 10 through 15.
+An optional prefix sets a non-decimal base: <code>0b</code> or <code>0B</code>
+for binary, <code>0</code>, <code>0o</code>, or <code>0O</code> for octal,
+and <code>0x</code> or <code>0X</code> for hexadecimal.
+A single <code>0</code> is considered a decimal zero.
+In hexadecimal literals, letters <code>a</code> through <code>f</code>
+and <code>A</code> through <code>F</code> represent values 10 through 15.
+</p>
+
+<p>
+For readability, an underscore character <code>_</code> may appear after
+a base prefix or between successive digits; such underscores do not change
+the literal's value.
 </p>
 <pre class="ebnf">
-int_lit     = decimal_lit | octal_lit | hex_lit .
-decimal_lit = ( "1" … "9" ) { decimal_digit } .
-octal_lit   = "0" { octal_digit } .
-hex_lit     = "0" ( "x" | "X" ) hex_digit { hex_digit } .
+int_lit        = decimal_lit | binary_lit | octal_lit | hex_lit .
+decimal_lit    = "0" | ( "1" … "9" ) [ [ "_" ] decimal_digits ] .
+binary_lit     = "0" ( "b" | "B" ) [ "_" ] binary_digits .
+octal_lit      = "0" [ "o" | "O" ] [ "_" ] octal_digits .
+hex_lit        = "0" ( "x" | "X" ) [ "_" ] hex_digits .
+
+decimal_digits = decimal_digit { [ "_" ] decimal_digit } .
+binary_digits  = binary_digit { [ "_" ] binary_digit } .
+octal_digits   = octal_digit { [ "_" ] octal_digit } .
+hex_digits     = hex_digit { [ "_" ] hex_digit } .
 </pre>
 </div>
 
@@ -624,9 +640,21 @@ hex_lit     = "0" ( "x" | "X" ) hex_digit { hex_digit } .
 
 <pre>
 42
+4_2
 0600
+0_600
+0o600
+0O600       // second character is capital letter 'O'
 0xBadFace
+0xBad_Face
+0x_67_7a_2f_cc_40_c6
 170141183460469231731687303715884105727
+170_141183_460469_231731_687303_715884_105727
+
+_42         // an identifier, not an integer literal
+42_         // invalid: _ must separate successive digits
+4__2        // invalid: only one _ at a time
+0_xBadFace  // invalid: _ must separate successive digits
 </pre>
 
 <div class="english">
@@ -637,48 +665,157 @@ hex_lit     = "0" ( "x" | "X" ) hex_digit { hex_digit } .
 
 <div class="english">
 <p>
-A floating-point literal is a decimal representation of a
+A floating-point literal is a decimal or hexadecimal representation of a
 <a href="#Constants">floating-point constant</a>.
-It has an integer part, a decimal point, a fractional part,
-and an exponent part.  The integer and fractional part comprise
-decimal digits; the exponent part is an <code>e</code> or <code>E</code>
-followed by an optionally signed decimal exponent.  One of the
-integer part or the fractional part may be elided; one of the decimal
-point or the exponent may be elided.
 </p>
-<pre class="ebnf">
-float_lit = decimals "." [ decimals ] [ exponent ] |
-            decimals exponent |
-            "." decimals [ exponent ] .
-decimals  = decimal_digit { decimal_digit } .
-exponent  = ( "e" | "E" ) [ "+" | "-" ] decimals .
-</pre>
 </div>
 
 <p>
 浮点数字面由十进制<a href="#常量">浮点常量</a>表示。
-它由整数部分，小数点，小数部分和指数部分构成。整数部分与小数部分由十进制数字组成；
-指数部分由一个 <code>e</code> 或 <code>E</code> 紧跟一个带可选正负号的十进制指数构成。
-整数部分或小数部分可以省略；小数点或指数亦可省略。
 </p>
+
+<div class="english">
+<p>
+A decimal floating-point literal consists of an integer part (decimal digits),
+a decimal point, a fractional part (decimal digits), and an exponent part
+(<code>e</code> or <code>E</code> followed by an optional sign and decimal digits).
+One of the integer part or the fractional part may be elided; one of the decimal point
+or the exponent part may be elided.
+An exponent value exp scales the mantissa (integer and fractional part) by 10<sup>exp</sup>.
+</p>
+</div>
+
+<p>
+十进制浮点数字面由整数部分（十进制数字）、小数点、小数部分（十进制数字）和指数部分构成。
+指数部分由一个 <code>e</code> 或 <code>E</code> 紧跟一个可选的正负号和一些十进制数字构成。
+整数部分或小数部分二者之一可以省略；小数点或指数部分二者之一亦可省略。
+指数值 exp 按照 10<sup>exp</sup> 缩放尾数（整数和小数部分）。
+</p>
+
+<div class="english">
+<p>
+A hexadecimal floating-point literal consists of a <code>0x</code> or <code>0X</code>
+prefix, an integer part (hexadecimal digits), a radix point, a fractional part (hexadecimal digits),
+and an exponent part (<code>p</code> or <code>P</code> followed by an optional sign and decimal digits).
+One of the integer part or the fractional part may be elided; the radix point may be elided as well,
+but the exponent part is required. (This syntax matches the one given in IEEE 754-2008 §5.12.3.)
+An exponent value exp scales the mantissa (integer and fractional part) by 2<sup>exp</sup>.
+</p>
+</div>
+
+<p>
+十六进制浮点数字面由 <code>0x</code> 或 <code>0X</code>前缀、整数部分（十六进制数字）、
+小数点、小数部分（十六进制数字）和指数部分构成。指数部分由一个 <code>p</code> 或 <code>P</code>
+紧跟一个可选的正负号和一些十进制数字构成。整数部分或小数部分二者之一可以省略；
+小数点亦可省略，但指数部分是必须的。（此语法遵循 IEEE 754-2008 §5.12.3。）
+指数值 exp 按照 2<sup>exp</sup> 缩放尾数（整数和小数部分）。
+</p>
+
+<div class="english">
+<p>
+For readability, an underscore character <code>_</code> may appear after
+a base prefix or between successive digits; such underscores do not change
+the literal value.
+</p>
+</div>
+
+<p>
+为可读性起见，基本前缀之后或连续的数字之间可出现一个下划线字符 <code>_</code>，
+下划线并不改变其字面值。
+</p>
+
+<div class="english">
 <pre class="ebnf">
-浮点数字面 = 十进制数 "." [ 十进制数 ] [ 指数 ] |
-			 十进制指数 |
-			 "." 十进制数 [ 指数 ] .
-十进制数   = 十进制数字 { 十进制数字 } .
-指数       = ( "e" | "E" ) [ "+" | "-" ] 十进制数 .
+float_lit         = decimal_float_lit | hex_float_lit .
+
+decimal_float_lit = decimal_digits "." [ decimal_digits ] [ decimal_exponent ] |
+                    decimal_digits decimal_exponent |
+                    "." decimal_digits [ decimal_exponent ] .
+decimal_exponent  = ( "e" | "E" ) [ "+" | "-" ] decimal_digits .
+
+hex_float_lit     = "0" ( "x" | "X" ) hex_mantissa hex_exponent .
+hex_mantissa      = [ "_" ] hex_digits "." [ hex_digits ] |
+                    [ "_" ] hex_digits |
+                    "." hex_digits .
+hex_exponent      = ( "p" | "P" ) [ "+" | "-" ] decimal_digits .
+</pre>
+</div>
+
+<pre class="ebnf">
+浮点数字面         = 十进制浮点数字面 | 十六进制浮点数字面 .
+
+十进制浮点数字面   = 十进制数字 "." [ 十进制数字 ] [ 十进制指数 ] |
+                     十进制数字 十进制指数 |
+                     "." 十进制数字 [ 十进制指数 ] .
+十进制指数         = ( "e" | "E" ) [ "+" | "-" ] 十进制数字 .
+
+十六进制浮点数字面 = "0" ( "x" | "X" ) 十六进制尾数 十六进制指数 .
+十六进制尾数       = [ "_" ] 十六进制数字 "." [ 十六进制数字 ] |
+                     [ "_" ] 十六进制数字 |
+                     "." 十六进制数字 .
+十六进制指数       = ( "p" | "P" ) [ "+" | "-" ] 十进制数字 .
 </pre>
 
+<div class="english">
 <pre>
 0.
 72.40
-072.40  // == 72.40
+072.40       // == 72.40
 2.71828
 1.e+0
 6.67428e-11
 1E6
 .25
 .12345E+5
+1_5.         // == 15.0
+0.15e+0_2    // == 15.0
+
+0x1p-2       // == 0.25
+0x2.p10      // == 2048.0
+0x1.Fp+0     // == 1.9375
+0X.8p-0      // == 0.5
+0X_1FFFP-16  // == 0.1249847412109375
+0x15e-2      // == 0x15e - 2 (integer subtraction)
+
+0x.p1        // invalid: mantissa has no digits
+1p-2         // invalid: p exponent requires hexadecimal mantissa
+0x1.5e-2     // invalid: hexadecimal mantissa requires p exponent
+1_.5         // invalid: _ must separate successive digits
+1._5         // invalid: _ must separate successive digits
+1.5_e1       // invalid: _ must separate successive digits
+1.5e_1       // invalid: _ must separate successive digits
+1.5e1_       // invalid: _ must separate successive digits
+</pre>
+</div>
+
+<pre>
+0.
+72.40
+072.40       // == 72.40
+2.71828
+1.e+0
+6.67428e-11
+1E6
+.25
+.12345E+5
+1_5.         // == 15.0
+0.15e+0_2    // == 15.0
+
+0x1p-2       // == 0.25
+0x2.p10      // == 2048.0
+0x1.Fp+0     // == 1.9375
+0X.8p-0      // == 0.5
+0X_1FFFP-16  // == 0.1249847412109375
+0x15e-2      // == 0x15e - 2（整数相减）
+
+0x.p1        // 无效：尾数没有数字
+1p-2         // 无效：p 指数需要十六进制尾数
+0x1.5e-2     // 无效：十六进制尾数需要 p 指数
+1_.5         // 无效：_ 必须分隔连续的数字
+1._5         // 无效：_ 必须分隔连续的数字
+1.5_e1       // 无效：_ 必须分隔连续的数字
+1.5e_1       // 无效：_ 必须分隔连续的数字
+1.5e1_       // 无效：_ 必须分隔连续的数字
 </pre>
 
 <div class="english">
@@ -689,29 +826,47 @@ exponent  = ( "e" | "E" ) [ "+" | "-" ] decimals .
 
 <div class="english">
 <p>
-An imaginary literal is a decimal representation of the imaginary part of a
+An imaginary literal represents the imaginary part of a
 <a href="#Constants">complex constant</a>.
-It consists of a
-<a href="#Floating-point_literals">floating-point literal</a>
-or decimal integer followed
-by the lower-case letter <code>i</code>.
+It consists of an <a href="#Integer_literals">integer</a> or
+<a href="#Floating-point_literals">floating-point</a> literal
+followed by the lower-case letter <code>i</code>.
 </p>
+
 <pre class="ebnf">
-imaginary_lit = (decimals | float_lit) "i" .
+imaginary_lit = (decimal_digits | int_lit | float_lit) "i" .
 </pre>
 </div>
 
 <p>
 虚数字面由十进制<a href="#常量">复数常量</a>的虚部表示。
 它由<a href="#浮点数字面">浮点数字面</a>或十进制整数紧跟小写字母 <code>i</code> 构成。
+虚数字面的值即为其整数或浮点数字面乘以虚数单位 <i>i</i>。
 </p>
+
 <pre class="ebnf">
 虚数字面 = (十进制数 | 浮点数字面) "i" .
 </pre>
 
+<div class="english">
+<p>
+For backward compatibility, an imaginary literal's integer part consisting
+entirely of decimal digits (and possibly underscores) is considered a decimal
+integer, even if it starts with a leading <code>0</code>.
+</p>
+</div>
+
+<p>
+为了向前兼容，虚数字面中完全由十进制数字（以及下划线）构成的整数部分会被视为十进制整数，
+即便带有前导的 <code>0</code> 也是如此。
+</p>
+
+<div class="english">
 <pre>
 0i
-011i  // == 11i
+0123i         // == 123i for backward-compatibility
+0o123i        // == 0o123 * 1i == 83i
+0xabci        // == 0xabc * 1i == 2748i
 0.i
 2.71828i
 1.e+0i
@@ -719,6 +874,23 @@ imaginary_lit = (decimals | float_lit) "i" .
 1E6i
 .25i
 .12345E+5i
+0x1p-2i       // == 0x1p-2 * 1i == 0.25i
+</pre>
+</div>
+
+<pre>
+0i
+0123i         // == 123i 为了向前兼容
+0o123i        // == 0o123 * 1i == 83i
+0xabci        // == 0xabc * 1i == 2748i
+0.i
+2.71828i
+1.e+0i
+6.67428e-11i
+1E6i
+.25i
+.12345E+5i
+0x1p-2i       // == 0x1p-2 * 1i == 0.25i
 </pre>
 
 
@@ -744,9 +916,8 @@ values in various formats.
 
 <p>
 符文字面由一个<a href="#常量">符文常量</a>表示，一个整数值确定一个 Unicode 码点。
-一个符文字面由围绕在单引号中的一个或更多字符表示。通常一个 Unicode 码点作为一个或更多字符围绕在单引号中，
-例如 <code>'x'</code> 或 <code>'\n'</code>。
-在引号内，除换行符和未转义的单引号之外，任何字符都可出现。引号内的单个字符通常代表该字符的 Unicode 值自身，
+一个符文字面由围绕在单引号中的一个或更多字符表示，例如 <code>'x'</code> 或 <code>'\n'</code>。
+在引号内，除换行符和未转义的单引号之外，任何字符都可出现。引号内的单个字符表示该字符的 Unicode 值，
 而以反斜杠开头的多字符序列则会编码为不同的形式。
 </p>
 
@@ -764,10 +935,10 @@ a literal <code>a</code>-dieresis, U+00E4, value <code>0xe4</code>.
 
 <p>
 最简单的形式就是引号内只有一个字符；由于 Go 源码文本是 UTF-8 编码的 Unicode 字符，
-多个 UTF-8 编码的字节就可以表示为一个单一的整数值。例如，字面 <code>'a'</code> 包含一个字节，
-表示一个字面 <code>a</code>；Unicode 字符 U+0061，值为 <code>0x61</code>，而 <code>'ä'</code>
-则包含两个字节（<code>0xc3</code> <code>0xa4</code>），表示一个字面 <code>分音符-a</code>，
-Unicode 字符 U+00E4，值 <code>0xe4</code>。
+多个 UTF-8 编码的字节可能表示单一的整数值。例如，字面 <code>'a'</code> 包含一个字节，
+表示一个字面 <code>a</code>，其 Unicode 编码为 U+0061，值为 <code>0x61</code>；而
+<code>'ä'</code> 则包含两个字节（<code>0xc3</code> <code>0xa4</code>），表示一个字面
+<code>分音符-a</code>，其 Unicode 编码为 U+00E4，值为 <code>0xe4</code>。
 </p>
 
 <div class="english">
@@ -784,7 +955,7 @@ the digits in the corresponding base.
 </div>
 
 <p>
-反斜杠转义允许用 ASCII 文本来编码任意值。将整数值表示为数字常量有四种方法：
+反斜杠转义允许用 ASCII 文本来编码任意值。将整数值表示为数值常量有四种方法：
 <code>\x</code> 紧跟两个十六进制数字；<code>\u</code> 紧跟四个十六进制数字；
 <code>\U</code> 紧跟八个十六进制数字；单个 <code>\</code> 紧跟三个八进制数字。
 在任何情况下，字面值都是其相应进制的数字表示的值。
@@ -804,13 +975,14 @@ in particular those above <code>0x10FFFF</code> and surrogate halves.
 <p>
 尽管这些表示方式都会产生整数，其有效范围却不相同。八进制转义只能表示 0 到 255 之间的值。
 十六进制转义则视其结构而定。转义符 <code>\u</code> 和 <code>\U</code> 表示 Unicode 码点，
-因此其中的一些值是非法的，特别是那些大于 <code>0x10FFFF</code> 的值和半替代值。
+因此其中的一些值是非法的，特别是那些大于 <code>0x10FFFF</code> 的值和半代理值（surrogate halves）。
 </p>
 
 <div class="english">
 <p>
 After a backslash, certain single-character escapes represent special values:
 </p>
+
 <pre class="grammar">
 \a   U+0007 alert or bell
 \b   U+0008 backspace
@@ -834,8 +1006,8 @@ After a backslash, certain single-character escapes represent special values:
 \f   U+000C 换页
 \n   U+000A 换行
 \r   U+000D 回车
-\t   U+0009 横向制表
-\v   U+000b 纵向制表
+\t   U+0009 横向制表符
+\v   U+000b 纵向制表符
 \\   U+005c 反斜杠
 \'   U+0027 单引号（仅在符文字面中有效）
 \"   U+0022 双引号（仅在字符串字面中有效）
@@ -906,9 +1078,9 @@ Unicode值      = Unicode字符 | 小Unicode值 | 大Unicode值 | 转义字符 .
 '\u12e4'
 '\U00101234'
 '\''         // 包含单引号字符的符文字面
-'aa'         // 非法：太多字符
-'\xa'        // 非法：太少 16 进制数字
-'\0'         // 非法：太少 8 进制数字
+'aa'         // 非法：字符过多
+'\xa'        // 非法：16 进制数字过少
+'\0'         // 非法：8 进制数字过少
 '\uDFFF'     // 非法：半代理值
 '\U00110000' // 非法：无效的 Unicode 码点
 </pre>
@@ -949,8 +1121,9 @@ are discarded from the raw string value.
 
 <p>
 原始字符串字面为反引号 <code>``</code> 之间的字符序列。在该引号内，
-除反引号外的任何字符都是合法的。原始字符串字面的值为此引号之间的无解译（隐式 UTF-8 编码的）字符组成的字符串；
-另外，反斜杠没有特殊意义且字符串可包含换行符。原始字符串字面中的回车符（'\r'）将会从原始字符串的值中丢弃。
+除反引号外的任何字符都是合法的。原始字符串字面的值为此引号之间的未解译
+（隐式 UTF-8 编码的）字符组成的字符串；换言之，反斜杠没有特殊意义且字符串可包含换行符。
+原始字符串字面中的回车符（'\r'）将会从原始字符串的值中丢弃。
 </p>
 
 <div class="english">
@@ -1220,6 +1393,7 @@ precision in the language, a compiler may implement them using an
 internal representation with limited precision.  That said, every
 implementation must:
 </p>
+
 <ul>
 	<li>Represent integer constants with at least 256 bits.</li>
 
@@ -1237,6 +1411,7 @@ implementation must:
 	    represent a floating-point or complex constant due to limits
 	    on precision.</li>
 </ul>
+
 <p>
 These requirements apply both to literal constants and to the result
 of evaluating <a href="#Constant_expressions">constant
@@ -1263,6 +1438,13 @@ expressions</a>.
 <p>
 这些要求适用于字面常量和<a href="#常量表达式">常量表达式</a>的求值结果。
 </p>
+
+
+<div class="english">
+<h2 id="Variables">Variables</h2>
+</div>
+
+<h2 id="变量">变量</h2>
 
 <div class="english">
 <p>
@@ -6659,7 +6841,7 @@ within <code>Greeting</code>, <code>who</code> will have the value
 
 <div class="english">
 <p>
-If the final argument is assignable to a slice type <code>[]T</code>, it may be
+If the final argument is assignable to a slice type <code>[]T</code>, it is
 passed unchanged as the value for a <code>...T</code> parameter if the argument
 is followed by <code>...</code>. In this case no new slice is created.
 </p>
@@ -6768,7 +6950,7 @@ to the type of the other operand.
 
 <div class="english">
 <p>
-The right operand in a shift expression must have unsigned integer type
+The right operand in a shift expression must have integer type
 or be an untyped constant <a href="#Representability">representable</a> by a
 value of type <code>uint</code>.
 If the left operand of a non-constant shift expression is an untyped constant,
@@ -7045,7 +7227,9 @@ be replaced by a bitwise AND operation:
 <div class="english">
 <p>
 The shift operators shift the left operand by the shift count specified by the
-right operand. They implement arithmetic shifts if the left operand is a signed
+right operand, which must be positive. If the shift count is negative at run time,
+a <a href="#Run_time_panics">run-time panic</a> occurs.
+The shift operators implement arithmetic shifts if the left operand is a signed
 integer and logical shifts if it is an unsigned integer.
 There is no upper limit on the shift count. Shifts behave
 as if the left operand is shifted <code>n</code> times by 1 for a shift
@@ -11520,7 +11704,7 @@ var a = complex(2, -2)             // complex128
 const b = complex(1.0, -1.4)       // untyped complex constant 1 - 1.4i
 x := float32(math.Cos(math.Pi/2))  // float32
 var c64 = complex(5, -x)           // complex64
-var s uint = complex(1, 0)         // untyped complex constant 1 + 0i can be converted to uint
+var s int = complex(1, 0)          // untyped complex constant 1 + 0i can be converted to int
 _ = complex(1, 2&lt;&lt;s)               // illegal: 2 assumes floating-point type, cannot shift
 var rl = real(c64)                 // float32
 var im = imag(a)                   // float64

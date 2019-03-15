@@ -92,7 +92,7 @@ type Optab struct {
 	op     opBytes
 }
 
-type Movtab struct {
+type movtab struct {
 	as   obj.As
 	ft   uint8
 	f3t  uint8
@@ -2064,8 +2064,7 @@ func instinit(ctxt *obj.Link) {
 	case objabi.Hplan9:
 		plan9privates = ctxt.Lookup("_privates")
 	case objabi.Hnacl:
-		deferreturn = ctxt.Lookup("runtime.deferreturn")
-		deferreturn.SetABI(obj.ABIInternal)
+		deferreturn = ctxt.LookupABI("runtime.deferreturn", obj.ABIInternal)
 	}
 
 	for i := range avxOptab {
@@ -3620,7 +3619,7 @@ const (
 	movTLSReg
 )
 
-var ymovtab = []Movtab{
+var ymovtab = []movtab{
 	// push
 	{APUSHL, Ycs, Ynone, Ynone, movLit, [4]uint8{0x0e, 0}},
 	{APUSHL, Yss, Ynone, Ynone, movLit, [4]uint8{0x16, 0}},
@@ -3734,8 +3733,8 @@ var ymovtab = []Movtab{
 	{AMOVW, Ytask, Ynone, Yml, movRegMem2op, [4]uint8{0x0f, 0x00, 1, 0}},
 
 	/* load full pointer - unsupported
-	Movtab{AMOVL, Yml, Ycol, movFullPtr, [4]uint8{0, 0, 0, 0}},
-	Movtab{AMOVW, Yml, Ycol, movFullPtr, [4]uint8{Pe, 0, 0, 0}},
+	{AMOVL, Yml, Ycol, movFullPtr, [4]uint8{0, 0, 0, 0}},
+	{AMOVW, Yml, Ycol, movFullPtr, [4]uint8{Pe, 0, 0, 0}},
 	*/
 
 	// double shift

@@ -24,6 +24,8 @@ func TestMain(m *testing.M) {
 }
 
 func testMain(m *testing.M) int {
+	SetProxy("direct")
+
 	dir, err := ioutil.TempDir("", "gitrepo-test-")
 	if err != nil {
 		log.Fatal(err)
@@ -284,10 +286,10 @@ var codeRepoTests = []struct {
 	{
 		path:    "gopkg.in/yaml.v2",
 		rev:     "v2",
-		version: "v2.2.1",
-		name:    "5420a8b6744d3b0345ab293f6fcba19c978f1183",
-		short:   "5420a8b6744d",
-		time:    time.Date(2018, 3, 28, 19, 50, 20, 0, time.UTC),
+		version: "v2.2.2",
+		name:    "51d6538a90f86fe93ac480b35f37b2be17fef232",
+		short:   "51d6538a90f8",
+		time:    time.Date(2018, 11, 15, 11, 05, 04, 0, time.UTC),
 		gomod:   "module \"gopkg.in/yaml.v2\"\n\nrequire (\n\t\"gopkg.in/check.v1\" v0.0.0-20161208181325-20d25e280405\n)\n",
 	},
 	{
@@ -322,6 +324,15 @@ var codeRepoTests = []struct {
 		short:   "a96e63847dc3",
 		time:    time.Date(2017, 5, 31, 16, 3, 50, 0, time.UTC),
 		gomod:   "module gopkg.in/natefinch/lumberjack.v2\n",
+	},
+	{
+		path:    "nanomsg.org/go/mangos/v2",
+		rev:     "v2.0.2",
+		version: "v2.0.2",
+		name:    "63f66a65137b9a648ac9f7bf0160b4a4d17d7999",
+		short:   "63f66a65137b",
+		time:    time.Date(2018, 12, 1, 15, 7, 40, 0, time.UTC),
+		gomod:   "module nanomsg.org/go/mangos/v2\n\nrequire (\n\tgithub.com/Microsoft/go-winio v0.4.11\n\tgithub.com/droundy/goopt v0.0.0-20170604162106-0b8effe182da\n\tgithub.com/gopherjs/gopherjs v0.0.0-20181103185306-d547d1d9531e // indirect\n\tgithub.com/gorilla/websocket v1.4.0\n\tgithub.com/jtolds/gls v4.2.1+incompatible // indirect\n\tgithub.com/smartystreets/assertions v0.0.0-20180927180507-b2de0cb4f26d // indirect\n\tgithub.com/smartystreets/goconvey v0.0.0-20181108003508-044398e4856c\n\tgolang.org/x/sys v0.0.0-20181128092732-4ed8d59d0b35 // indirect\n)\n",
 	},
 }
 
@@ -391,7 +402,13 @@ func TestCodeRepo(t *testing.T) {
 				}
 			}
 			if tt.zip != nil || tt.ziperr != "" {
-				zipfile, err := repo.Zip(tt.version, tmpdir)
+				f, err := ioutil.TempFile(tmpdir, tt.version+".zip.")
+				if err != nil {
+					t.Fatalf("ioutil.TempFile: %v", err)
+				}
+				zipfile := f.Name()
+				err = repo.Zip(f, tt.version)
+				f.Close()
 				if err != nil {
 					if tt.ziperr != "" {
 						if err.Error() == tt.ziperr {

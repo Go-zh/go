@@ -26,18 +26,18 @@ func checkGdbEnvironment(t *testing.T) {
 	case "darwin":
 		t.Skip("gdb does not work on darwin")
 	case "netbsd":
-		t.Skip("gdb does not work with threads on NetBSD; see golang.org/issue/22893 and gnats.netbsd.org/52548")
+		t.Skip("gdb does not work with threads on NetBSD; see https://golang.org/issue/22893 and https://gnats.netbsd.org/52548")
 	case "windows":
 		t.Skip("gdb tests fail on Windows: https://golang.org/issue/22687")
 	case "linux":
 		if runtime.GOARCH == "ppc64" {
-			t.Skip("skipping gdb tests on linux/ppc64; see golang.org/issue/17366")
+			t.Skip("skipping gdb tests on linux/ppc64; see https://golang.org/issue/17366")
 		}
 		if runtime.GOARCH == "mips" {
 			t.Skip("skipping gdb tests on linux/mips; see https://golang.org/issue/25939")
 		}
-	case "aix":
-		t.Skip("gdb does not work on AIX; see golang.org/issue/28558")
+	case "freebsd":
+		t.Skip("skipping gdb tests on FreeBSD; see https://golang.org/issue/29508")
 	}
 	if final := os.Getenv("GOROOT_FINAL"); final != "" && runtime.GOROOT() != final {
 		t.Skip("gdb test can fail with GOROOT_FINAL pending")
@@ -154,7 +154,7 @@ func testGdbPython(t *testing.T, cgo bool) {
 	}
 	nLines := lastLine(src)
 
-	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", "a.exe")
+	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", "a.exe", "main.go")
 	cmd.Dir = dir
 	out, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
 	if err != nil {
@@ -335,7 +335,7 @@ func TestGdbBacktrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
-	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", "a.exe")
+	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", "a.exe", "main.go")
 	cmd.Dir = dir
 	out, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
 	if err != nil {
@@ -394,6 +394,10 @@ func TestGdbAutotmpTypes(t *testing.T) {
 	t.Parallel()
 	checkGdbVersion(t)
 
+	if runtime.GOOS == "aix" && testing.Short() {
+		t.Skip("TestGdbAutotmpTypes is too slow on aix/ppc64")
+	}
+
 	dir, err := ioutil.TempDir("", "go-build")
 	if err != nil {
 		t.Fatalf("failed to create temp directory: %v", err)
@@ -406,7 +410,7 @@ func TestGdbAutotmpTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
-	cmd := exec.Command(testenv.GoToolPath(t), "build", "-gcflags=all=-N -l", "-o", "a.exe")
+	cmd := exec.Command(testenv.GoToolPath(t), "build", "-gcflags=all=-N -l", "-o", "a.exe", "main.go")
 	cmd.Dir = dir
 	out, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
 	if err != nil {
@@ -472,7 +476,7 @@ func TestGdbConst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
-	cmd := exec.Command(testenv.GoToolPath(t), "build", "-gcflags=all=-N -l", "-o", "a.exe")
+	cmd := exec.Command(testenv.GoToolPath(t), "build", "-gcflags=all=-N -l", "-o", "a.exe", "main.go")
 	cmd.Dir = dir
 	out, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
 	if err != nil {
@@ -537,7 +541,7 @@ func TestGdbPanic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
-	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", "a.exe")
+	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", "a.exe", "main.go")
 	cmd.Dir = dir
 	out, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
 	if err != nil {

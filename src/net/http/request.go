@@ -26,7 +26,7 @@ import (
 	"strings"
 	"sync"
 
-	"golang_org/x/net/idna"
+	"golang.org/x/net/idna"
 )
 
 const (
@@ -550,7 +550,12 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 			ruri = r.URL.Opaque
 		}
 	}
-	// TODO(bradfitz): escape at least newlines in ruri?
+	if stringContainsCTLByte(ruri) {
+		return errors.New("net/http: can't write control character in Request.URL")
+	}
+	// TODO: validate r.Method too? At least it's less likely to
+	// come from an attacker (more likely to be a constant in
+	// code).
 
 	// Wrap the writer in a bufio Writer if it's not already buffered.
 	// Don't always call NewWriter, as that forces a bytes.Buffer
@@ -1330,6 +1335,9 @@ func (r *Request) wantsHttp10KeepAlive() bool {
 }
 
 func (r *Request) wantsClose() bool {
+	if r.Close {
+		return true
+	}
 	return hasToken(r.Header.get("Connection"), "close")
 }
 

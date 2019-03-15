@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"internal/lazyregexp"
 	"io"
 	"io/ioutil"
 	"log"
@@ -103,9 +104,7 @@ func (b *Builder) Do(root *Action) {
 		var err error
 
 		if a.Func != nil && (!a.Failed || a.IgnoreFail) {
-			if err == nil {
-				err = a.Func(b, a)
-			}
+			err = a.Func(b, a)
 		}
 
 		// The actions run in parallel but all the updates to the
@@ -267,7 +266,7 @@ func (b *Builder) buildActionID(a *Action) cache.ActionID {
 		fmt.Fprintf(h, "compile %s %q %q\n", id, forcedGccgoflags, p.Internal.Gccgoflags)
 		fmt.Fprintf(h, "pkgpath %s\n", gccgoPkgpath(p))
 		if len(p.SFiles) > 0 {
-			id, err = b.gccgoToolID(BuildToolchain.compiler(), "assembler-with-cpp")
+			id, _ = b.gccgoToolID(BuildToolchain.compiler(), "assembler-with-cpp")
 			// Ignore error; different assembler versions
 			// are unlikely to make any difference anyhow.
 			fmt.Fprintf(h, "asm %q\n", id)
@@ -386,6 +385,13 @@ func (b *Builder) build(a *Action) (err error) {
 			cached = true
 			a.output = []byte{} // start saving output in case we miss any cache results
 		}
+
+		// Source files might be cached, even if the full action is not
+		// (e.g., go list -compiled -find).
+		if !cached && need&needCompiledGoFiles != 0 && b.loadCachedSrcFiles(a) {
+			need &^= needCompiledGoFiles
+		}
+
 		if need == 0 {
 			return nil
 		}
@@ -414,24 +420,12 @@ func (b *Builder) build(a *Action) (err error) {
 	}
 
 	if a.Package.BinaryOnly {
-		_, err := os.Stat(a.Package.Target)
-		if err == nil {
-			a.built = a.Package.Target
-			a.Target = a.Package.Target
-			if b.NeedExport {
-				a.Package.Export = a.Package.Target
-			}
-			a.buildID = b.fileHash(a.Package.Target)
-			a.Package.Stale = false
-			a.Package.StaleReason = "binary-only package"
-			return nil
-		}
-		a.Package.Stale = true
-		a.Package.StaleReason = "missing or invalid binary-only package"
+		p.Stale = true
+		p.StaleReason = "binary-only packages are no longer supported"
 		if b.IsCmdList {
 			return nil
 		}
-		return fmt.Errorf("missing or invalid binary-only package; expected file %q", a.Package.Target)
+		return errors.New("binary-only packages are no longer supported")
 	}
 
 	if err := b.Mkdir(a.Objdir); err != nil {
@@ -648,7 +642,7 @@ func (b *Builder) build(a *Action) (err error) {
 	if len(out) > 0 {
 		output := b.processOutput(out)
 		if p.Module != nil && !allowedVersion(p.Module.GoVersion) {
-			output += "note: module requires Go " + p.Module.GoVersion
+			output += "note: module requires Go " + p.Module.GoVersion + "\n"
 		}
 		b.showOutput(a, a.Package.Dir, a.Package.Desc(), output)
 		if err != nil {
@@ -1831,8 +1825,8 @@ func (b *Builder) showOutput(a *Action, dir, desc, out string) {
 // print this error.
 var errPrintedOutput = errors.New("already printed output - no need to show error")
 
-var cgoLine = regexp.MustCompile(`\[[^\[\]]+\.(cgo1|cover)\.go:[0-9]+(:[0-9]+)?\]`)
-var cgoTypeSigRe = regexp.MustCompile(`\b_C2?(type|func|var|macro)_\B`)
+var cgoLine = lazyregexp.New(`\[[^\[\]]+\.(cgo1|cover)\.go:[0-9]+(:[0-9]+)?\]`)
+var cgoTypeSigRe = lazyregexp.New(`\b_C2?(type|func|var|macro)_\B`)
 
 // run runs the command given by cmdline in the directory dir.
 // If the command fails, run prints information about the failure
@@ -1909,7 +1903,8 @@ func (b *Builder) runOut(dir string, env []string, cmdargs ...interface{}) ([]by
 	cleanup := passLongArgsInResponseFiles(cmd)
 	defer cleanup()
 	cmd.Dir = dir
-	cmd.Env = base.MergeEnvLists(env, base.EnvForDir(cmd.Dir, os.Environ()))
+	cmd.Env = base.EnvForDir(cmd.Dir, os.Environ())
+	cmd.Env = append(cmd.Env, env...)
 	err := cmd.Run()
 
 	// err can be something like 'exit status 1'.
@@ -2250,6 +2245,11 @@ func (b *Builder) compilerCmd(compiler []string, incdir, workdir string) []strin
 		}
 	}
 
+	if cfg.Goos == "aix" {
+		// mcmodel=large must always be enabled to allow large TOC.
+		a = append(a, "-mcmodel=large")
+	}
+
 	// disable ASCII art in clang errors, if possible
 	if b.gccSupportsFlag(compiler, "-fno-caret-diagnostics") {
 		a = append(a, "-fno-caret-diagnostics")
@@ -2319,7 +2319,7 @@ func (b *Builder) gccSupportsFlag(compiler []string, flag string) bool {
 	// version of GCC, so some systems have frozen on it.
 	// Now we pass an empty file on stdin, which should work at least for
 	// GCC and clang.
-	cmdArgs := str.StringList(compiler, flag, "-c", "-x", "c", "-")
+	cmdArgs := str.StringList(compiler, flag, "-c", "-x", "c", "-", "-o", os.DevNull)
 	if cfg.BuildN || cfg.BuildX {
 		b.Showcmd(b.WorkDir, "%s || true", joinUnambiguously(cmdArgs))
 		if cfg.BuildN {
@@ -2328,7 +2328,8 @@ func (b *Builder) gccSupportsFlag(compiler []string, flag string) bool {
 	}
 	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
 	cmd.Dir = b.WorkDir
-	cmd.Env = base.MergeEnvLists([]string{"LC_ALL=C"}, base.EnvForDir(cmd.Dir, os.Environ()))
+	cmd.Env = base.EnvForDir(cmd.Dir, os.Environ())
+	cmd.Env = append(cmd.Env, "LC_ALL=C")
 	out, _ := cmd.CombinedOutput()
 	// GCC says "unrecognized command line option".
 	// clang says "unknown argument".
@@ -2405,7 +2406,7 @@ func buildFlags(name, defaults string, fromPackage []string, check func(string, 
 	return str.StringList(envList("CGO_"+name, defaults), fromPackage), nil
 }
 
-var cgoRe = regexp.MustCompile(`[/\\:]`)
+var cgoRe = lazyregexp.New(`[/\\:]`)
 
 func (b *Builder) cgo(a *Action, cgoExe, objdir string, pcCFLAGS, pcLDFLAGS, cgofiles, gccfiles, gxxfiles, mfiles, ffiles []string) (outGo, outObj []string, err error) {
 	p := a.Package

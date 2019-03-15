@@ -28,6 +28,8 @@ var (
 	GOARM    = goarm()
 	GOMIPS   = gomips()
 	GOMIPS64 = gomips64()
+	GOPPC64  = goppc64()
+	GO_LDSO  = defaultGO_LDSO
 	Version  = version
 )
 
@@ -60,6 +62,17 @@ func gomips64() string {
 		return v
 	}
 	log.Fatalf("Invalid GOMIPS64 value. Must be hardfloat or softfloat.")
+	panic("unreachable")
+}
+
+func goppc64() int {
+	switch v := envOr("GOPPC64", defaultGOPPC64); v {
+	case "power8":
+		return 8
+	case "power9":
+		return 9
+	}
+	log.Fatalf("Invalid GOPPC64 value. Must be power8 or power9.")
 	panic("unreachable")
 }
 
@@ -104,7 +117,6 @@ var (
 	framepointer_enabled     int = 1
 	Fieldtrack_enabled       int
 	Preemptibleloops_enabled int
-	Clobberdead_enabled      int
 )
 
 // Toolchain experiments.
@@ -118,7 +130,6 @@ var exper = []struct {
 	{"fieldtrack", &Fieldtrack_enabled},
 	{"framepointer", &framepointer_enabled},
 	{"preemptibleloops", &Preemptibleloops_enabled},
-	{"clobberdead", &Clobberdead_enabled},
 }
 
 var defaultExpstring = Expstring()

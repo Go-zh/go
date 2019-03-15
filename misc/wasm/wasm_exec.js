@@ -3,6 +3,15 @@
 // license that can be found in the LICENSE file.
 
 (() => {
+	// Map multiple JavaScript environments to a single common API,
+	// preferring web standards over Node.js API.
+	//
+	// Environments considered:
+	// - Browsers
+	// - Node.js
+	// - Electron
+	// - Parcel
+
 	if (typeof global !== "undefined") {
 		// global already exists
 	} else if (typeof window !== "undefined") {
@@ -13,30 +22,15 @@
 		throw new Error("cannot export Go (neither global, window nor self is defined)");
 	}
 
-	// Map web browser API and Node.js API to a single common API (preferring web standards over Node.js API).
-	const isNodeJS = global.process && global.process.title === "node";
-	if (isNodeJS) {
+	if (!global.require && typeof require !== "undefined") {
 		global.require = require;
+	}
+
+	if (!global.fs && global.require) {
 		global.fs = require("fs");
+	}
 
-		const nodeCrypto = require("crypto");
-		global.crypto = {
-			getRandomValues(b) {
-				nodeCrypto.randomFillSync(b);
-			},
-		};
-
-		global.performance = {
-			now() {
-				const [sec, nsec] = process.hrtime();
-				return sec * 1000 + nsec / 1000000;
-			},
-		};
-
-		const util = require("util");
-		global.TextEncoder = util.TextEncoder;
-		global.TextDecoder = util.TextDecoder;
-	} else {
+	if (!global.fs) {
 		let outputBuf = "";
 		global.fs = {
 			constants: { O_WRONLY: -1, O_RDWR: -1, O_CREAT: -1, O_TRUNC: -1, O_APPEND: -1, O_EXCL: -1 }, // unused
@@ -72,6 +66,34 @@
 		};
 	}
 
+	if (!global.crypto) {
+		const nodeCrypto = require("crypto");
+		global.crypto = {
+			getRandomValues(b) {
+				nodeCrypto.randomFillSync(b);
+			},
+		};
+	}
+
+	if (!global.performance) {
+		global.performance = {
+			now() {
+				const [sec, nsec] = process.hrtime();
+				return sec * 1000 + nsec / 1000000;
+			},
+		};
+	}
+
+	if (!global.TextEncoder) {
+		global.TextEncoder = require("util").TextEncoder;
+	}
+
+	if (!global.TextDecoder) {
+		global.TextDecoder = require("util").TextDecoder;
+	}
+
+	// End of polyfills for common API.
+
 	const encoder = new TextEncoder("utf-8");
 	const decoder = new TextDecoder("utf-8");
 
@@ -87,8 +109,8 @@
 			this._exitPromise = new Promise((resolve) => {
 				this._resolveExitPromise = resolve;
 			});
-			this._pendingCallback = null;
-			this._callbackTimeouts = new Map();
+			this._pendingEvent = null;
+			this._scheduledTimeouts = new Map();
 			this._nextCallbackTimeoutID = 1;
 
 			const mem = () => {
@@ -204,7 +226,7 @@
 			this.importObject = {
 				go: {
 					// Go's SP does not change as long as no Go code is running. Some operations (e.g. calls, getters and setters)
-					// may trigger a synchronous callback to Go. This makes Go code get executed in the middle of the imported
+					// may synchronously trigger a Go event handler. This makes Go code get executed in the middle of the imported
 					// function. A goroutine can switch to a new stack if the current stack is too small (see morestack function).
 					// This changes the SP, thus we have to update the SP used by the imported function.
 
@@ -238,22 +260,30 @@
 						mem().setInt32(sp + 16, (msec % 1000) * 1000000, true);
 					},
 
-					// func scheduleCallback(delay int64) int32
-					"runtime.scheduleCallback": (sp) => {
+					// func scheduleTimeoutEvent(delay int64) int32
+					"runtime.scheduleTimeoutEvent": (sp) => {
 						const id = this._nextCallbackTimeoutID;
 						this._nextCallbackTimeoutID++;
-						this._callbackTimeouts.set(id, setTimeout(
-							() => { this._resume(); },
+						this._scheduledTimeouts.set(id, setTimeout(
+							() => {
+								this._resume();
+								while (this._scheduledTimeouts.has(id)) {
+									// for some reason Go failed to register the timeout event, log and try again
+									// (temporary workaround for https://github.com/golang/go/issues/28975)
+									console.warn("scheduleTimeoutEvent: missed timeout event");
+									this._resume();
+								}
+							},
 							getInt64(sp + 8) + 1, // setTimeout has been seen to fire up to 1 millisecond early
 						));
 						mem().setInt32(sp + 16, id, true);
 					},
 
-					// func clearScheduledCallback(id int32)
-					"runtime.clearScheduledCallback": (sp) => {
+					// func clearTimeoutEvent(id int32)
+					"runtime.clearTimeoutEvent": (sp) => {
 						const id = mem().getInt32(sp + 8, true);
-						clearTimeout(this._callbackTimeouts.get(id));
-						this._callbackTimeouts.delete(id);
+						clearTimeout(this._scheduledTimeouts.get(id));
+						this._scheduledTimeouts.delete(id);
 					},
 
 					// func getRandomData(r []byte)
@@ -420,7 +450,7 @@
 
 		_resume() {
 			if (this.exited) {
-				throw new Error("bad callback: Go program has already exited");
+				throw new Error("Go program has already exited");
 			}
 			this._inst.exports.resume();
 			if (this.exited) {
@@ -428,18 +458,24 @@
 			}
 		}
 
-		_makeCallbackHelper(id) {
+		_makeFuncWrapper(id) {
 			const go = this;
 			return function () {
-				const cb = { id: id, this: this, args: arguments };
-				go._pendingCallback = cb;
+				const event = { id: id, this: this, args: arguments };
+				go._pendingEvent = event;
 				go._resume();
-				return cb.result;
+				return event.result;
 			};
 		}
 	}
 
-	if (isNodeJS) {
+	if (
+		global.require &&
+		global.require.main === module &&
+		global.process &&
+		global.process.versions &&
+		!global.process.versions.electron
+	) {
 		if (process.argv.length < 3) {
 			process.stderr.write("usage: go_js_wasm_exec [wasm binary] [arguments]\n");
 			process.exit(1);
@@ -450,10 +486,10 @@
 		go.env = Object.assign({ TMPDIR: require("os").tmpdir() }, process.env);
 		go.exit = process.exit;
 		WebAssembly.instantiate(fs.readFileSync(process.argv[2]), go.importObject).then((result) => {
-			process.on("exit", (code) => { // Node.js exits if no callback is pending
+			process.on("exit", (code) => { // Node.js exits if no event handler is pending
 				if (code === 0 && !go.exited) {
 					// deadlock, make Go print error and stack traces
-					go._pendingCallback = { id: 0 };
+					go._pendingEvent = { id: 0 };
 					go._resume();
 				}
 			});

@@ -413,6 +413,8 @@ type in Go are instead represented by a uintptr. Those include:
 	jobjectArray
 	jweak
 
+3. The EGLDisplay type from the EGL API.
+
 These types are uintptr on the Go side because they would otherwise
 confuse the Go garbage collector; they are sometimes not really
 pointers but data structures encoded in a pointer type. All operations
@@ -426,6 +428,11 @@ from Go 1.9 and earlier, use the cftype or jni rewrites in the Go fix tool:
 	go tool fix -r jni <pkg>
 
 It will replace nil with 0 in the appropriate places.
+
+The EGLDisplay case were introduced in Go 1.12. Use the egl rewrite
+to auto-update code from Go 1.11 and earlier:
+
+	go tool fix -r egl <pkg>
 
 Using cgo directly
 
@@ -703,7 +710,7 @@ _cgo_main.c:
 
 	int main() { return 0; }
 	void crosscall2(void(*fn)(void*, int, uintptr_t), void *a, int c, uintptr_t ctxt) { }
-	uintptr_t _cgo_wait_runtime_init_done() { return 0; }
+	uintptr_t _cgo_wait_runtime_init_done(void) { return 0; }
 	void _cgo_release_context(uintptr_t ctxt) { }
 	char* _cgo_topofstack(void) { return (char*)0; }
 	void _cgo_allocate(void *a, int c) { }

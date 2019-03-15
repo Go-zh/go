@@ -420,6 +420,13 @@
 (Less(64|32|16|8)    (Const(64|32|16|8) [c]) (Const(64|32|16|8) [d])) -> (ConstBool [b2i(c < d)])
 (Leq(64|32|16|8)     (Const(64|32|16|8) [c]) (Const(64|32|16|8) [d])) -> (ConstBool [b2i(c <= d)])
 
+(Geq8  (And8  _ (Const8  [c])) (Const8  [0])) && int8(c)  >= 0 -> (ConstBool [1])
+(Geq16 (And16 _ (Const16 [c])) (Const16 [0])) && int16(c) >= 0 -> (ConstBool [1])
+(Geq32 (And32 _ (Const32 [c])) (Const32 [0])) && int32(c) >= 0 -> (ConstBool [1])
+(Geq64 (And64 _ (Const64 [c])) (Const64 [0])) && int64(c) >= 0 -> (ConstBool [1])
+
+(Geq64 (Rsh64Ux64 _ (Const64 [c])) (Const64 [0])) && c > 0 -> (ConstBool [1])
+
 (Greater64U (Const64 [c]) (Const64 [d])) -> (ConstBool [b2i(uint64(c) > uint64(d))])
 (Greater32U (Const32 [c]) (Const32 [d])) -> (ConstBool [b2i(uint32(c) > uint32(d))])
 (Greater16U (Const16 [c]) (Const16 [d])) -> (ConstBool [b2i(uint16(c) > uint16(d))])
@@ -870,59 +877,6 @@
 // Get rid of Convert ops for pointer arithmetic on unsafe.Pointer.
 (Convert (Add(64|32) (Convert ptr mem) off) mem) -> (Add(64|32) ptr off)
 (Convert (Convert ptr mem) mem) -> ptr
-
-// Decompose compound argument values
-(Arg {n} [off]) && v.Type.IsString() ->
-  (StringMake
-    (Arg <typ.BytePtr> {n} [off])
-    (Arg <typ.Int> {n} [off+config.PtrSize]))
-
-(Arg {n} [off]) && v.Type.IsSlice() ->
-  (SliceMake
-    (Arg <v.Type.Elem().PtrTo()> {n} [off])
-    (Arg <typ.Int> {n} [off+config.PtrSize])
-    (Arg <typ.Int> {n} [off+2*config.PtrSize]))
-
-(Arg {n} [off]) && v.Type.IsInterface() ->
-  (IMake
-    (Arg <typ.Uintptr> {n} [off])
-    (Arg <typ.BytePtr> {n} [off+config.PtrSize]))
-
-(Arg {n} [off]) && v.Type.IsComplex() && v.Type.Size() == 16 ->
-  (ComplexMake
-    (Arg <typ.Float64> {n} [off])
-    (Arg <typ.Float64> {n} [off+8]))
-
-(Arg {n} [off]) && v.Type.IsComplex() && v.Type.Size() == 8 ->
-  (ComplexMake
-    (Arg <typ.Float32> {n} [off])
-    (Arg <typ.Float32> {n} [off+4]))
-
-(Arg <t>) && t.IsStruct() && t.NumFields() == 0 && fe.CanSSA(t) ->
-  (StructMake0)
-(Arg <t> {n} [off]) && t.IsStruct() && t.NumFields() == 1 && fe.CanSSA(t) ->
-  (StructMake1
-    (Arg <t.FieldType(0)> {n} [off+t.FieldOff(0)]))
-(Arg <t> {n} [off]) && t.IsStruct() && t.NumFields() == 2 && fe.CanSSA(t) ->
-  (StructMake2
-    (Arg <t.FieldType(0)> {n} [off+t.FieldOff(0)])
-    (Arg <t.FieldType(1)> {n} [off+t.FieldOff(1)]))
-(Arg <t> {n} [off]) && t.IsStruct() && t.NumFields() == 3 && fe.CanSSA(t) ->
-  (StructMake3
-    (Arg <t.FieldType(0)> {n} [off+t.FieldOff(0)])
-    (Arg <t.FieldType(1)> {n} [off+t.FieldOff(1)])
-    (Arg <t.FieldType(2)> {n} [off+t.FieldOff(2)]))
-(Arg <t> {n} [off]) && t.IsStruct() && t.NumFields() == 4 && fe.CanSSA(t) ->
-  (StructMake4
-    (Arg <t.FieldType(0)> {n} [off+t.FieldOff(0)])
-    (Arg <t.FieldType(1)> {n} [off+t.FieldOff(1)])
-    (Arg <t.FieldType(2)> {n} [off+t.FieldOff(2)])
-    (Arg <t.FieldType(3)> {n} [off+t.FieldOff(3)]))
-
-(Arg <t>) && t.IsArray() && t.NumElem() == 0 ->
-  (ArrayMake0)
-(Arg <t> {n} [off]) && t.IsArray() && t.NumElem() == 1 && fe.CanSSA(t) ->
-  (ArrayMake1 (Arg <t.Elem()> {n} [off]))
 
 // strength reduction of divide by a constant.
 // See ../magic.go for a detailed description of these algorithms.
@@ -1407,6 +1361,7 @@
 // Inline small or disjoint runtime.memmove calls with constant length.
 (StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store  _ src s3:(Store {t} _ dst mem))))
 	&& isSameSym(sym,"runtime.memmove")
+	&& t.(*types.Type).IsPtr() // avoids TUINTPTR, see issue 30061
 	&& s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
 	&& isInlinableMemmove(dst,src,sz,config)
 	&& clobber(s1) && clobber(s2) && clobber(s3)

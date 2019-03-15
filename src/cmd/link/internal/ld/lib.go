@@ -133,6 +133,7 @@ type Arch struct {
 	Gentext     func(*Link)
 	Machoreloc1 func(*sys.Arch, *OutBuf, *sym.Symbol, *sym.Reloc, int64) bool
 	PEreloc1    func(*sys.Arch, *OutBuf, *sym.Symbol, *sym.Reloc, int64) bool
+	Xcoffreloc1 func(*sys.Arch, *OutBuf, *sym.Symbol, *sym.Reloc, int64) bool
 
 	// TLSIEtoLE converts a TLS Initial Executable relocation to
 	// a TLS Local Executable relocation.
@@ -158,7 +159,7 @@ const (
 	MINFUNC = 16 // minimum size for a function
 )
 
-// DynlinkingGo returns whether we are producing Go code that can live
+// DynlinkingGo reports whether we are producing Go code that can live
 // in separate shared libraries linked together at runtime.
 func (ctxt *Link) DynlinkingGo() bool {
 	if !ctxt.Loaded {
@@ -167,19 +168,19 @@ func (ctxt *Link) DynlinkingGo() bool {
 	return ctxt.BuildMode == BuildModeShared || ctxt.linkShared || ctxt.BuildMode == BuildModePlugin || ctxt.CanUsePlugins()
 }
 
-// CanUsePlugins returns whether a plugins can be used
+// CanUsePlugins reports whether a plugins can be used
 func (ctxt *Link) CanUsePlugins() bool {
 	return ctxt.Syms.ROLookup("plugin.Open", sym.SymVerABIInternal) != nil
 }
 
-// UseRelro returns whether to make use of "read only relocations" aka
+// UseRelro reports whether to make use of "read only relocations" aka
 // relro.
 func (ctxt *Link) UseRelro() bool {
 	switch ctxt.BuildMode {
 	case BuildModeCArchive, BuildModeCShared, BuildModeShared, BuildModePIE, BuildModePlugin:
 		return ctxt.IsELF
 	default:
-		return ctxt.linkShared
+		return ctxt.linkShared || (ctxt.HeadType == objabi.Haix && ctxt.LinkMode == LinkExternal)
 	}
 }
 
@@ -321,18 +322,24 @@ func loadinternal(ctxt *Link, name string) *sym.Library {
 	return nil
 }
 
-// findLibPathCmd uses cmd command to find gcc library libname.
-// It returns library full path if found, or "none" if not found.
-func (ctxt *Link) findLibPathCmd(cmd, libname string) string {
+// extld returns the current external linker.
+func (ctxt *Link) extld() string {
 	if *flagExtld == "" {
 		*flagExtld = "gcc"
 	}
+	return *flagExtld
+}
+
+// findLibPathCmd uses cmd command to find gcc library libname.
+// It returns library full path if found, or "none" if not found.
+func (ctxt *Link) findLibPathCmd(cmd, libname string) string {
+	extld := ctxt.extld()
 	args := hostlinkArchArgs(ctxt.Arch)
 	args = append(args, cmd)
 	if ctxt.Debugvlog != 0 {
-		ctxt.Logf("%s %v\n", *flagExtld, args)
+		ctxt.Logf("%s %v\n", extld, args)
 	}
-	out, err := exec.Command(*flagExtld, args...).Output()
+	out, err := exec.Command(extld, args...).Output()
 	if err != nil {
 		if ctxt.Debugvlog != 0 {
 			ctxt.Logf("not using a %s file because compiler failed\n%v\n%s\n", libname, err, out)
@@ -405,7 +412,7 @@ func (ctxt *Link) loadlib() {
 		*FlagTextAddr = 0
 	}
 
-	if ctxt.LinkMode == LinkExternal && ctxt.Arch.Family == sys.PPC64 {
+	if ctxt.LinkMode == LinkExternal && ctxt.Arch.Family == sys.PPC64 && objabi.GOOS != "aix" {
 		toc := ctxt.Syms.Lookup(".TOC.", 0)
 		toc.Type = sym.SDYNIMPORT
 	}
@@ -535,6 +542,12 @@ func (ctxt *Link) loadlib() {
 			if *flagLibGCC == "" {
 				*flagLibGCC = ctxt.findLibPathCmd("--print-libgcc-file-name", "libgcc")
 			}
+			if runtime.GOOS == "openbsd" && *flagLibGCC == "libgcc.a" {
+				// On OpenBSD `clang --print-libgcc-file-name` returns "libgcc.a".
+				// In this case we fail to load libgcc.a and can encounter link
+				// errors - see if we can find libcompiler_rt.a instead.
+				*flagLibGCC = ctxt.findLibPathCmd("--print-file-name=libcompiler_rt.a", "libcompiler_rt")
+			}
 			if *flagLibGCC != "none" {
 				hostArchive(ctxt, *flagLibGCC)
 			}
@@ -588,8 +601,8 @@ func (ctxt *Link) loadlib() {
 		}
 	}
 
-	if ctxt.Arch == sys.Arch386 {
-		if (ctxt.BuildMode == BuildModeCArchive && ctxt.IsELF) || (ctxt.BuildMode == BuildModeCShared && ctxt.HeadType != objabi.Hwindows) || ctxt.BuildMode == BuildModePIE || ctxt.DynlinkingGo() {
+	if ctxt.Arch == sys.Arch386 && ctxt.HeadType != objabi.Hwindows {
+		if (ctxt.BuildMode == BuildModeCArchive && ctxt.IsELF) || ctxt.BuildMode == BuildModeCShared || ctxt.BuildMode == BuildModePIE || ctxt.DynlinkingGo() {
 			got := ctxt.Syms.Lookup("_GLOBAL_OFFSET_TABLE_", 0)
 			got.Type = sym.SDYNIMPORT
 			got.Attr |= sym.AttrReachable
@@ -872,8 +885,10 @@ func loadobjfile(ctxt *Link, lib *sym.Library) {
 		// Skip other special (non-object-file) sections that
 		// build tools may have added. Such sections must have
 		// short names so that the suffix is not truncated.
-		if len(arhdr.name) < 16 && !strings.HasSuffix(arhdr.name, ".o") {
-			continue
+		if len(arhdr.name) < 16 {
+			if ext := filepath.Ext(arhdr.name); ext != ".o" && ext != ".syso" {
+				continue
+			}
 		}
 
 		pname := fmt.Sprintf("%s(%s)", lib.File, arhdr.name)
@@ -1017,6 +1032,7 @@ func hostobjCopy() (paths []string) {
 			if err != nil {
 				Exitf("cannot reopen %s: %v", h.pn, err)
 			}
+			defer f.Close()
 			if _, err := f.Seek(h.off, 0); err != nil {
 				Exitf("cannot seek %s: %v", h.pn, err)
 			}
@@ -1101,12 +1117,8 @@ func (ctxt *Link) hostlink() {
 		return
 	}
 
-	if *flagExtld == "" {
-		*flagExtld = "gcc"
-	}
-
 	var argv []string
-	argv = append(argv, *flagExtld)
+	argv = append(argv, ctxt.extld())
 	argv = append(argv, hostlinkArchArgs(ctxt.Arch)...)
 
 	if *FlagS || debug_s {
@@ -1122,7 +1134,7 @@ func (ctxt *Link) hostlink() {
 	switch ctxt.HeadType {
 	case objabi.Hdarwin:
 		argv = append(argv, "-Wl,-headerpad,1144")
-		if ctxt.DynlinkingGo() {
+		if ctxt.DynlinkingGo() && !ctxt.Arch.InFamily(sys.ARM, sys.ARM64) {
 			argv = append(argv, "-Wl,-flat_namespace")
 		}
 		if ctxt.BuildMode == BuildModeExe && !ctxt.Arch.InFamily(sys.ARM64) {
@@ -1136,6 +1148,15 @@ func (ctxt *Link) hostlink() {
 		} else {
 			argv = append(argv, "-mconsole")
 		}
+	case objabi.Haix:
+		argv = append(argv, "-pthread")
+		// prevent ld to reorder .text functions to keep the same
+		// first/last functions for moduledata.
+		argv = append(argv, "-Wl,-bnoobjreorder")
+		// mcmodel=large is needed for every gcc generated files, but
+		// ld still need -bbigtoc in order to allow larger TOC.
+		argv = append(argv, "-mcmodel=large")
+		argv = append(argv, "-Wl,-bbigtoc")
 	}
 
 	switch ctxt.BuildMode {
@@ -1250,6 +1271,10 @@ func (ctxt *Link) hostlink() {
 	// Force global symbols to be exported for dlopen, etc.
 	if ctxt.IsELF {
 		argv = append(argv, "-rdynamic")
+	}
+	if ctxt.HeadType == objabi.Haix {
+		fileName := xcoffCreateExportFile(ctxt)
+		argv = append(argv, "-Wl,-bE:"+fileName)
 	}
 
 	if strings.Contains(argv[0], "clang") {
@@ -1366,11 +1391,24 @@ func (ctxt *Link) hostlink() {
 	// Filter out useless linker warnings caused by bugs outside Go.
 	// See also cmd/go/internal/work/exec.go's gccld method.
 	var save [][]byte
+	var skipLines int
 	for _, line := range bytes.SplitAfter(out, []byte("\n")) {
 		// golang.org/issue/26073 - Apple Xcode bug
 		if bytes.Contains(line, []byte("ld: warning: text-based stub file")) {
 			continue
 		}
+
+		if skipLines > 0 {
+			skipLines--
+			continue
+		}
+
+		// Remove TOC overflow warning on AIX.
+		if bytes.Contains(line, []byte("ld: 0711-783")) {
+			skipLines = 2
+			continue
+		}
+
 		save = append(save, line)
 	}
 	out = bytes.Join(save, nil)
@@ -1484,7 +1522,7 @@ func hostlinkArchArgs(arch *sys.Arch) []string {
 	switch arch.Family {
 	case sys.I386:
 		return []string{"-m32"}
-	case sys.AMD64, sys.PPC64, sys.S390X:
+	case sys.AMD64, sys.S390X:
 		return []string{"-m64"}
 	case sys.ARM:
 		return []string{"-marm"}
@@ -1494,6 +1532,13 @@ func hostlinkArchArgs(arch *sys.Arch) []string {
 		return []string{"-mabi=64"}
 	case sys.MIPS:
 		return []string{"-mabi=32"}
+	case sys.PPC64:
+		if objabi.GOOS == "aix" {
+			return []string{"-maix64"}
+		} else {
+			return []string{"-m64"}
+		}
+
 	}
 	return nil
 }
@@ -1998,7 +2043,7 @@ func stkcheck(ctxt *Link, up *chain, depth int) int {
 		if s.FuncInfo != nil {
 			locals = s.FuncInfo.Locals
 		}
-		limit = int(objabi.StackLimit+locals) + int(ctxt.FixedFrameSize())
+		limit = objabi.StackLimit + int(locals) + int(ctxt.FixedFrameSize())
 	}
 
 	// Walk through sp adjustments in function, consuming relocs.
@@ -2115,9 +2160,10 @@ func genasmsym(ctxt *Link, put func(*Link, *sym.Symbol, string, SymbolType, int6
 	s := ctxt.Syms.Lookup("runtime.text", 0)
 	if s.Type == sym.STEXT {
 		// We've already included this symbol in ctxt.Textp
-		// if ctxt.DynlinkingGo() && ctxt.HeadType == objabi.Hdarwin.
+		// if ctxt.DynlinkingGo() && ctxt.HeadType == objabi.Hdarwin or
+		// on AIX with external linker.
 		// See data.go:/textaddress
-		if !(ctxt.DynlinkingGo() && ctxt.HeadType == objabi.Hdarwin) {
+		if !(ctxt.DynlinkingGo() && ctxt.HeadType == objabi.Hdarwin) && !(ctxt.HeadType == objabi.Haix && ctxt.LinkMode == LinkExternal) {
 			put(ctxt, s, s.Name, TextSym, s.Value, nil)
 		}
 	}
@@ -2130,7 +2176,8 @@ func genasmsym(ctxt *Link, put func(*Link, *sym.Symbol, string, SymbolType, int6
 			n++
 			continue
 		}
-		if sect.Name != ".text" {
+		if sect.Name != ".text" || (ctxt.HeadType == objabi.Haix && ctxt.LinkMode == LinkExternal) {
+			// On AIX, runtime.text.X are symbols already in the symtab.
 			break
 		}
 		s = ctxt.Syms.ROLookup(fmt.Sprintf("runtime.text.%d", n), 0)
@@ -2146,9 +2193,10 @@ func genasmsym(ctxt *Link, put func(*Link, *sym.Symbol, string, SymbolType, int6
 	s = ctxt.Syms.Lookup("runtime.etext", 0)
 	if s.Type == sym.STEXT {
 		// We've already included this symbol in ctxt.Textp
-		// if ctxt.DynlinkingGo() && ctxt.HeadType == objabi.Hdarwin.
+		// if ctxt.DynlinkingGo() && ctxt.HeadType == objabi.Hdarwin or
+		// on AIX with external linker.
 		// See data.go:/textaddress
-		if !(ctxt.DynlinkingGo() && ctxt.HeadType == objabi.Hdarwin) {
+		if !(ctxt.DynlinkingGo() && ctxt.HeadType == objabi.Hdarwin) && !(ctxt.HeadType == objabi.Haix && ctxt.LinkMode == LinkExternal) {
 			put(ctxt, s, s.Name, TextSym, s.Value, nil)
 		}
 	}

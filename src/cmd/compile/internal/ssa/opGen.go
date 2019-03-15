@@ -77,6 +77,10 @@ const (
 	BlockARM64NZW
 	BlockARM64TBZ
 	BlockARM64TBNZ
+	BlockARM64FLT
+	BlockARM64FLE
+	BlockARM64FGT
+	BlockARM64FGE
 
 	BlockMIPSEQ
 	BlockMIPSNE
@@ -189,6 +193,10 @@ var blockString = [...]string{
 	BlockARM64NZW:  "NZW",
 	BlockARM64TBZ:  "TBZ",
 	BlockARM64TBNZ: "TBNZ",
+	BlockARM64FLT:  "FLT",
+	BlockARM64FLE:  "FLE",
+	BlockARM64FGT:  "FGT",
+	BlockARM64FGE:  "FGE",
 
 	BlockMIPSEQ:  "EQ",
 	BlockMIPSNE:  "NE",
@@ -907,6 +915,7 @@ const (
 	OpARMSQRTD
 	OpARMCLZ
 	OpARMREV
+	OpARMREV16
 	OpARMRBIT
 	OpARMSLL
 	OpARMSLLconst
@@ -1209,6 +1218,8 @@ const (
 	OpARM64TSTWconst
 	OpARM64FCMPS
 	OpARM64FCMPD
+	OpARM64FCMPS0
+	OpARM64FCMPD0
 	OpARM64MVNshiftLL
 	OpARM64MVNshiftRL
 	OpARM64MVNshiftRA
@@ -1360,6 +1371,10 @@ const (
 	OpARM64LessEqualU
 	OpARM64GreaterThanU
 	OpARM64GreaterEqualU
+	OpARM64LessThanF
+	OpARM64LessEqualF
+	OpARM64GreaterThanF
+	OpARM64GreaterEqualF
 	OpARM64DUFFZERO
 	OpARM64LoweredZero
 	OpARM64DUFFCOPY
@@ -2075,10 +2090,21 @@ const (
 	OpWasmF64Sub
 	OpWasmF64Mul
 	OpWasmF64Div
-	OpWasmI64TruncSF64
-	OpWasmI64TruncUF64
-	OpWasmF64ConvertSI64
-	OpWasmF64ConvertUI64
+	OpWasmI64TruncF64S
+	OpWasmI64TruncF64U
+	OpWasmF64ConvertI64S
+	OpWasmF64ConvertI64U
+	OpWasmF64Sqrt
+	OpWasmF64Trunc
+	OpWasmF64Ceil
+	OpWasmF64Floor
+	OpWasmF64Nearest
+	OpWasmF64Abs
+	OpWasmF64Copysign
+	OpWasmI64Ctz
+	OpWasmI64Clz
+	OpWasmI64Rotl
+	OpWasmI64Popcnt
 
 	OpAdd8
 	OpAdd16
@@ -2398,6 +2424,7 @@ const (
 	OpVarKill
 	OpVarLive
 	OpKeepAlive
+	OpInlMark
 	OpInt64Make
 	OpInt64Hi
 	OpInt64Lo
@@ -5831,6 +5858,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymRead,
 		asm:       x86.AMOVSS,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -5847,6 +5875,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymRead,
 		asm:       x86.AMOVSS,
+		scale:     4,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -5863,6 +5892,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymRead,
 		asm:       x86.AMOVSD,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -5879,6 +5909,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymRead,
 		asm:       x86.AMOVSD,
+		scale:     8,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -5923,6 +5954,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVSS,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -5937,6 +5969,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVSS,
+		scale:     4,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -5951,6 +5984,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVSD,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -5965,6 +5999,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVSD,
+		scale:     8,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10096,6 +10131,7 @@ var opcodeTable = [...]opInfo{
 		commutative: true,
 		symEffect:   SymAddr,
 		asm:         x86.ALEAQ,
+		scale:       1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10113,6 +10149,7 @@ var opcodeTable = [...]opInfo{
 		commutative: true,
 		symEffect:   SymAddr,
 		asm:         x86.ALEAL,
+		scale:       1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10130,6 +10167,7 @@ var opcodeTable = [...]opInfo{
 		commutative: true,
 		symEffect:   SymAddr,
 		asm:         x86.ALEAW,
+		scale:       1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10146,6 +10184,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    2,
 		symEffect: SymAddr,
 		asm:       x86.ALEAQ,
+		scale:     2,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10162,6 +10201,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    2,
 		symEffect: SymAddr,
 		asm:       x86.ALEAL,
+		scale:     2,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10178,6 +10218,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    2,
 		symEffect: SymAddr,
 		asm:       x86.ALEAW,
+		scale:     2,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10194,6 +10235,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    2,
 		symEffect: SymAddr,
 		asm:       x86.ALEAQ,
+		scale:     4,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10210,6 +10252,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    2,
 		symEffect: SymAddr,
 		asm:       x86.ALEAL,
+		scale:     4,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10226,6 +10269,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    2,
 		symEffect: SymAddr,
 		asm:       x86.ALEAW,
+		scale:     4,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10242,6 +10286,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    2,
 		symEffect: SymAddr,
 		asm:       x86.ALEAQ,
+		scale:     8,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10258,6 +10303,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    2,
 		symEffect: SymAddr,
 		asm:       x86.ALEAL,
+		scale:     8,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10274,6 +10320,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    2,
 		symEffect: SymAddr,
 		asm:       x86.ALEAW,
+		scale:     8,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10489,6 +10536,7 @@ var opcodeTable = [...]opInfo{
 		commutative: true,
 		symEffect:   SymRead,
 		asm:         x86.AMOVBLZX,
+		scale:       1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10506,6 +10554,7 @@ var opcodeTable = [...]opInfo{
 		commutative: true,
 		symEffect:   SymRead,
 		asm:         x86.AMOVWLZX,
+		scale:       1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10522,6 +10571,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymRead,
 		asm:       x86.AMOVWLZX,
+		scale:     2,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10539,6 +10589,7 @@ var opcodeTable = [...]opInfo{
 		commutative: true,
 		symEffect:   SymRead,
 		asm:         x86.AMOVL,
+		scale:       1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10555,6 +10606,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymRead,
 		asm:       x86.AMOVL,
+		scale:     4,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10571,6 +10623,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymRead,
 		asm:       x86.AMOVL,
+		scale:     8,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10588,6 +10641,7 @@ var opcodeTable = [...]opInfo{
 		commutative: true,
 		symEffect:   SymRead,
 		asm:         x86.AMOVQ,
+		scale:       1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10604,6 +10658,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymRead,
 		asm:       x86.AMOVQ,
+		scale:     8,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10620,6 +10675,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVB,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10634,6 +10690,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVW,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10648,6 +10705,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVW,
+		scale:     2,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10662,6 +10720,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVL,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10676,6 +10735,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVL,
+		scale:     4,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10690,6 +10750,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVL,
+		scale:     8,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10704,6 +10765,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVQ,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10718,6 +10780,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    4,
 		symEffect: SymWrite,
 		asm:       x86.AMOVQ,
+		scale:     8,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10784,6 +10847,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymWrite,
 		asm:       x86.AMOVB,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10797,6 +10861,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymWrite,
 		asm:       x86.AMOVW,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10810,6 +10875,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymWrite,
 		asm:       x86.AMOVW,
+		scale:     2,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10823,6 +10889,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymWrite,
 		asm:       x86.AMOVL,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10836,6 +10903,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymWrite,
 		asm:       x86.AMOVL,
+		scale:     4,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10849,6 +10917,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymWrite,
 		asm:       x86.AMOVQ,
+		scale:     1,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -10862,6 +10931,7 @@ var opcodeTable = [...]opInfo{
 		argLen:    3,
 		symEffect: SymWrite,
 		asm:       x86.AMOVQ,
+		scale:     8,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{1, 65535},      // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R14 R15
@@ -12026,6 +12096,19 @@ var opcodeTable = [...]opInfo{
 		name:   "REV",
 		argLen: 1,
 		asm:    arm.AREV,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 22527}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 g R12 R14
+			},
+			outputs: []outputInfo{
+				{0, 21503}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R12 R14
+			},
+		},
+	},
+	{
+		name:   "REV16",
+		argLen: 1,
+		asm:    arm.AREV16,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{0, 22527}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 g R12 R14
@@ -16120,6 +16203,26 @@ var opcodeTable = [...]opInfo{
 		},
 	},
 	{
+		name:   "FCMPS0",
+		argLen: 1,
+		asm:    arm64.AFCMPS,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 9223372034707292160}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31
+			},
+		},
+	},
+	{
+		name:   "FCMPD0",
+		argLen: 1,
+		asm:    arm64.AFCMPD,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 9223372034707292160}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31
+			},
+		},
+	},
+	{
 		name:    "MVNshiftLL",
 		auxType: auxInt64,
 		argLen:  1,
@@ -18116,6 +18219,42 @@ var opcodeTable = [...]opInfo{
 	},
 	{
 		name:   "GreaterEqualU",
+		argLen: 1,
+		reg: regInfo{
+			outputs: []outputInfo{
+				{0, 670826495}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+			},
+		},
+	},
+	{
+		name:   "LessThanF",
+		argLen: 1,
+		reg: regInfo{
+			outputs: []outputInfo{
+				{0, 670826495}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+			},
+		},
+	},
+	{
+		name:   "LessEqualF",
+		argLen: 1,
+		reg: regInfo{
+			outputs: []outputInfo{
+				{0, 670826495}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+			},
+		},
+	},
+	{
+		name:   "GreaterThanF",
+		argLen: 1,
+		reg: regInfo{
+			outputs: []outputInfo{
+				{0, 670826495}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+			},
+		},
+	},
+	{
+		name:   "GreaterEqualF",
 		argLen: 1,
 		reg: regInfo{
 			outputs: []outputInfo{
@@ -27999,9 +28138,9 @@ var opcodeTable = [...]opInfo{
 		},
 	},
 	{
-		name:   "I64TruncSF64",
+		name:   "I64TruncF64S",
 		argLen: 1,
-		asm:    wasm.AI64TruncSF64,
+		asm:    wasm.AI64TruncF64S,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
@@ -28012,9 +28151,9 @@ var opcodeTable = [...]opInfo{
 		},
 	},
 	{
-		name:   "I64TruncUF64",
+		name:   "I64TruncF64U",
 		argLen: 1,
-		asm:    wasm.AI64TruncUF64,
+		asm:    wasm.AI64TruncF64U,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
@@ -28025,9 +28164,9 @@ var opcodeTable = [...]opInfo{
 		},
 	},
 	{
-		name:   "F64ConvertSI64",
+		name:   "F64ConvertI64S",
 		argLen: 1,
-		asm:    wasm.AF64ConvertSI64,
+		asm:    wasm.AF64ConvertI64S,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{0, 65535}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15
@@ -28038,15 +28177,160 @@ var opcodeTable = [...]opInfo{
 		},
 	},
 	{
-		name:   "F64ConvertUI64",
+		name:   "F64ConvertI64U",
 		argLen: 1,
-		asm:    wasm.AF64ConvertUI64,
+		asm:    wasm.AF64ConvertI64U,
 		reg: regInfo{
 			inputs: []inputInfo{
 				{0, 65535}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15
 			},
 			outputs: []outputInfo{
 				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+		},
+	},
+	{
+		name:   "F64Sqrt",
+		argLen: 1,
+		asm:    wasm.AF64Sqrt,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+			outputs: []outputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+		},
+	},
+	{
+		name:   "F64Trunc",
+		argLen: 1,
+		asm:    wasm.AF64Trunc,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+			outputs: []outputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+		},
+	},
+	{
+		name:   "F64Ceil",
+		argLen: 1,
+		asm:    wasm.AF64Ceil,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+			outputs: []outputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+		},
+	},
+	{
+		name:   "F64Floor",
+		argLen: 1,
+		asm:    wasm.AF64Floor,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+			outputs: []outputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+		},
+	},
+	{
+		name:   "F64Nearest",
+		argLen: 1,
+		asm:    wasm.AF64Nearest,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+			outputs: []outputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+		},
+	},
+	{
+		name:   "F64Abs",
+		argLen: 1,
+		asm:    wasm.AF64Abs,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+			outputs: []outputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+		},
+	},
+	{
+		name:   "F64Copysign",
+		argLen: 2,
+		asm:    wasm.AF64Copysign,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+				{1, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+			outputs: []outputInfo{
+				{0, 4294901760}, // F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15
+			},
+		},
+	},
+	{
+		name:   "I64Ctz",
+		argLen: 1,
+		asm:    wasm.AI64Ctz,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4295032831}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 SP
+			},
+			outputs: []outputInfo{
+				{0, 65535}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15
+			},
+		},
+	},
+	{
+		name:   "I64Clz",
+		argLen: 1,
+		asm:    wasm.AI64Clz,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4295032831}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 SP
+			},
+			outputs: []outputInfo{
+				{0, 65535}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15
+			},
+		},
+	},
+	{
+		name:   "I64Rotl",
+		argLen: 2,
+		asm:    wasm.AI64Rotl,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4295032831}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 SP
+				{1, 4295032831}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 SP
+			},
+			outputs: []outputInfo{
+				{0, 65535}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15
+			},
+		},
+	},
+	{
+		name:   "I64Popcnt",
+		argLen: 1,
+		asm:    wasm.AI64Popcnt,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, 4295032831}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 SP
+			},
+			outputs: []outputInfo{
+				{0, 65535}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15
 			},
 		},
 	},
@@ -29797,6 +30081,12 @@ var opcodeTable = [...]opInfo{
 		generic:   true,
 	},
 	{
+		name:    "InlMark",
+		auxType: auxInt32,
+		argLen:  1,
+		generic: true,
+	},
+	{
 		name:    "Int64Make",
 		argLen:  2,
 		generic: true,
@@ -30031,6 +30321,7 @@ var opcodeTable = [...]opInfo{
 }
 
 func (o Op) Asm() obj.As          { return opcodeTable[o].asm }
+func (o Op) Scale() int16         { return int16(opcodeTable[o].scale) }
 func (o Op) String() string       { return opcodeTable[o].name }
 func (o Op) UsesScratch() bool    { return opcodeTable[o].usesScratch }
 func (o Op) SymEffect() SymEffect { return opcodeTable[o].symEffect }

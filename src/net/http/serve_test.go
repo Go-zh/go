@@ -2900,6 +2900,15 @@ func TestStripPrefix(t *testing.T) {
 		t.Errorf("test 2: got status %v, want %v", g, e)
 	}
 	res.Body.Close()
+
+	res, err = c.Get(ts.URL + "/foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g, e := res.Header.Get("X-Path"), "/"; g != e {
+		t.Errorf("test 3: got %s, want %s", g, e)
+	}
+	res.Body.Close()
 }
 
 // https://golang.org/issue/18952.
@@ -4697,6 +4706,10 @@ func TestServerHandlersCanHandleH2PRI(t *testing.T) {
 	defer afterTest(t)
 	ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, r *Request) {
 		conn, br, err := w.(Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		defer conn.Close()
 		if r.Method != "PRI" || r.RequestURI != "*" {
 			t.Errorf("Got method/target %q %q; want PRI *", r.Method, r.RequestURI)

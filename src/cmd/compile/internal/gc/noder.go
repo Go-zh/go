@@ -497,7 +497,18 @@ func (p *noder) funcDecl(fun *syntax.FuncDecl) *Node {
 		}
 	} else {
 		if pure_go || strings.HasPrefix(f.funcname(), "init.") {
-			yyerrorl(f.Pos, "missing function body")
+			// Linknamed functions are allowed to have no body. Hopefully
+			// the linkname target has a body. See issue 23311.
+			isLinknamed := false
+			for _, n := range p.linknames {
+				if f.funcname() == n.local {
+					isLinknamed = true
+					break
+				}
+			}
+			if !isLinknamed {
+				yyerrorl(f.Pos, "missing function body")
+			}
 		}
 	}
 
@@ -535,9 +546,15 @@ func (p *noder) param(param *syntax.Field, dddOk, final bool) *Node {
 	// rewrite ...T parameter
 	if typ.Op == ODDD {
 		if !dddOk {
-			yyerror("cannot use ... in receiver or result parameter list")
+			// We mark these as syntax errors to get automatic elimination
+			// of multiple such errors per line (see yyerrorl in subr.go).
+			yyerror("syntax error: cannot use ... in receiver or result parameter list")
 		} else if !final {
-			yyerror("can only use ... with final parameter in list")
+			if param.Name == nil {
+				yyerror("syntax error: cannot use ... with non-final parameter")
+			} else {
+				p.yyerrorpos(param.Name.Pos(), "syntax error: cannot use ... with non-final parameter %s", param.Name.Value)
+			}
 		}
 		typ.Op = OTARRAY
 		typ.Right = typ.Left
@@ -1310,7 +1327,7 @@ func (p *noder) basicLit(lit *syntax.BasicLit) Val {
 		return Val{U: x}
 
 	case syntax.ImagLit:
-		x := new(Mpcplx)
+		x := newMpcmplx()
 		x.Imag.SetString(strings.TrimSuffix(s, "i"))
 		return Val{U: x}
 

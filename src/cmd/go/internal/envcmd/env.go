@@ -81,6 +81,8 @@ func MkEnv() []cfg.EnvVar {
 		env = append(env, cfg.EnvVar{Name: "GOMIPS", Value: cfg.GOMIPS})
 	case "mips64", "mips64le":
 		env = append(env, cfg.EnvVar{Name: "GOMIPS64", Value: cfg.GOMIPS64})
+	case "ppc64", "ppc64le":
+		env = append(env, cfg.EnvVar{Name: "GOPPC64", Value: cfg.GOPPC64})
 	}
 
 	cc := cfg.DefaultCC(cfg.Goos, cfg.Goarch)
@@ -115,8 +117,10 @@ func findEnv(env []cfg.EnvVar, name string) string {
 // ExtraEnvVars returns environment variables that should not leak into child processes.
 func ExtraEnvVars() []cfg.EnvVar {
 	gomod := ""
-	if modload.Init(); modload.ModRoot != "" {
-		gomod = filepath.Join(modload.ModRoot, "go.mod")
+	if modload.HasModRoot() {
+		gomod = filepath.Join(modload.ModRoot(), "go.mod")
+	} else if modload.Enabled() {
+		gomod = os.DevNull
 	}
 	return []cfg.EnvVar{
 		{Name: "GOMOD", Value: gomod},

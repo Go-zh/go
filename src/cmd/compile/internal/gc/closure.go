@@ -434,7 +434,19 @@ func makepartialcall(fn *Node, t0 *types.Type, meth *types.Sym) *Node {
 	sym.SetUniq(true)
 
 	savecurfn := Curfn
+	saveLineNo := lineno
 	Curfn = nil
+
+	// Set line number equal to the line number where the method is declared.
+	var m *types.Field
+	if lookdot0(meth, rcvrtype, &m, false) == 1 && m.Pos.IsKnown() {
+		lineno = m.Pos
+	}
+	// Note: !m.Pos.IsKnown() happens for method expressions where
+	// the method is implicitly declared. The Error method of the
+	// built-in error type is one such method.  We leave the line
+	// number at the use of the method expression in this
+	// case. See issue 29389.
 
 	tfn := nod(OTFUNC, nil, nil)
 	tfn.List.Set(structargs(t0.Params(), true))
@@ -482,6 +494,7 @@ func makepartialcall(fn *Node, t0 *types.Type, meth *types.Sym) *Node {
 	sym.Def = asTypesNode(xfunc)
 	xtop = append(xtop, xfunc)
 	Curfn = savecurfn
+	lineno = saveLineNo
 
 	return xfunc
 }
@@ -510,8 +523,14 @@ func walkpartialcall(n *Node, init *Nodes) *Node {
 		// Trigger panic for method on nil interface now.
 		// Otherwise it happens in the wrapper and is confusing.
 		n.Left = cheapexpr(n.Left, init)
+		n.Left = walkexpr(n.Left, nil)
 
-		checknil(n.Left, init)
+		tab := nod(OITAB, n.Left, nil)
+		tab = typecheck(tab, ctxExpr)
+
+		c := nod(OCHECKNIL, tab, nil)
+		c.SetTypecheck(1)
+		init.Append(c)
 	}
 
 	typ := partialCallType(n)

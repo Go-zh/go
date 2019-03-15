@@ -2703,7 +2703,6 @@ func goexit0(gp *g) {
 		print("invalid m->lockedInt = ", _g_.m.lockedInt, "\n")
 		throw("internal lockOSThread error")
 	}
-	_g_.m.lockedExt = 0
 	gfput(_g_.m.p.ptr(), gp)
 	if locked {
 		// The goroutine may have locked this thread because
@@ -2714,6 +2713,10 @@ func goexit0(gp *g) {
 		// the thread.
 		if GOOS != "plan9" { // See golang.org/issue/22227.
 			gogo(&_g_.m.g0.sched)
+		} else {
+			// Clear lockedExt on plan9 since we may end up re-using
+			// this thread.
+			_g_.m.lockedExt = 0
 		}
 	}
 	schedule()
@@ -3300,9 +3303,11 @@ func newproc1(fn *funcval, argp *uint8, narg int32, callergp *g, callerpc uintpt
 		if writeBarrier.needed && !_g_.m.curg.gcscandone {
 			f := findfunc(fn.fn)
 			stkmap := (*stackmap)(funcdata(f, _FUNCDATA_ArgsPointerMaps))
-			// We're in the prologue, so it's always stack map index 0.
-			bv := stackmapdata(stkmap, 0)
-			bulkBarrierBitmap(spArg, spArg, uintptr(narg), 0, bv.bytedata)
+			if stkmap.nbit > 0 {
+				// We're in the prologue, so it's always stack map index 0.
+				bv := stackmapdata(stkmap, 0)
+				bulkBarrierBitmap(spArg, spArg, uintptr(bv.n)*sys.PtrSize, 0, bv.bytedata)
+			}
 		}
 	}
 
@@ -3742,6 +3747,9 @@ func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
 
 		// Collect Go stack that leads to the cgo call.
 		n = gentraceback(mp.curg.syscallpc, mp.curg.syscallsp, 0, mp.curg, 0, &stk[cgoOff], len(stk)-cgoOff, nil, nil, 0)
+		if n > 0 {
+			n += cgoOff
+		}
 	} else if traceback {
 		n = gentraceback(pc, sp, lr, gp, 0, &stk[0], len(stk), nil, nil, _TraceTrap|_TraceJumpStack)
 	}
@@ -4592,7 +4600,7 @@ func schedEnableUser(enable bool) {
 	}
 }
 
-// schedEnabled returns whether gp should be scheduled. It returns
+// schedEnabled reports whether gp should be scheduled. It returns
 // false is scheduling of gp is disabled.
 func schedEnabled(gp *g) bool {
 	if sched.disable.user {

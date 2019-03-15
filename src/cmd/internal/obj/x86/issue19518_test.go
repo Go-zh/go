@@ -32,15 +32,15 @@ func main() {
 `
 
 func objdumpOutput(t *testing.T) []byte {
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
 	tmpdir, err := ioutil.TempDir("", "19518")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpdir)
+	err = ioutil.WriteFile(filepath.Join(tmpdir, "go.mod"), []byte("module issue19518\n"), 0666)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tmpfile, err := os.Create(filepath.Join(tmpdir, "input.s"))
 	if err != nil {
 		t.Fatal(err)
@@ -59,15 +59,14 @@ func objdumpOutput(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = os.Chdir(tmpdir)
-	if err != nil {
-		t.Fatal(err)
-	}
+
 	cmd := exec.Command(
 		testenv.GoToolPath(t), "build", "-o",
 		filepath.Join(tmpdir, "output"))
 
-	cmd.Env = append(os.Environ(), "GOARCH=amd64", "GOOS=linux")
+	cmd.Env = append(os.Environ(),
+		"GOARCH=amd64", "GOOS=linux", "GOPATH="+filepath.Join(tmpdir, "_gopath"))
+	cmd.Dir = tmpdir
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -77,14 +76,12 @@ func objdumpOutput(t *testing.T) []byte {
 		testenv.GoToolPath(t), "tool", "objdump", "-s", "testASM",
 		filepath.Join(tmpdir, "output"))
 	cmd2.Env = cmd.Env
+	cmd2.Dir = tmpdir
 	objout, err := cmd2.CombinedOutput()
 	if err != nil {
 		t.Fatalf("error %s output %s", err, objout)
 	}
-	err = os.Chdir(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+
 	return objout
 }
 

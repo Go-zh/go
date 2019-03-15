@@ -125,11 +125,13 @@ func instinit(ctxt *obj.Link) {
 	morestack = ctxt.Lookup("runtime.morestack")
 	morestackNoCtxt = ctxt.Lookup("runtime.morestack_noctxt")
 	gcWriteBarrier = ctxt.Lookup("runtime.gcWriteBarrier")
-	sigpanic = ctxt.Lookup("runtime.sigpanic")
-	sigpanic.SetABI(obj.ABIInternal)
-	deferreturn = ctxt.Lookup("runtime.deferreturn")
-	deferreturn.SetABI(obj.ABIInternal)
-	jmpdefer = ctxt.Lookup(`"".jmpdefer`)
+	sigpanic = ctxt.LookupABI("runtime.sigpanic", obj.ABIInternal)
+	deferreturn = ctxt.LookupABI("runtime.deferreturn", obj.ABIInternal)
+	// jmpdefer is defined in assembly as ABI0, but what we're
+	// looking for is the *call* to jmpdefer from the Go function
+	// deferreturn, so we're looking for the ABIInternal version
+	// of jmpdefer that's called by Go.
+	jmpdefer = ctxt.LookupABI(`"".jmpdefer`, obj.ABIInternal)
 }
 
 func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
@@ -179,7 +181,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 		// Not
 		// If
 		//   Get SP
-		//   I64ExtendUI32
+		//   I64ExtendI32U
 		//   I64Const $framesize+8
 		//   I64Add
 		//   I64Load panic_argp(R0)
@@ -210,7 +212,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 		p = appendp(p, AIf)
 
 		p = appendp(p, AGet, regAddr(REG_SP))
-		p = appendp(p, AI64ExtendUI32)
+		p = appendp(p, AI64ExtendI32U)
 		p = appendp(p, AI64Const, constAddr(framesize+8))
 		p = appendp(p, AI64Add)
 		p = appendp(p, AI64Load, panicargp)
@@ -243,7 +245,6 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 	for p := s.Func.Text; p != nil; p = p.Link {
 		prevBase := base
 		base = ctxt.PosTable.Pos(p.Pos).Base()
-
 		switch p.As {
 		case ABlock, ALoop, AIf:
 			explicitBlockDepth++
@@ -279,8 +280,15 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 		// more often to avoid bloat of the BrTable instruction.
 		// The "base != prevBase" condition detects inlined instructions. They are an
 		// implicit call, so entering and leaving this section affects the stack trace.
-		if p.As == ACALLNORESUME || p.As == obj.ANOP || p.Spadj != 0 || base != prevBase {
+		if p.As == ACALLNORESUME || p.As == obj.ANOP || p.As == ANop || p.Spadj != 0 || base != prevBase {
 			pc++
+			if p.To.Sym == sigpanic {
+				// The panic stack trace expects the PC at the call of sigpanic,
+				// not the next one. However, runtime.Caller subtracts 1 from the
+				// PC. To make both PC and PC-1 work (have the same line number),
+				// we advance the PC by 2 at sigpanic.
+				pc++
+			}
 		}
 	}
 	tableIdxs = append(tableIdxs, uint64(numResumePoints))
@@ -576,7 +584,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 				case obj.NAME_AUTO, obj.NAME_PARAM:
 					p = appendp(p, AGet, regAddr(get.From.Reg))
 					if get.From.Reg == REG_SP {
-						p = appendp(p, AI64ExtendUI32)
+						p = appendp(p, AI64ExtendI32U)
 					}
 					if get.From.Offset != 0 {
 						p = appendp(p, AI64Const, constAddr(get.From.Offset))
@@ -633,7 +641,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 					case obj.NAME_NONE, obj.NAME_PARAM, obj.NAME_AUTO:
 						p = appendp(p, AGet, regAddr(mov.From.Reg))
 						if mov.From.Reg == REG_SP {
-							p = appendp(p, AI64ExtendUI32)
+							p = appendp(p, AI64ExtendI32U)
 						}
 						p = appendp(p, AI64Const, constAddr(mov.From.Offset))
 						p = appendp(p, AI64Add)
@@ -646,7 +654,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 				case obj.TYPE_REG:
 					p = appendp(p, AGet, mov.From)
 					if mov.From.Reg == REG_SP {
-						p = appendp(p, AI64ExtendUI32)
+						p = appendp(p, AI64ExtendI32U)
 					}
 
 				case obj.TYPE_MEM:
@@ -780,13 +788,13 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 			reg := p.From.Reg
 			switch {
 			case reg >= REG_PC_F && reg <= REG_PAUSE:
-				w.WriteByte(0x23) // get_global
+				w.WriteByte(0x23) // global.get
 				writeUleb128(w, uint64(reg-REG_PC_F))
 			case reg >= REG_R0 && reg <= REG_R15:
-				w.WriteByte(0x20) // get_local (i64)
+				w.WriteByte(0x20) // local.get (i64)
 				writeUleb128(w, uint64(reg-REG_R0))
 			case reg >= REG_F0 && reg <= REG_F15:
-				w.WriteByte(0x20) // get_local (f64)
+				w.WriteByte(0x20) // local.get (f64)
 				writeUleb128(w, uint64(numI+(reg-REG_F0)))
 			default:
 				panic("bad Get: invalid register")
@@ -800,14 +808,14 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 			reg := p.To.Reg
 			switch {
 			case reg >= REG_PC_F && reg <= REG_PAUSE:
-				w.WriteByte(0x24) // set_global
+				w.WriteByte(0x24) // global.set
 				writeUleb128(w, uint64(reg-REG_PC_F))
 			case reg >= REG_R0 && reg <= REG_F15:
 				if p.Link.As == AGet && p.Link.From.Reg == reg {
-					w.WriteByte(0x22) // tee_local
+					w.WriteByte(0x22) // local.tee
 					p = p.Link
 				} else {
-					w.WriteByte(0x21) // set_local
+					w.WriteByte(0x21) // local.set
 				}
 				if reg <= REG_R15 {
 					writeUleb128(w, uint64(reg-REG_R0))
@@ -826,10 +834,10 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 			reg := p.To.Reg
 			switch {
 			case reg >= REG_R0 && reg <= REG_R15:
-				w.WriteByte(0x22) // tee_local (i64)
+				w.WriteByte(0x22) // local.tee (i64)
 				writeUleb128(w, uint64(reg-REG_R0))
 			case reg >= REG_F0 && reg <= REG_F15:
-				w.WriteByte(0x22) // tee_local (f64)
+				w.WriteByte(0x22) // local.tee (f64)
 				writeUleb128(w, uint64(numI+(reg-REG_F0)))
 			default:
 				panic("bad Tee: invalid register")

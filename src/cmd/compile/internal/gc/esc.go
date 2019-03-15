@@ -11,144 +11,6 @@ import (
 	"strings"
 )
 
-// Run analysis on minimal sets of mutually recursive functions
-// or single non-recursive functions, bottom up.
-//
-// Finding these sets is finding strongly connected components
-// by reverse topological order in the static call graph.
-// The algorithm (known as Tarjan's algorithm) for doing that is taken from
-// Sedgewick, Algorithms, Second Edition, p. 482, with two adaptations.
-//
-// First, a hidden closure function (n.Func.IsHiddenClosure()) cannot be the
-// root of a connected component. Refusing to use it as a root
-// forces it into the component of the function in which it appears.
-// This is more convenient for escape analysis.
-//
-// Second, each function becomes two virtual nodes in the graph,
-// with numbers n and n+1. We record the function's node number as n
-// but search from node n+1. If the search tells us that the component
-// number (min) is n+1, we know that this is a trivial component: one function
-// plus its closures. If the search tells us that the component number is
-// n, then there was a path from node n+1 back to node n, meaning that
-// the function set is mutually recursive. The escape analysis can be
-// more precise when analyzing a single non-recursive function than
-// when analyzing a set of mutually recursive functions.
-
-type bottomUpVisitor struct {
-	analyze  func([]*Node, bool)
-	visitgen uint32
-	nodeID   map[*Node]uint32
-	stack    []*Node
-}
-
-// visitBottomUp invokes analyze on the ODCLFUNC nodes listed in list.
-// It calls analyze with successive groups of functions, working from
-// the bottom of the call graph upward. Each time analyze is called with
-// a list of functions, every function on that list only calls other functions
-// on the list or functions that have been passed in previous invocations of
-// analyze. Closures appear in the same list as their outer functions.
-// The lists are as short as possible while preserving those requirements.
-// (In a typical program, many invocations of analyze will be passed just
-// a single function.) The boolean argument 'recursive' passed to analyze
-// specifies whether the functions on the list are mutually recursive.
-// If recursive is false, the list consists of only a single function and its closures.
-// If recursive is true, the list may still contain only a single function,
-// if that function is itself recursive.
-func visitBottomUp(list []*Node, analyze func(list []*Node, recursive bool)) {
-	var v bottomUpVisitor
-	v.analyze = analyze
-	v.nodeID = make(map[*Node]uint32)
-	for _, n := range list {
-		if n.Op == ODCLFUNC && !n.Func.IsHiddenClosure() {
-			v.visit(n)
-		}
-	}
-}
-
-func (v *bottomUpVisitor) visit(n *Node) uint32 {
-	if id := v.nodeID[n]; id > 0 {
-		// already visited
-		return id
-	}
-
-	v.visitgen++
-	id := v.visitgen
-	v.nodeID[n] = id
-	v.visitgen++
-	min := v.visitgen
-
-	v.stack = append(v.stack, n)
-	min = v.visitcodelist(n.Nbody, min)
-	if (min == id || min == id+1) && !n.Func.IsHiddenClosure() {
-		// This node is the root of a strongly connected component.
-
-		// The original min passed to visitcodelist was v.nodeID[n]+1.
-		// If visitcodelist found its way back to v.nodeID[n], then this
-		// block is a set of mutually recursive functions.
-		// Otherwise it's just a lone function that does not recurse.
-		recursive := min == id
-
-		// Remove connected component from stack.
-		// Mark walkgen so that future visits return a large number
-		// so as not to affect the caller's min.
-
-		var i int
-		for i = len(v.stack) - 1; i >= 0; i-- {
-			x := v.stack[i]
-			if x == n {
-				break
-			}
-			v.nodeID[x] = ^uint32(0)
-		}
-		v.nodeID[n] = ^uint32(0)
-		block := v.stack[i:]
-		// Run escape analysis on this set of functions.
-		v.stack = v.stack[:i]
-		v.analyze(block, recursive)
-	}
-
-	return min
-}
-
-func (v *bottomUpVisitor) visitcodelist(l Nodes, min uint32) uint32 {
-	for _, n := range l.Slice() {
-		min = v.visitcode(n, min)
-	}
-	return min
-}
-
-func (v *bottomUpVisitor) visitcode(n *Node, min uint32) uint32 {
-	if n == nil {
-		return min
-	}
-
-	min = v.visitcodelist(n.Ninit, min)
-	min = v.visitcode(n.Left, min)
-	min = v.visitcode(n.Right, min)
-	min = v.visitcodelist(n.List, min)
-	min = v.visitcodelist(n.Nbody, min)
-	min = v.visitcodelist(n.Rlist, min)
-
-	switch n.Op {
-	case OCALLFUNC, OCALLMETH:
-		fn := asNode(n.Left.Type.Nname())
-		if fn != nil && fn.Op == ONAME && fn.Class() == PFUNC && fn.Name.Defn != nil {
-			m := v.visit(fn.Name.Defn)
-			if m < min {
-				min = m
-			}
-		}
-
-	case OCLOSURE:
-		m := v.visit(n.Func.Closure)
-		if m < min {
-			min = m
-		}
-	}
-
-	return min
-}
-
 // Escape analysis.
 
 // An escape analysis pass for a set of functions. The
@@ -1604,13 +1466,6 @@ func (e *EscState) esccall(call *Node, parent *Node) {
 	}
 
 	argList := call.List
-	if argList.Len() == 1 {
-		arg := argList.First()
-		if arg.Type.IsFuncArgStruct() { // f(g())
-			argList = e.nodeEscState(arg).Retval
-		}
-	}
-
 	args := argList.Slice()
 
 	if indirect {
@@ -1652,49 +1507,79 @@ func (e *EscState) esccall(call *Node, parent *Node) {
 			Fatalf("graph inconsistency")
 		}
 
-		sawRcvr := false
-		for _, n := range fn.Name.Defn.Func.Dcl {
-			switch n.Class() {
-			case PPARAM:
-				if call.Op != OCALLFUNC && !sawRcvr {
-					e.escassignWhyWhere(n, call.Left.Left, "call receiver", call)
-					sawRcvr = true
-					continue
-				}
-				if len(args) == 0 {
-					continue
-				}
-				arg := args[0]
-				if n.IsDDD() && !call.IsDDD() {
-					// Introduce ODDDARG node to represent ... allocation.
-					arg = nod(ODDDARG, nil, nil)
-					arr := types.NewArray(n.Type.Elem(), int64(len(args)))
-					arg.Type = types.NewPtr(arr) // make pointer so it will be tracked
-					arg.Pos = call.Pos
-					e.track(arg)
-					call.Right = arg
-				}
-				e.escassignWhyWhere(n, arg, "arg to recursive call", call) // TODO this message needs help.
-				if arg == args[0] {
-					args = args[1:]
-					continue
-				}
-				// "..." arguments are untracked
-				for _, a := range args {
-					if Debug['m'] > 3 {
-						fmt.Printf("%v::esccall:: ... <- %S, untracked\n", linestr(lineno), a)
-					}
-					e.escassignSinkWhyWhere(arg, a, "... arg to recursive call", call)
-				}
-				// No more PPARAM processing, but keep
-				// going for PPARAMOUT.
-				args = nil
+		i := 0
 
-			case PPARAMOUT:
+		// Receiver.
+		if call.Op != OCALLFUNC {
+			rf := fntype.Recv()
+			if rf.Sym != nil && !rf.Sym.IsBlank() {
+				n := fn.Name.Defn.Func.Dcl[0]
+				i++
+				if n.Class() != PPARAM {
+					Fatalf("esccall: not a parameter %+v", n)
+				}
+				e.escassignWhyWhere(n, call.Left.Left, "recursive call receiver", call)
+			}
+		}
+
+		// Parameters.
+		for _, param := range fntype.Params().FieldSlice() {
+			if param.Sym == nil || param.Sym.IsBlank() {
+				// Unnamed parameter is not listed in Func.Dcl.
+				// But we need to consume the arg.
+				if param.IsDDD() && !call.IsDDD() {
+					args = nil
+				} else {
+					args = args[1:]
+				}
+				continue
+			}
+
+			n := fn.Name.Defn.Func.Dcl[i]
+			i++
+			if n.Class() != PPARAM {
+				Fatalf("esccall: not a parameter %+v", n)
+			}
+			if len(args) == 0 {
+				continue
+			}
+			arg := args[0]
+			if n.IsDDD() && !call.IsDDD() {
+				// Introduce ODDDARG node to represent ... allocation.
+				arg = nod(ODDDARG, nil, nil)
+				arr := types.NewArray(n.Type.Elem(), int64(len(args)))
+				arg.Type = types.NewPtr(arr) // make pointer so it will be tracked
+				arg.Pos = call.Pos
+				e.track(arg)
+				call.Right = arg
+			}
+			e.escassignWhyWhere(n, arg, "arg to recursive call", call) // TODO this message needs help.
+			if arg == args[0] {
+				args = args[1:]
+				continue
+			}
+			// "..." arguments are untracked
+			for _, a := range args {
+				if Debug['m'] > 3 {
+					fmt.Printf("%v::esccall:: ... <- %S, untracked\n", linestr(lineno), a)
+				}
+				e.escassignSinkWhyWhere(arg, a, "... arg to recursive call", call)
+			}
+			// ... arg consumes all remaining arguments
+			args = nil
+		}
+
+		// Results.
+		for _, n := range fn.Name.Defn.Func.Dcl[i:] {
+			if n.Class() == PPARAMOUT {
 				cE.Retval.Append(n)
 			}
 		}
 
+		// Sanity check: all arguments must be consumed.
+		if len(args) != 0 {
+			Fatalf("esccall not consumed all args %+v\n", call)
+		}
 		return
 	}
 
@@ -2075,6 +1960,16 @@ func (e *EscState) escwalkBody(level Level, dst *Node, src *Node, step *EscStep,
 				step.describe(src)
 			}
 			extraloopdepth = modSrcLoopdepth
+			if src.Op == OCONVIFACE {
+				lt := src.Left.Type
+				if !lt.IsInterface() && !isdirectiface(lt) && types.Haspointers(lt) {
+					// We're converting from a non-direct interface type.
+					// The interface will hold a heap copy of the data
+					// (by calling convT2I or friend). Flow the data to heap.
+					// See issue 29353.
+					e.escwalk(level, &e.theSink, src.Left, e.stepWalk(dst, src.Left, "interface-converted", step))
+				}
+			}
 		}
 
 	case ODOT,

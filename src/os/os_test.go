@@ -2279,8 +2279,7 @@ func TestPipeThreads(t *testing.T) {
 	}
 }
 
-func TestDoubleCloseError(t *testing.T) {
-	path := sfdir + "/" + sfname
+func testDoubleCloseError(t *testing.T, path string) {
 	file, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -2299,10 +2298,18 @@ func TestDoubleCloseError(t *testing.T) {
 	}
 }
 
+func TestDoubleCloseError(t *testing.T) {
+	testDoubleCloseError(t, filepath.Join(sfdir, sfname))
+	testDoubleCloseError(t, sfdir)
+}
+
 func TestUserHomeDir(t *testing.T) {
-	dir := UserHomeDir()
-	if dir == "" {
-		t.Fatal("UserHomeDir returned an empty string")
+	dir, err := UserHomeDir()
+	if dir == "" && err == nil {
+		t.Fatal("UserHomeDir returned an empty string but no error")
+	}
+	if err != nil {
+		t.Skipf("UserHomeDir failed: %v", err)
 	}
 	fi, err := Stat(dir)
 	if err != nil {

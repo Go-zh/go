@@ -46,6 +46,7 @@ type Node struct {
 	// - ODOT, ODOTPTR, and OINDREGSP use it to indicate offset relative to their base address.
 	// - OSTRUCTKEY uses it to store the named field's offset.
 	// - Named OLITERALs use it to store their ambient iota value.
+	// - OINLMARK stores an index into the inlTree data structure.
 	// Possibly still more uses. If you find any, document them.
 	Xoffset int64
 
@@ -622,7 +623,7 @@ const (
 	OMAPLIT    // Type{List} (composite literal, Type is map)
 	OSTRUCTLIT // Type{List} (composite literal, Type is struct)
 	OARRAYLIT  // Type{List} (composite literal, Type is array)
-	OSLICELIT  // Type{List} (composite literal, Type is slice)
+	OSLICELIT  // Type{List} (composite literal, Type is slice) Right.Int64() = slice length.
 	OPTRLIT    // &Left (left is composite literal)
 	OCONV      // Type(Left) (type conversion)
 	OCONVIFACE // Type(Left) (type conversion, to interface)
@@ -692,7 +693,7 @@ const (
 	OIOTA        // iota
 	OREAL        // real(Left)
 	OIMAG        // imag(Left)
-	OCOMPLEX     // complex(Left, Right)
+	OCOMPLEX     // complex(Left, Right) or complex(List[0]) where List[0] is a 2-result function call
 	OALIGNOF     // unsafe.Alignof(Left)
 	OOFFSETOF    // unsafe.Offsetof(Left)
 	OSIZEOF      // unsafe.Sizeof(Left)
@@ -750,6 +751,7 @@ const (
 	OVARKILL    // variable is dead
 	OVARLIVE    // variable is alive
 	OINDREGSP   // offset plus indirect of REGSP, such as 8(SP).
+	OINLMARK    // start of an inlined body, with file/line of caller. Xoffset is an index into the inline tree.
 
 	// arch-specific opcodes
 	ORETJMP // return to other function

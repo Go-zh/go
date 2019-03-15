@@ -1681,13 +1681,15 @@ maps.  Here is a print statement for the time zone map defined in the previous s
 fmt.Printf("%v\n", timeZone)  // or just fmt.Println(timeZone)
 </pre>
 <p>
-which gives output
+which gives output:
 </p>
 <pre>
-map[CST:-21600 PST:-28800 EST:-18000 UTC:0 MST:-25200]
+map[CST:-21600 EST:-18000 MST:-25200 PST:-28800 UTC:0]
 </pre>
 <p>
-For maps the keys may be output in any order, of course.
+For maps, <code>Printf</code> and friends sort the output lexicographically by key.
+</p>
+<p>
 When printing a struct, the modified format <code>%+v</code> annotates the
 fields of the structure with their names, and for any value the alternate
 format <code>%#v</code> prints the value in full Go syntax.
@@ -1711,7 +1713,7 @@ prints
 &amp;{7 -2.35 abc   def}
 &amp;{a:7 b:-2.35 c:abc     def}
 &amp;main.T{a:7, b:-2.35, c:"abc\tdef"}
-map[string] int{"CST":-21600, "PST":-28800, "EST":-18000, "UTC":0, "MST":-25200}
+map[string]int{"CST":-21600, "EST":-18000, "MST":-25200, "PST":-28800, "UTC":0}
 </pre>
 <p>
 (Note the ampersands.)
@@ -1734,7 +1736,7 @@ fmt.Printf(&quot;%T\n&quot;, timeZone)
 prints
 </p>
 <pre>
-map[string] int
+map[string]int
 </pre>
 <p>
 If you want to control the default format for a custom type, all that's required is to define
@@ -2107,12 +2109,14 @@ In this contrived example <code>Sequence</code> satisfies both.
 
 <p>
 The <code>String</code> method of <code>Sequence</code> is recreating the
-work that <code>Sprint</code> already does for slices.  We can share the
-effort if we convert the <code>Sequence</code> to a plain
+work that <code>Sprint</code> already does for slices.
+(It also has complexity O(N²), which is poor.) We can share the
+effort (and also speed it up) if we convert the <code>Sequence</code> to a plain
 <code>[]int</code> before calling <code>Sprint</code>.
 </p>
 <pre>
 func (s Sequence) String() string {
+    s = s.Copy()
     sort.Sort(s)
     return fmt.Sprint([]int(s))
 }
@@ -2139,6 +2143,7 @@ type Sequence []int
 
 // Method for printing - sorts the elements before printing
 func (s Sequence) String() string {
+    s = s.Copy()
     sort.IntSlice(s).Sort()
     return fmt.Sprint([]int(s))
 }

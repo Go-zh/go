@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"internal/trace"
 	"log"
 	"math"
 	"net/http"
@@ -16,8 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	trace "internal/traceparser"
 )
 
 func init() {
@@ -309,7 +308,7 @@ func analyzeAnnotations() (annotationAnalysisResult, error) {
 		}
 	}
 	// combine region info.
-	analyzeGoroutines(res)
+	analyzeGoroutines(events)
 	for goid, stats := range gs {
 		// gs is a global var defined in goroutines.go as a result
 		// of analyzeGoroutines. TODO(hyangah): fix this not to depend
@@ -322,7 +321,7 @@ func analyzeAnnotations() (annotationAnalysisResult, error) {
 			}
 			var frame trace.Frame
 			if s.Start != nil {
-				frame = *res.Stacks[s.Start.StkID][0]
+				frame = *s.Start.Stk[0]
 			}
 			id := regionTypeID{Frame: frame, Type: s.Name}
 			regions[id] = append(regions[id], regionDesc{UserRegionDesc: s, G: goid})
@@ -539,7 +538,7 @@ func (task *taskDesc) overlappingInstant(ev *trace.Event) bool {
 	return false
 }
 
-// overlappingDuration returns whether the durational event, ev, overlaps with
+// overlappingDuration reports whether the durational event, ev, overlaps with
 // any of the task's region if ev is a goroutine-local event, or overlaps with
 // the task's lifetime if ev is a global event. It returns the overlapping time
 // as well.
@@ -1160,17 +1159,17 @@ var templUserRegionType = template.Must(template.New("").Funcs(template.FuncMap{
 		d := time.Duration(nsec) * time.Nanosecond
 		return template.HTML(niceDuration(d))
 	},
-	"percent": func(dividened, divisor int64) template.HTML {
+	"percent": func(dividend, divisor int64) template.HTML {
 		if divisor == 0 {
 			return ""
 		}
-		return template.HTML(fmt.Sprintf("(%.1f%%)", float64(dividened)/float64(divisor)*100))
+		return template.HTML(fmt.Sprintf("(%.1f%%)", float64(dividend)/float64(divisor)*100))
 	},
-	"barLen": func(dividened, divisor int64) template.HTML {
+	"barLen": func(dividend, divisor int64) template.HTML {
 		if divisor == 0 {
 			return "0"
 		}
-		return template.HTML(fmt.Sprintf("%.2f%%", float64(dividened)/float64(divisor)*100))
+		return template.HTML(fmt.Sprintf("%.2f%%", float64(dividend)/float64(divisor)*100))
 	},
 	"unknownTime": func(desc regionDesc) int64 {
 		sum := desc.ExecTime + desc.IOTime + desc.BlockTime + desc.SyscallTime + desc.SchedWaitTime

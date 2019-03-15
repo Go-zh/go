@@ -16,6 +16,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"unicode"
 
 	"cmd/internal/edit"
 	"cmd/internal/objabi"
@@ -114,6 +115,10 @@ func parseFlags() error {
 	// Must either display a profile or rewrite Go source.
 	if (profile == "") == (*mode == "") {
 		return fmt.Errorf("too many options")
+	}
+
+	if *varVar != "" && !isValidIdentifier(*varVar) {
+		return fmt.Errorf("-var: %q is not a valid identifier", *varVar)
 	}
 
 	if *mode != "" {
@@ -644,6 +649,9 @@ func (f *File) addVariables(w io.Writer) {
 	for i, block := range f.blocks {
 		start := f.fset.Position(block.startByte)
 		end := f.fset.Position(block.endByte)
+
+		start, end = dedup(start, end)
+
 		fmt.Fprintf(w, "\t\t%d, %d, %#x, // [%d]\n", start.Line, end.Line, (end.Column&0xFFFF)<<16|(start.Column&0xFFFF), i)
 	}
 
@@ -675,4 +683,57 @@ func (f *File) addVariables(w io.Writer) {
 	if *mode == "atomic" {
 		fmt.Fprintf(w, "var _ = %s.LoadUint32\n", atomicPackageName)
 	}
+}
+
+func isValidIdentifier(ident string) bool {
+	if len(ident) == 0 {
+		return false
+	}
+	for i, c := range ident {
+		if i > 0 && unicode.IsDigit(c) {
+			continue
+		}
+		if c == '_' || unicode.IsLetter(c) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// It is possible for positions to repeat when there is a line
+// directive that does not specify column information and the input
+// has not been passed through gofmt.
+// See issues #27530 and #30746.
+// Tests are TestHtmlUnformatted and TestLineDup.
+// We use a map to avoid duplicates.
+
+// pos2 is a pair of token.Position values, used as a map key type.
+type pos2 struct {
+	p1, p2 token.Position
+}
+
+// seenPos2 tracks whether we have seen a token.Position pair.
+var seenPos2 = make(map[pos2]bool)
+
+// dedup takes a token.Position pair and returns a pair that does not
+// duplicate any existing pair. The returned pair will have the Offset
+// fields cleared.
+func dedup(p1, p2 token.Position) (r1, r2 token.Position) {
+	key := pos2{
+		p1: p1,
+		p2: p2,
+	}
+
+	// We want to ignore the Offset fields in the map,
+	// since cover uses only file/line/column.
+	key.p1.Offset = 0
+	key.p2.Offset = 0
+
+	for seenPos2[key] {
+		key.p2.Column++
+	}
+	seenPos2[key] = true
+
+	return key.p1, key.p2
 }

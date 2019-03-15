@@ -85,7 +85,6 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, ecdheParameters, error) {
 	possibleCipherSuites := config.cipherSuites()
 	hello.cipherSuites = make([]uint16, 0, len(possibleCipherSuites))
 
-NextCipherSuite:
 	for _, suiteId := range possibleCipherSuites {
 		for _, suite := range cipherSuites {
 			if suite.id != suiteId {
@@ -94,10 +93,10 @@ NextCipherSuite:
 			// Don't advertise TLS 1.2-only cipher suites unless
 			// we're attempting TLS 1.2.
 			if hello.vers < VersionTLS12 && suite.flags&suiteTLS12 != 0 {
-				continue
+				break
 			}
 			hello.cipherSuites = append(hello.cipherSuites, suiteId)
-			continue NextCipherSuite
+			break
 		}
 	}
 
@@ -934,7 +933,7 @@ func (c *Conn) getClientCertificate(cri *CertificateRequestInfo) (*Certificate, 
 	// Issuer is in AcceptableCAs.
 	for i, chain := range c.config.Certificates {
 		sigOK := false
-		for _, alg := range signatureSchemesForCertificate(&chain) {
+		for _, alg := range signatureSchemesForCertificate(c.vers, &chain) {
 			if isSupportedSignatureAlgorithm(alg, cri.SignatureSchemes) {
 				sigOK = true
 				break

@@ -6,7 +6,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -211,6 +210,9 @@ func (t *tester) run() {
 	timelog("end", "dist test")
 	if t.failed {
 		fmt.Println("\nFAILED")
+		os.Exit(1)
+	} else if incomplete[goos+"/"+goarch] {
+		fmt.Println("\nFAILED (incomplete port)")
 		os.Exit(1)
 	} else if t.partial {
 		fmt.Println("\nALL TESTS PASSED (some were excluded)")
@@ -417,9 +419,10 @@ func (t *tester) registerTests() {
 		if !t.race {
 			cmd.Args = append(cmd.Args, "cmd")
 		}
+		cmd.Stderr = new(bytes.Buffer)
 		all, err := cmd.Output()
 		if err != nil {
-			log.Fatalf("Error running go list std cmd: %v, %s", err, all)
+			log.Fatalf("Error running go list std cmd: %v:\n%s", err, cmd.Stderr)
 		}
 		pkgs := strings.Fields(string(all))
 		for _, pkg := range pkgs {
@@ -519,7 +522,6 @@ func (t *tester) registerTests() {
 				}
 
 				// Run `go test fmt` in the moved GOROOT.
-				// Disable GOCACHE because it points back at the old GOROOT.
 				cmd := exec.Command(filepath.Join(moved, "bin", "go"), "test", "fmt")
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
@@ -529,7 +531,6 @@ func (t *tester) registerTests() {
 						cmd.Env = append(cmd.Env, e)
 					}
 				}
-				cmd.Env = append(cmd.Env, "GOCACHE=off")
 				err := cmd.Run()
 
 				if rerr := os.Rename(moved, goroot); rerr != nil {
@@ -570,10 +571,7 @@ func (t *tester) registerTests() {
 	}
 
 	// Test internal linking of PIE binaries where it is supported.
-	if goos == "linux" && goarch == "amd64" && !isAlpineLinux() {
-		// Issue 18243: We don't have a way to set the default
-		// dynamic linker used in internal linking mode. So
-		// this test is skipped on Alpine.
+	if goos == "linux" && goarch == "amd64" {
 		t.tests = append(t.tests, distTest{
 			name:    "pie_internal",
 			heading: "internal linking of -buildmode=pie",
@@ -582,6 +580,17 @@ func (t *tester) registerTests() {
 				return nil
 			},
 		})
+		// Also test a cgo package.
+		if t.cgoEnabled {
+			t.tests = append(t.tests, distTest{
+				name:    "pie_internal_cgo",
+				heading: "internal linking of -buildmode=pie",
+				fn: func(dt *distTest) error {
+					t.addCmd(dt, "src", t.goTest(), "os/user", "-buildmode=pie", "-ldflags=-linkmode=internal", t.timeout(60))
+					return nil
+				},
+			})
+		}
 	}
 
 	// sync tests
@@ -606,27 +615,13 @@ func (t *tester) registerTests() {
 
 	if t.cgoEnabled && !t.iOS() {
 		// Disabled on iOS. golang.org/issue/15919
-		t.tests = append(t.tests, distTest{
-			name:    "cgo_stdio",
-			heading: "../misc/cgo/stdio",
-			fn: func(dt *distTest) error {
-				t.addCmd(dt, "misc/cgo/stdio", "go", "run", filepath.Join(os.Getenv("GOROOT"), "test/run.go"), "-", ".")
-				return nil
-			},
-		})
-		t.tests = append(t.tests, distTest{
-			name:    "cgo_life",
-			heading: "../misc/cgo/life",
-			fn: func(dt *distTest) error {
-				t.addCmd(dt, "misc/cgo/life", "go", "run", filepath.Join(os.Getenv("GOROOT"), "test/run.go"), "-", ".")
-				return nil
-			},
-		})
+		t.registerHostTest("cgo_stdio", "../misc/cgo/stdio", "misc/cgo/stdio", ".")
+		t.registerHostTest("cgo_life", "../misc/cgo/life", "misc/cgo/life", ".")
 		fortran := os.Getenv("FC")
 		if fortran == "" {
 			fortran, _ = exec.LookPath("gfortran")
 		}
-		if t.hasBash() && fortran != "" {
+		if t.hasBash() && goos != "android" && fortran != "" {
 			t.tests = append(t.tests, distTest{
 				name:    "cgo_fortran",
 				heading: "../misc/cgo/fortran",
@@ -674,33 +669,19 @@ func (t *tester) registerTests() {
 	// recompile the entire standard library. If make.bash ran with
 	// special -gcflags, that's not true.
 	if t.cgoEnabled && gogcflags == "" {
-		if t.cgoTestSOSupported() {
-			t.tests = append(t.tests, distTest{
-				name:    "testso",
-				heading: "../misc/cgo/testso",
-				fn: func(dt *distTest) error {
-					return t.cgoTestSO(dt, "misc/cgo/testso")
-				},
-			})
-			t.tests = append(t.tests, distTest{
-				name:    "testsovar",
-				heading: "../misc/cgo/testsovar",
-				fn: func(dt *distTest) error {
-					return t.cgoTestSO(dt, "misc/cgo/testsovar")
-				},
-			})
-		}
+		t.registerTest("testso", "../misc/cgo/testso", t.goTest(), t.timeout(600))
+		t.registerTest("testsovar", "../misc/cgo/testsovar", t.goTest(), t.timeout(600))
 		if t.supportedBuildmode("c-archive") {
-			t.registerHostTest("testcarchive", "../misc/cgo/testcarchive", "misc/cgo/testcarchive", "carchive_test.go")
+			t.registerHostTest("testcarchive", "../misc/cgo/testcarchive", "misc/cgo/testcarchive", ".")
 		}
 		if t.supportedBuildmode("c-shared") {
-			t.registerHostTest("testcshared", "../misc/cgo/testcshared", "misc/cgo/testcshared", "cshared_test.go")
+			t.registerHostTest("testcshared", "../misc/cgo/testcshared", "misc/cgo/testcshared", ".")
 		}
 		if t.supportedBuildmode("shared") {
 			t.registerTest("testshared", "../misc/cgo/testshared", t.goTest(), t.timeout(600))
 		}
 		if t.supportedBuildmode("plugin") {
-			t.registerTest("testplugin", "../misc/cgo/testplugin", "./test.bash")
+			t.registerTest("testplugin", "../misc/cgo/testplugin", t.goTest(), t.timeout(600))
 		}
 		if gohostos == "linux" && goarch == "amd64" {
 			t.registerTest("testasan", "../misc/cgo/testasan", "go", "run", "main.go")
@@ -757,6 +738,12 @@ func (t *tester) registerTests() {
 				return nil
 			},
 		})
+	}
+
+	// Ensure that the toolchain can bootstrap itself.
+	// This test adds another ~45s to all.bash if run sequentially, so run it only on the builders.
+	if os.Getenv("GO_BUILDER_NAME") != "" && goos != "android" && !t.iOS() {
+		t.registerHostTest("reboot", "../misc/reboot", "misc/reboot", ".")
 	}
 }
 
@@ -927,10 +914,6 @@ func (t *tester) internalLink() bool {
 	if goarch == "arm64" || goarch == "mips64" || goarch == "mips64le" || goarch == "mips" || goarch == "mipsle" {
 		return false
 	}
-	if isAlpineLinux() {
-		// Issue 18243.
-		return false
-	}
 	return true
 }
 
@@ -1038,7 +1021,10 @@ func (t *tester) cgoTest(dt *distTest) error {
 		"linux-386", "linux-amd64", "linux-arm", "linux-ppc64le", "linux-s390x",
 		"netbsd-386", "netbsd-amd64":
 
-		t.addCmd(dt, "misc/cgo/test", t.goTest(), "-ldflags", "-linkmode=external")
+		cmd := t.addCmd(dt, "misc/cgo/test", t.goTest(), "-ldflags", "-linkmode=external")
+		// A -g argument in CGO_CFLAGS should not affect how the test runs.
+		cmd.Env = append(os.Environ(), "CGO_CFLAGS=-g0")
+
 		t.addCmd(dt, "misc/cgo/testtls", t.goTest(), "-ldflags", "-linkmode=auto")
 		t.addCmd(dt, "misc/cgo/testtls", t.goTest(), "-ldflags", "-linkmode=external")
 
@@ -1160,85 +1146,6 @@ func (t *tester) runPending(nextTest *distTest) {
 			fmt.Printf("# go tool dist test -run=^%s$\n", dt.name)
 		}
 	}
-}
-
-func (t *tester) cgoTestSOSupported() bool {
-	if goos == "android" || t.iOS() {
-		// No exec facility on Android or iOS.
-		return false
-	}
-	if goarch == "ppc64" {
-		// External linking not implemented on ppc64 (issue #8912).
-		return false
-	}
-	if goarch == "mips64le" || goarch == "mips64" {
-		// External linking not implemented on mips64.
-		return false
-	}
-	return true
-}
-
-func (t *tester) cgoTestSO(dt *distTest, testpath string) error {
-	t.runPending(dt)
-
-	timelog("start", dt.name)
-	defer timelog("end", dt.name)
-
-	dir := filepath.Join(goroot, testpath)
-
-	// build shared object
-	output, err := exec.Command("go", "env", "CC").Output()
-	if err != nil {
-		return fmt.Errorf("Error running go env CC: %v", err)
-	}
-	cc := strings.TrimSuffix(string(output), "\n")
-	if cc == "" {
-		return errors.New("CC environment variable (go env CC) cannot be empty")
-	}
-	output, err = exec.Command("go", "env", "GOGCCFLAGS").Output()
-	if err != nil {
-		return fmt.Errorf("Error running go env GOGCCFLAGS: %v", err)
-	}
-	gogccflags := strings.Split(strings.TrimSuffix(string(output), "\n"), " ")
-
-	ext := "so"
-	args := append(gogccflags, "-shared")
-	switch goos {
-	case "darwin":
-		ext = "dylib"
-		args = append(args, "-undefined", "suppress", "-flat_namespace")
-	case "windows":
-		ext = "dll"
-		args = append(args, "-DEXPORT_DLL")
-	}
-	sofname := "libcgosotest." + ext
-	args = append(args, "-o", sofname, "cgoso_c.c")
-
-	if err := t.dirCmd(dir, cc, args).Run(); err != nil {
-		return err
-	}
-	defer os.Remove(filepath.Join(dir, sofname))
-
-	if err := t.dirCmd(dir, "go", "build", "-o", "main.exe", "main.go").Run(); err != nil {
-		return err
-	}
-	defer os.Remove(filepath.Join(dir, "main.exe"))
-
-	cmd := t.dirCmd(dir, "./main.exe")
-	if goos != "windows" {
-		s := "LD_LIBRARY_PATH"
-		if goos == "darwin" {
-			s = "DYLD_LIBRARY_PATH"
-		}
-		cmd.Env = append(os.Environ(), s+"=.")
-
-		// On FreeBSD 64-bit architectures, the 32-bit linker looks for
-		// different environment variables.
-		if goos == "freebsd" && gohostarch == "386" {
-			cmd.Env = append(cmd.Env, "LD_32_LIBRARY_PATH=.")
-		}
-	}
-	return cmd.Run()
 }
 
 func (t *tester) hasBash() bool {
@@ -1470,7 +1377,7 @@ func (t *tester) packageHasBenchmarks(pkg string) bool {
 func raceDetectorSupported(goos, goarch string) bool {
 	switch goos {
 	case "linux":
-		return goarch == "amd64" || goarch == "ppc64le"
+		return goarch == "amd64" || goarch == "ppc64le" || goarch == "arm64"
 	case "darwin", "freebsd", "netbsd", "windows":
 		return goarch == "amd64"
 	default:

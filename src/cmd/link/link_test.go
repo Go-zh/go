@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,8 @@ func TestLargeSymName(t *testing.T) {
 }
 
 func TestIssue21703(t *testing.T) {
+	t.Parallel()
+
 	testenv.MustHaveGoBuild(t)
 
 	const source = `
@@ -77,6 +80,8 @@ func main() {}
 // to, for example, save facts produced by a modular static analysis
 // such as golang.org/x/tools/go/analysis.
 func TestIssue28429(t *testing.T) {
+	t.Parallel()
+
 	testenv.MustHaveGoBuild(t)
 
 	tmpdir, err := ioutil.TempDir("", "issue28429-")
@@ -115,4 +120,60 @@ func TestIssue28429(t *testing.T) {
 	// Verify that the linker does not attempt
 	// to compile the extra section.
 	runGo("tool", "link", "main.a")
+}
+
+func TestUnresolved(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+
+	tmpdir, err := ioutil.TempDir("", "unresolved-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpdir)
+
+	write := func(name, content string) {
+		err := ioutil.WriteFile(filepath.Join(tmpdir, name), []byte(content), 0666)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Test various undefined references. Because of issue #29852,
+	// this used to give confusing error messages because the
+	// linker would find an undefined reference to "zero" created
+	// by the runtime package.
+
+	write("go.mod", "module testunresolved\n")
+	write("main.go", `package main
+
+func main() {
+        x()
+}
+
+func x()
+`)
+	write("main.s", `
+TEXT ·x(SB),0,$0
+        MOVD zero<>(SB), AX
+        MOVD zero(SB), AX
+        MOVD ·zero(SB), AX
+        RET
+`)
+	cmd := exec.Command(testenv.GoToolPath(t), "build")
+	cmd.Dir = tmpdir
+	cmd.Env = append(os.Environ(),
+		"GOARCH=amd64", "GOOS=linux", "GOPATH="+filepath.Join(tmpdir, "_gopath"))
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected build to fail, but it succeeded")
+	}
+	out = regexp.MustCompile("(?m)^#.*\n").ReplaceAll(out, nil)
+	got := string(out)
+	want := `main.x: relocation target zero not defined
+main.x: relocation target zero not defined
+main.x: relocation target main.zero not defined
+`
+	if want != got {
+		t.Fatalf("want:\n%sgot:\n%s", want, got)
+	}
 }

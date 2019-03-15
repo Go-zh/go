@@ -41,6 +41,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 // TODO: test 5 pipelined requests with responses: 1) OK, 2) OK, Connection: Close
@@ -308,6 +310,58 @@ func TestTransportConnectionCloseOnRequestDisableKeepAlive(t *testing.T) {
 	if res.Header.Get("X-Saw-Close") != "true" {
 		t.Errorf("handler didn't see Connection: close ")
 	}
+}
+
+// Test that Transport only sends one "Connection: close", regardless of
+// how "close" was indicated.
+func TestTransportRespectRequestWantsClose(t *testing.T) {
+	tests := []struct {
+		disableKeepAlives bool
+		close             bool
+	}{
+		{disableKeepAlives: false, close: false},
+		{disableKeepAlives: false, close: true},
+		{disableKeepAlives: true, close: false},
+		{disableKeepAlives: true, close: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("DisableKeepAlive=%v,RequestClose=%v", tc.disableKeepAlives, tc.close),
+			func(t *testing.T) {
+				defer afterTest(t)
+				ts := httptest.NewServer(hostPortHandler)
+				defer ts.Close()
+
+				c := ts.Client()
+				c.Transport.(*Transport).DisableKeepAlives = tc.disableKeepAlives
+				req, err := NewRequest("GET", ts.URL, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				count := 0
+				trace := &httptrace.ClientTrace{
+					WroteHeaderField: func(key string, field []string) {
+						if key != "Connection" {
+							return
+						}
+						if httpguts.HeaderValuesContainsToken(field, "close") {
+							count += 1
+						}
+					},
+				}
+				req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+				req.Close = tc.close
+				res, err := c.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer res.Body.Close()
+				if want := tc.disableKeepAlives || tc.close; count > 1 || (count == 1) != want {
+					t.Errorf("expecting want:%v, got 'Connection: close':%d", want, count)
+				}
+			})
+	}
+
 }
 
 func TestTransportIdleCacheKeys(t *testing.T) {
@@ -811,6 +865,10 @@ func TestRoundTripGzip(t *testing.T) {
 			req.Header.Set("Accept-Encoding", test.accept)
 		}
 		res, err := tr.RoundTrip(req)
+		if err != nil {
+			t.Errorf("%d. RoundTrip: %v", i, err)
+			continue
+		}
 		var body []byte
 		if test.compressed {
 			var r *gzip.Reader
@@ -5001,6 +5059,149 @@ func TestTransportRequestReplayable(t *testing.T) {
 			got := tt.req.ExportIsReplayable()
 			if got != tt.want {
 				t.Errorf("replyable = %v; want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// testMockTCPConn is a mock TCP connection used to test that
+// ReadFrom is called when sending the request body.
+type testMockTCPConn struct {
+	*net.TCPConn
+
+	ReadFromCalled bool
+}
+
+func (c *testMockTCPConn) ReadFrom(r io.Reader) (int64, error) {
+	c.ReadFromCalled = true
+	return c.TCPConn.ReadFrom(r)
+}
+
+func TestTransportRequestWriteRoundTrip(t *testing.T) {
+	nBytes := int64(1 << 10)
+	newFileFunc := func() (r io.Reader, done func(), err error) {
+		f, err := ioutil.TempFile("", "net-http-newfilefunc")
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Write some bytes to the file to enable reading.
+		if _, err := io.CopyN(f, rand.Reader, nBytes); err != nil {
+			return nil, nil, fmt.Errorf("failed to write data to file: %v", err)
+		}
+		if _, err := f.Seek(0, 0); err != nil {
+			return nil, nil, fmt.Errorf("failed to seek to front: %v", err)
+		}
+
+		done = func() {
+			f.Close()
+			os.Remove(f.Name())
+		}
+
+		return f, done, nil
+	}
+
+	newBufferFunc := func() (io.Reader, func(), error) {
+		return bytes.NewBuffer(make([]byte, nBytes)), func() {}, nil
+	}
+
+	cases := []struct {
+		name             string
+		readerFunc       func() (io.Reader, func(), error)
+		contentLength    int64
+		expectedReadFrom bool
+	}{
+		{
+			name:             "file, length",
+			readerFunc:       newFileFunc,
+			contentLength:    nBytes,
+			expectedReadFrom: true,
+		},
+		{
+			name:       "file, no length",
+			readerFunc: newFileFunc,
+		},
+		{
+			name:          "file, negative length",
+			readerFunc:    newFileFunc,
+			contentLength: -1,
+		},
+		{
+			name:          "buffer",
+			contentLength: nBytes,
+			readerFunc:    newBufferFunc,
+		},
+		{
+			name:       "buffer, no length",
+			readerFunc: newBufferFunc,
+		},
+		{
+			name:          "buffer, length -1",
+			contentLength: -1,
+			readerFunc:    newBufferFunc,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, cleanup, err := tc.readerFunc()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+
+			tConn := &testMockTCPConn{}
+			trFunc := func(tr *Transport) {
+				tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					var d net.Dialer
+					conn, err := d.DialContext(ctx, network, addr)
+					if err != nil {
+						return nil, err
+					}
+
+					tcpConn, ok := conn.(*net.TCPConn)
+					if !ok {
+						return nil, fmt.Errorf("%s/%s does not provide a *net.TCPConn", network, addr)
+					}
+
+					tConn.TCPConn = tcpConn
+					return tConn, nil
+				}
+			}
+
+			cst := newClientServerTest(
+				t,
+				h1Mode,
+				HandlerFunc(func(w ResponseWriter, r *Request) {
+					io.Copy(ioutil.Discard, r.Body)
+					r.Body.Close()
+					w.WriteHeader(200)
+				}),
+				trFunc,
+			)
+			defer cst.close()
+
+			req, err := NewRequest("PUT", cst.ts.URL, r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.ContentLength = tc.contentLength
+			req.Header.Set("Content-Type", "application/octet-stream")
+			resp, err := cst.c.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != 200 {
+				t.Fatalf("status code = %d; want 200", resp.StatusCode)
+			}
+
+			if !tConn.ReadFromCalled && tc.expectedReadFrom {
+				t.Fatalf("did not call ReadFrom")
+			}
+
+			if tConn.ReadFromCalled && !tc.expectedReadFrom {
+				t.Fatalf("ReadFrom was unexpectedly invoked")
 			}
 		})
 	}

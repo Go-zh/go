@@ -33,6 +33,7 @@ var (
 	go386            string
 	gomips           string
 	gomips64         string
+	goppc64          string
 	goroot           string
 	goroot_final     string
 	goextlinkenabled string
@@ -48,6 +49,7 @@ var (
 	defaultcflags    string
 	defaultldflags   string
 	defaultpkgconfig string
+	defaultldso      string
 
 	rebuildall   bool
 	defaultclang bool
@@ -158,6 +160,12 @@ func xinit() {
 	}
 	gomips64 = b
 
+	b = os.Getenv("GOPPC64")
+	if b == "" {
+		b = "power8"
+	}
+	goppc64 = b
+
 	if p := pathf("%s/src/all.bash", goroot); !isfile(p) {
 		fatalf("$GOROOT is not set correctly or not exported\n"+
 			"\tGOROOT=%s\n"+
@@ -207,6 +215,8 @@ func xinit() {
 	}
 	defaultpkgconfig = b
 
+	defaultldso = os.Getenv("GO_LDSO")
+
 	// For tools being invoked but also for os.ExpandEnv.
 	os.Setenv("GO386", go386)
 	os.Setenv("GOARCH", goarch)
@@ -216,6 +226,7 @@ func xinit() {
 	os.Setenv("GOOS", goos)
 	os.Setenv("GOMIPS", gomips)
 	os.Setenv("GOMIPS64", gomips64)
+	os.Setenv("GOPPC64", goppc64)
 	os.Setenv("GOROOT", goroot)
 	os.Setenv("GOROOT_FINAL", goroot_final)
 
@@ -1114,6 +1125,9 @@ func cmdenv() {
 	if goarch == "mips64" || goarch == "mips64le" {
 		xprintf(format, "GOMIPS64", gomips64)
 	}
+	if goarch == "ppc64" || goarch == "ppc64le" {
+		xprintf(format, "GOPPC64", goppc64)
+	}
 
 	if *path {
 		sep := ":"
@@ -1366,24 +1380,56 @@ func cmdbootstrap() {
 	// Remove go_bootstrap now that we're done.
 	xremove(pathf("%s/go_bootstrap", tooldir))
 
+	if goos == "android" {
+		// Make sure the exec wrapper will sync a fresh $GOROOT to the device.
+		xremove(pathf("%s/go_android_exec-adb-sync-status", os.TempDir()))
+	}
+
+	if wrapperPath := wrapperPathFor(goos, goarch); wrapperPath != "" {
+		oldcc := os.Getenv("CC")
+		os.Setenv("GOOS", gohostos)
+		os.Setenv("GOARCH", gohostarch)
+		os.Setenv("CC", compilerEnvLookup(defaultcc, gohostos, gohostarch))
+		goCmd(cmdGo, "build", "-o", pathf("%s/go_%s_%s_exec%s", gobin, goos, goarch, exe), wrapperPath)
+		// Restore environment.
+		// TODO(elias.naur): support environment variables in goCmd?
+		os.Setenv("GOOS", goos)
+		os.Setenv("GOARCH", goarch)
+		os.Setenv("CC", oldcc)
+	}
+
 	// Print trailing banner unless instructed otherwise.
 	if !noBanner {
 		banner()
 	}
 }
 
+func wrapperPathFor(goos, goarch string) string {
+	switch {
+	case goos == "android":
+		return pathf("%s/misc/android/go_android_exec.go", goroot)
+	case goos == "darwin" && (goarch == "arm" || goarch == "arm64"):
+		return pathf("%s/misc/ios/go_darwin_arm_exec.go", goroot)
+	}
+	return ""
+}
+
 func goInstall(goBinary string, args ...string) {
-	installCmd := []string{goBinary, "install", "-gcflags=all=" + gogcflags, "-ldflags=all=" + goldflags}
+	goCmd(goBinary, "install", args...)
+}
+
+func goCmd(goBinary string, cmd string, args ...string) {
+	goCmd := []string{goBinary, cmd, "-gcflags=all=" + gogcflags, "-ldflags=all=" + goldflags}
 	if vflag > 0 {
-		installCmd = append(installCmd, "-v")
+		goCmd = append(goCmd, "-v")
 	}
 
 	// Force only one process at a time on vx32 emulation.
 	if gohostos == "plan9" && os.Getenv("sysname") == "vx32" {
-		installCmd = append(installCmd, "-p=1")
+		goCmd = append(goCmd, "-p=1")
 	}
 
-	run(goroot, ShowOutput|CheckExit, append(installCmd, args...)...)
+	run(goroot, ShowOutput|CheckExit, append(goCmd, args...)...)
 }
 
 func checkNotStale(goBinary string, targets ...string) {
@@ -1448,7 +1494,7 @@ var cgoEnabled = map[string]bool{
 	"netbsd/arm":      true,
 	"openbsd/386":     true,
 	"openbsd/amd64":   true,
-	"openbsd/arm":     false,
+	"openbsd/arm":     true,
 	"plan9/386":       false,
 	"plan9/amd64":     false,
 	"plan9/arm":       false,
@@ -1456,6 +1502,13 @@ var cgoEnabled = map[string]bool{
 	"windows/386":     true,
 	"windows/amd64":   true,
 	"windows/arm":     false,
+}
+
+// List of platforms which are supported but not complete yet. These get
+// filtered out of cgoEnabled for 'dist list'. See golang.org/issue/28944
+var incomplete = map[string]bool{
+	"linux/riscv64": true,
+	"linux/sparc64": true,
 }
 
 func needCC() bool {
@@ -1576,6 +1629,9 @@ func cmdlist() {
 
 	var plats []string
 	for p := range cgoEnabled {
+		if incomplete[p] {
+			continue
+		}
 		plats = append(plats, p)
 	}
 	sort.Strings(plats)

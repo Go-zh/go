@@ -38,7 +38,7 @@ var (
 	BuildWork              bool // -work flag
 	BuildX                 bool // -x flag
 
-	CmdName string // "build", "install", "list", etc.
+	CmdName string // "build", "install", "list", "mod tidy", etc.
 
 	DebugActiongraph string // -debug-actiongraph flag (undocumented, unstable)
 )
@@ -73,7 +73,6 @@ var (
 	Goarch    = BuildContext.GOARCH
 	Goos      = BuildContext.GOOS
 	ExeSuffix string
-	Gopath    = filepath.SplitList(BuildContext.GOPATH)
 
 	// ModulesEnabled specifies whether the go command is running
 	// in module-aware mode (as opposed to GOPATH mode).
@@ -105,6 +104,7 @@ var (
 	GO386    = objabi.GO386
 	GOMIPS   = objabi.GOMIPS
 	GOMIPS64 = objabi.GOMIPS64
+	GOPPC64  = fmt.Sprintf("%s%d", "power", objabi.GOPPC64)
 )
 
 // Update build context to use our computed GOROOT.

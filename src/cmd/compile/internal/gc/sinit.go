@@ -350,7 +350,7 @@ func staticcopy(l *Node, r *Node, out *[]*Node) bool {
 				continue
 			}
 			ll := n.sepcopy()
-			if staticassign(ll, e.Expr, out) {
+			if staticcopy(ll, e.Expr, out) {
 				continue
 			}
 			// Requires computation, but we're
@@ -568,7 +568,7 @@ var statuniqgen int // name generator for static temps
 // returned node for readonly nodes.
 func staticname(t *types.Type) *Node {
 	// Don't use lookupN; it interns the resulting string, but these are all unique.
-	n := newname(lookup(fmt.Sprintf("statictmp_%d", statuniqgen)))
+	n := newname(lookup(fmt.Sprintf(".stmp_%d", statuniqgen)))
 	statuniqgen++
 	addvar(n, t, PEXTERN)
 	return n
@@ -610,6 +610,15 @@ func getdyn(n *Node, top bool) initGenType {
 
 	case OSLICELIT:
 		if !top {
+			return initDynamic
+		}
+		if n.Right.Int64()/4 > int64(n.List.Len()) {
+			// <25% of entries have explicit values.
+			// Very rough estimation, it takes 4 bytes of instructions
+			// to initialize 1 byte of result. So don't use a static
+			// initializer if the dynamic initialization code would be
+			// smaller than the static value.
+			// See issue 23780.
 			return initDynamic
 		}
 
@@ -702,7 +711,10 @@ func fixedlit(ctxt initContext, kind initKind, n *Node, var_ *Node, init *Nodes)
 		var k int64
 		splitnode = func(r *Node) (*Node, *Node) {
 			if r.Op == OKEY {
-				k = nonnegintconst(r.Left)
+				k = indexconst(r.Left)
+				if k < 0 {
+					Fatalf("fixedlit: invalid index %v", r.Left)
+				}
 				r = r.Right
 			}
 			a := nod(OINDEX, var_, nodintconst(k))
@@ -884,7 +896,10 @@ func slicelit(ctxt initContext, n *Node, var_ *Node, init *Nodes) {
 	var index int64
 	for _, value := range n.List.Slice() {
 		if value.Op == OKEY {
-			index = nonnegintconst(value.Left)
+			index = indexconst(value.Left)
+			if index < 0 {
+				Fatalf("slicelit: invalid index %v", value.Left)
+			}
 			value = value.Right
 		}
 		a := nod(OINDEX, vauto, nodintconst(index))
@@ -902,7 +917,7 @@ func slicelit(ctxt initContext, n *Node, var_ *Node, init *Nodes) {
 			continue
 		}
 
-		if isLiteral(value) {
+		if vstat != nil && isLiteral(value) { // already set by copy from static value
 			continue
 		}
 
@@ -1241,7 +1256,10 @@ func initplan(n *Node) {
 		var k int64
 		for _, a := range n.List.Slice() {
 			if a.Op == OKEY {
-				k = nonnegintconst(a.Left)
+				k = indexconst(a.Left)
+				if k < 0 {
+					Fatalf("initplan arraylit: invalid index %v", a.Left)
+				}
 				a = a.Right
 			}
 			addvalue(p, k*n.Type.Elem().Width, a)
@@ -1251,7 +1269,7 @@ func initplan(n *Node) {
 	case OSTRUCTLIT:
 		for _, a := range n.List.Slice() {
 			if a.Op != OSTRUCTKEY {
-				Fatalf("initplan fixedlit")
+				Fatalf("initplan structlit")
 			}
 			addvalue(p, a.Xoffset, a.Left)
 		}

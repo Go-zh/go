@@ -30,8 +30,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang_org/x/net/http/httpguts"
-	"golang_org/x/net/http/httpproxy"
+	"golang.org/x/net/http/httpguts"
+	"golang.org/x/net/http/httpproxy"
 )
 
 // DefaultTransport is the default implementation of Transport and is
@@ -134,7 +134,7 @@ type Transport struct {
 	//
 	// DialContext runs concurrently with calls to RoundTrip.
 	// A RoundTrip call that initiates a dial may end up using
-	// an connection dialed previously when the earlier connection
+	// a connection dialed previously when the earlier connection
 	// becomes idle before the later DialContext completes.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
@@ -142,7 +142,7 @@ type Transport struct {
 	//
 	// Dial runs concurrently with calls to RoundTrip.
 	// A RoundTrip call that initiates a dial may end up using
-	// an connection dialed previously when the earlier connection
+	// a connection dialed previously when the earlier connection
 	// becomes idle before the later Dial completes.
 	//
 	// Deprecated: Use DialContext instead, which allows the transport
@@ -1375,6 +1375,17 @@ func (w persistConnWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
+// ReadFrom exposes persistConnWriter's underlying Conn to io.Copy and if
+// the Conn implements io.ReaderFrom, it can take advantage of optimizations
+// such as sendfile.
+func (w persistConnWriter) ReadFrom(r io.Reader) (n int64, err error) {
+	n, err = io.Copy(w.pc.conn, r)
+	w.pc.nwrite += n
+	return
+}
+
+var _ io.ReaderFrom = (*persistConnWriter)(nil)
+
 // connectMethod is the map key (in its String form) for keeping persistent
 // TCP connections alive for subsequent HTTP requests.
 //
@@ -2073,7 +2084,10 @@ func (e *httpError) Timeout() bool   { return e.timeout }
 func (e *httpError) Temporary() bool { return true }
 
 var errTimeout error = &httpError{err: "net/http: timeout awaiting response headers", timeout: true}
-var errRequestCanceled = errors.New("net/http: request canceled")
+
+// errRequestCanceled is set to be identical to the one from h2 to facilitate
+// testing.
+var errRequestCanceled = http2errRequestCanceled
 var errRequestCanceledConn = errors.New("net/http: request canceled while waiting for connection") // TODO: unify?
 
 func nop() {}
@@ -2116,7 +2130,7 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 		req.Method != "HEAD" {
 		// Request gzip only, not deflate. Deflate is ambiguous and
 		// not as universally supported anyway.
-		// See: http://www.gzip.org/zlib/zlib_faq.html#faq38
+		// See: https://zlib.net/zlib_faq.html#faq39
 		//
 		// Note that we don't request this for HEAD requests,
 		// due to a bug in nginx:
@@ -2135,7 +2149,7 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 		continueCh = make(chan struct{}, 1)
 	}
 
-	if pc.t.DisableKeepAlives {
+	if pc.t.DisableKeepAlives && !req.wantsClose() {
 		req.extraHeaders().Set("Connection", "close")
 	}
 

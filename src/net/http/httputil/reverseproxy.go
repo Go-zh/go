@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"golang_org/x/net/http/httpguts"
+	"golang.org/x/net/http/httpguts"
 )
 
 // ReverseProxy is an HTTP Handler that takes an incoming request and
@@ -45,7 +45,7 @@ type ReverseProxy struct {
 	// after each write to the client.
 	// The FlushInterval is ignored when ReverseProxy
 	// recognizes a response as a streaming response;
-	// for such reponses, writes are flushed to the client
+	// for such responses, writes are flushed to the client
 	// immediately.
 	FlushInterval time.Duration
 
@@ -171,6 +171,20 @@ func (p *ReverseProxy) getErrorHandler() func(http.ResponseWriter, *http.Request
 	return p.defaultErrorHandler
 }
 
+// modifyResponse conditionally runs the optional ModifyResponse hook
+// and reports whether the request should proceed.
+func (p *ReverseProxy) modifyResponse(rw http.ResponseWriter, res *http.Response, req *http.Request) bool {
+	if p.ModifyResponse == nil {
+		return true
+	}
+	if err := p.ModifyResponse(res); err != nil {
+		res.Body.Close()
+		p.getErrorHandler()(rw, req, err)
+		return false
+	}
+	return true
+}
+
 func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	transport := p.Transport
 	if transport == nil {
@@ -250,6 +264,9 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	// Deal with 101 Switching Protocols responses: (WebSocket, h2c, etc)
 	if res.StatusCode == http.StatusSwitchingProtocols {
+		if !p.modifyResponse(rw, res, outreq) {
+			return
+		}
 		p.handleUpgradeResponse(rw, outreq, res)
 		return
 	}
@@ -260,12 +277,8 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		res.Header.Del(h)
 	}
 
-	if p.ModifyResponse != nil {
-		if err := p.ModifyResponse(res); err != nil {
-			res.Body.Close()
-			p.getErrorHandler()(rw, outreq, err)
-			return
-		}
+	if !p.modifyResponse(rw, res, outreq) {
+		return
 	}
 
 	copyHeader(rw.Header(), res.Header)
@@ -282,14 +295,7 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	rw.WriteHeader(res.StatusCode)
-	if len(res.Trailer) > 0 {
-		// Force chunking if we saw a response trailer.
-		// This prevents net/http from calculating the length for short
-		// bodies and adding a Content-Length.
-		if fl, ok := rw.(http.Flusher); ok {
-			fl.Flush()
-		}
-	}
+
 	err = p.copyResponse(rw, res.Body, p.flushInterval(req, res))
 	if err != nil {
 		defer res.Body.Close()
@@ -303,6 +309,15 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		panic(http.ErrAbortHandler)
 	}
 	res.Body.Close() // close now, instead of defer, to populate res.Trailer
+
+	if len(res.Trailer) > 0 {
+		// Force chunking if we saw a response trailer.
+		// This prevents net/http from calculating the length for short
+		// bodies and adding a Content-Length.
+		if fl, ok := rw.(http.Flusher); ok {
+			fl.Flush()
+		}
+	}
 
 	if len(res.Trailer) == announcedTrailers {
 		copyHeader(rw.Header(), res.Trailer)
@@ -495,6 +510,9 @@ func (p *ReverseProxy) handleUpgradeResponse(rw http.ResponseWriter, req *http.R
 		p.getErrorHandler()(rw, req, fmt.Errorf("backend tried to switch protocol %q when %q was requested", resUpType, reqUpType))
 		return
 	}
+
+	copyHeader(res.Header, rw.Header())
+
 	hj, ok := rw.(http.Hijacker)
 	if !ok {
 		p.getErrorHandler()(rw, req, fmt.Errorf("can't switch protocols using non-Hijacker ResponseWriter type %T", rw))

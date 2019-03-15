@@ -104,7 +104,7 @@ type B struct {
 }
 
 // StartTimer starts timing a test. This function is called automatically
-// before a benchmark starts, but it can also used to resume timing after
+// before a benchmark starts, but it can also be used to resume timing after
 // a call to StopTimer.
 func (b *B) StartTimer() {
 	if !b.timerOn {
@@ -230,7 +230,7 @@ func roundUp(n int) int {
 	}
 }
 
-// run1 runs the first iteration of benchFunc. It returns whether more
+// run1 runs the first iteration of benchFunc. It reports whether more
 // iterations of this benchmarks should be run.
 func (b *B) run1() bool {
 	if ctx := b.context; ctx != nil {

@@ -56,7 +56,8 @@ If a module under consideration is already a dependency of the current
 development module, then get will update the required version.
 Specifying a version earlier than the current required version is valid and
 downgrades the dependency. The version suffix @none indicates that the
-dependency should be removed entirely.
+dependency should be removed entirely, downgrading or removing modules
+depending on it as needed.
 
 Although get defaults to using the latest version of the module containing
 a named package, it does not use the latest version of that module's
@@ -281,8 +282,8 @@ func runGet(cmd *base.Command, args []string) {
 				base.Errorf("go get %s: %v", arg, err)
 				continue
 			}
-			if !str.HasFilePathPrefix(abs, modload.ModRoot) {
-				base.Errorf("go get %s: directory %s is outside module root %s", arg, abs, modload.ModRoot)
+			if !str.HasFilePathPrefix(abs, modload.ModRoot()) {
+				base.Errorf("go get %s: directory %s is outside module root %s", arg, abs, modload.ModRoot())
 				continue
 			}
 			// TODO: Check if abs is inside a nested module.

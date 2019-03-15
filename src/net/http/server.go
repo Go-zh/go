@@ -29,7 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang_org/x/net/http/httpguts"
+	"golang.org/x/net/http/httpguts"
 )
 
 // Errors used by the HTTP server.
@@ -749,10 +749,8 @@ func (cr *connReader) handleReadError(_ error) {
 // may be called from multiple goroutines.
 func (cr *connReader) closeNotify() {
 	res, _ := cr.conn.curReq.Load().(*response)
-	if res != nil {
-		if atomic.CompareAndSwapInt32(&res.didCloseNotify, 0, 1) {
-			res.closeNotifyCh <- true
-		}
+	if res != nil && atomic.CompareAndSwapInt32(&res.didCloseNotify, 0, 1) {
+		res.closeNotifyCh <- true
 	}
 }
 
@@ -2030,7 +2028,7 @@ func StripPrefix(prefix string, h Handler) Handler {
 			*r2 = *r
 			r2.URL = new(url.URL)
 			*r2.URL = *r.URL
-			r2.URL.Path = p
+			r2.URL.Path = cleanPath(p)
 			h.ServeHTTP(w, r2)
 		} else {
 			NotFound(w, r)
@@ -3082,7 +3080,7 @@ func (srv *Server) ListenAndServeTLS(certFile, keyFile string) error {
 }
 
 // setupHTTP2_ServeTLS conditionally configures HTTP/2 on
-// srv and returns whether there was an error setting it up. If it is
+// srv and reports whether there was an error setting it up. If it is
 // not configured for policy reasons, nil is returned.
 func (srv *Server) setupHTTP2_ServeTLS() error {
 	srv.nextProtoOnce.Do(srv.onceSetNextProtoDefaults)
@@ -3221,6 +3219,25 @@ type timeoutWriter struct {
 	timedOut    bool
 	wroteHeader bool
 	code        int
+}
+
+var _ Pusher = (*timeoutWriter)(nil)
+var _ Flusher = (*timeoutWriter)(nil)
+
+// Push implements the Pusher interface.
+func (tw *timeoutWriter) Push(target string, opts *PushOptions) error {
+	if pusher, ok := tw.w.(Pusher); ok {
+		return pusher.Push(target, opts)
+	}
+	return ErrNotSupported
+}
+
+// Flush implements the Flusher interface.
+func (tw *timeoutWriter) Flush() {
+	f, ok := tw.w.(Flusher)
+	if ok {
+		f.Flush()
+	}
 }
 
 func (tw *timeoutWriter) Header() Header { return tw.h }

@@ -427,13 +427,13 @@ bad:
 func tocplx(v Val) Val {
 	switch u := v.U.(type) {
 	case *Mpint:
-		c := new(Mpcplx)
+		c := newMpcmplx()
 		c.Real.SetInt(u)
 		c.Imag.SetFloat64(0.0)
 		v.U = c
 
 	case *Mpflt:
-		c := new(Mpcplx)
+		c := newMpcmplx()
 		c.Real.Set(u)
 		c.Imag.SetFloat64(0.0)
 		v.U = c
@@ -618,15 +618,16 @@ func evconst(n *Node) {
 		}
 
 	case OCONV:
-		if n.Type != nil && okforconst[n.Type.Etype] && nl.Op == OLITERAL {
+		if okforconst[n.Type.Etype] && nl.Op == OLITERAL {
 			// TODO(mdempsky): There should be a convval function.
 			setconst(n, convlit1(nl, n.Type, true, false).Val())
 		}
 
-	case OBYTES2STR:
-		// string([]byte(nil)) or string([]rune(nil))
-		if nl.Op == OLITERAL && nl.Val().Ctype() == CTNIL {
-			setconst(n, Val{U: ""})
+	case OCONVNOP:
+		if okforconst[n.Type.Etype] && nl.Op == OLITERAL {
+			// set so n.Orig gets OCONV instead of OCONVNOP
+			n.Op = OCONV
+			setconst(n, nl.Val())
 		}
 
 	case OADDSTR:
@@ -655,6 +656,60 @@ func evconst(n *Node) {
 			n.SetVal(s[0].Val())
 		} else {
 			n.List.Set(s)
+		}
+
+	case OCAP, OLEN:
+		switch nl.Type.Etype {
+		case TSTRING:
+			if Isconst(nl, CTSTR) {
+				setintconst(n, int64(len(nl.Val().U.(string))))
+			}
+		case TARRAY:
+			if !hascallchan(nl) {
+				setintconst(n, nl.Type.NumElem())
+			}
+		}
+
+	case OALIGNOF, OOFFSETOF, OSIZEOF:
+		setintconst(n, evalunsafe(n))
+
+	case OREAL, OIMAG:
+		if nl.Op == OLITERAL {
+			var re, im *Mpflt
+			switch u := nl.Val().U.(type) {
+			case *Mpint:
+				re = newMpflt()
+				re.SetInt(u)
+				// im = 0
+			case *Mpflt:
+				re = u
+				// im = 0
+			case *Mpcplx:
+				re = &u.Real
+				im = &u.Imag
+			default:
+				Fatalf("impossible")
+			}
+			if n.Op == OIMAG {
+				if im == nil {
+					im = newMpflt()
+				}
+				re = im
+			}
+			setconst(n, Val{re})
+		}
+
+	case OCOMPLEX:
+		if nl == nil || nr == nil {
+			// TODO(mdempsky): Remove after early OAS2FUNC rewrite CL lands.
+			break
+		}
+		if nl.Op == OLITERAL && nr.Op == OLITERAL {
+			// make it a complex literal
+			c := newMpcmplx()
+			c.Real.Set(toflt(nl.Val()).U.(*Mpflt))
+			c.Imag.Set(toflt(nr.Val()).U.(*Mpflt))
+			setconst(n, Val{c})
 		}
 	}
 }
@@ -837,7 +892,7 @@ Outer:
 	case CTCPLX:
 		x, y := x.U.(*Mpcplx), y.U.(*Mpcplx)
 
-		u := new(Mpcplx)
+		u := newMpcmplx()
 		u.Real.Set(&x.Real)
 		u.Imag.Set(&x.Imag)
 		switch op {
@@ -892,7 +947,7 @@ func unaryOp(op Op, x Val, t *types.Type) Val {
 
 		case CTCPLX:
 			x := x.U.(*Mpcplx)
-			u := new(Mpcplx)
+			u := newMpcmplx()
 			u.Real.Set(&x.Real)
 			u.Imag.Set(&x.Imag)
 			u.Real.Neg()
@@ -1221,6 +1276,7 @@ func strlit(n *Node) string {
 	return n.Val().U.(string)
 }
 
+// TODO(gri) smallintconst is only used in one place - can we used indexconst?
 func smallintconst(n *Node) bool {
 	if n.Op == OLITERAL && Isconst(n, CTINT) && n.Type != nil {
 		switch simtype[n.Type.Etype] {
@@ -1235,7 +1291,7 @@ func smallintconst(n *Node) bool {
 
 		case TIDEAL, TINT64, TUINT64, TPTR:
 			v, ok := n.Val().U.(*Mpint)
-			if ok && v.Cmp(minintval[TINT32]) > 0 && v.Cmp(maxintval[TINT32]) < 0 {
+			if ok && v.Cmp(minintval[TINT32]) >= 0 && v.Cmp(maxintval[TINT32]) <= 0 {
 				return true
 			}
 		}
@@ -1244,20 +1300,23 @@ func smallintconst(n *Node) bool {
 	return false
 }
 
-// nonnegintconst checks if Node n contains a constant expression
-// representable as a non-negative small integer, and returns its
-// (integer) value if that's the case. Otherwise, it returns -1.
-func nonnegintconst(n *Node) int64 {
+// indexconst checks if Node n contains a constant expression
+// representable as a non-negative int and returns its value.
+// If n is not a constant expression, not representable as an
+// integer, or negative, it returns -1. If n is too large, it
+// returns -2.
+func indexconst(n *Node) int64 {
 	if n.Op != OLITERAL {
 		return -1
 	}
 
-	// toint will leave n.Val unchanged if it's not castable to an
-	// Mpint, so we still have to guard the conversion.
-	v := toint(n.Val())
+	v := toint(n.Val()) // toint returns argument unchanged if not representable as an *Mpint
 	vi, ok := v.U.(*Mpint)
-	if !ok || vi.CmpInt64(0) < 0 || vi.Cmp(maxintval[TINT32]) > 0 {
+	if !ok || vi.CmpInt64(0) < 0 {
 		return -1
+	}
+	if vi.Cmp(maxintval[TINT]) > 0 {
+		return -2
 	}
 
 	return vi.Int64()
@@ -1268,91 +1327,8 @@ func nonnegintconst(n *Node) int64 {
 //
 // Expressions derived from nil, like string([]byte(nil)), while they
 // may be known at compile time, are not Go language constants.
-// Only called for expressions known to evaluated to compile-time
-// constants.
 func (n *Node) isGoConst() bool {
-	if n.Orig != nil {
-		n = n.Orig
-	}
-
-	switch n.Op {
-	case OADD,
-		OADDSTR,
-		OAND,
-		OANDAND,
-		OANDNOT,
-		OBITNOT,
-		ODIV,
-		OEQ,
-		OGE,
-		OGT,
-		OLE,
-		OLSH,
-		OLT,
-		ONEG,
-		OMOD,
-		OMUL,
-		ONE,
-		ONOT,
-		OOR,
-		OOROR,
-		OPLUS,
-		ORSH,
-		OSUB,
-		OXOR,
-		OIOTA,
-		OCOMPLEX,
-		OREAL,
-		OIMAG:
-		if n.Left.isGoConst() && (n.Right == nil || n.Right.isGoConst()) {
-			return true
-		}
-
-	case OCONV:
-		if okforconst[n.Type.Etype] && n.Left.isGoConst() {
-			return true
-		}
-
-	case OLEN, OCAP:
-		l := n.Left
-		if l.isGoConst() {
-			return true
-		}
-
-		// Special case: len/cap is constant when applied to array or
-		// pointer to array when the expression does not contain
-		// function calls or channel receive operations.
-		t := l.Type
-
-		if t != nil && t.IsPtr() {
-			t = t.Elem()
-		}
-		if t != nil && t.IsArray() && !hascallchan(l) {
-			return true
-		}
-
-	case OLITERAL:
-		if n.Val().Ctype() != CTNIL {
-			return true
-		}
-
-	case ONAME:
-		l := asNode(n.Sym.Def)
-		if l != nil && l.Op == OLITERAL && n.Val().Ctype() != CTNIL {
-			return true
-		}
-
-	case ONONAME:
-		if asNode(n.Sym.Def) != nil && asNode(n.Sym.Def).Op == OIOTA {
-			return true
-		}
-
-	case OALIGNOF, OOFFSETOF, OSIZEOF:
-		return true
-	}
-
-	//dump("nonconst", n);
-	return false
+	return n.Op == OLITERAL && n.Val().Ctype() != CTNIL
 }
 
 func hascallchan(n *Node) bool {
@@ -1398,4 +1374,67 @@ func hascallchan(n *Node) bool {
 	}
 
 	return false
+}
+
+// A constSet represents a set of Go constant expressions.
+type constSet struct {
+	m map[constSetKey]*Node
+}
+
+type constSetKey struct {
+	typ *types.Type
+	val interface{}
+}
+
+// add adds constant expressions to s. If a constant expression of
+// equal value and identical type has already been added, then that
+// type expression is returned. Otherwise, add returns nil.
+//
+// add also returns nil if n is not a Go constant expression.
+//
+// n must not be an untyped constant.
+func (s *constSet) add(n *Node) *Node {
+	if n.Op == OCONVIFACE && n.Implicit() {
+		n = n.Left
+	}
+
+	if !n.isGoConst() {
+		return nil
+	}
+	if n.Type.IsUntyped() {
+		Fatalf("%v is untyped", n)
+	}
+
+	// Consts are only duplicates if they have the same value and
+	// identical types.
+	//
+	// In general, we have to use types.Identical to test type
+	// identity, because == gives false negatives for anonymous
+	// types and the byte/uint8 and rune/int32 builtin type
+	// aliases.  However, this is not a problem here, because
+	// constant expressions are always untyped or have a named
+	// type, and we explicitly handle the builtin type aliases
+	// below.
+	//
+	// This approach may need to be revisited though if we fix
+	// #21866 by treating all type aliases like byte/uint8 and
+	// rune/int32.
+
+	typ := n.Type
+	switch typ {
+	case types.Bytetype:
+		typ = types.Types[TUINT8]
+	case types.Runetype:
+		typ = types.Types[TINT32]
+	}
+	k := constSetKey{typ, n.Val().Interface()}
+
+	if s.m == nil {
+		s.m = make(map[constSetKey]*Node)
+	}
+	old, dup := s.m[k]
+	if !dup {
+		s.m[k] = n
+	}
+	return old
 }

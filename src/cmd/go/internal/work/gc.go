@@ -174,7 +174,7 @@ CheckFlags:
 	}
 
 	// TODO: Test and delete these conditions.
-	if objabi.Fieldtrack_enabled != 0 || objabi.Preemptibleloops_enabled != 0 || objabi.Clobberdead_enabled != 0 {
+	if objabi.Fieldtrack_enabled != 0 || objabi.Preemptibleloops_enabled != 0 {
 		canDashC = false
 	}
 
@@ -295,9 +295,9 @@ func (gcToolchain) symabis(b *Builder, a *Action, sfiles []string) (string, erro
 	// Gather known cross-package references from assembly code.
 	var otherPkgs []string
 	if p.ImportPath == "runtime" {
-		// Assembly in syscall and runtime/cgo references
+		// Assembly in the following packages references
 		// symbols in runtime.
-		otherPkgs = []string{"syscall", "runtime/cgo"}
+		otherPkgs = []string{"syscall", "internal/syscall/unix", "runtime/cgo"}
 	} else if p.ImportPath == "runtime/internal/atomic" {
 		// sync/atomic is an assembly wrapper around
 		// runtime/internal/atomic.
@@ -316,6 +316,12 @@ func (gcToolchain) symabis(b *Builder, a *Action, sfiles []string) (string, erro
 
 		// Filter out just the symbol refs and append them to
 		// the symabis file.
+		if cfg.BuildN {
+			// -x will print the lines from symabis2 that are actually appended
+			// to symabis. With -n, we don't know what those lines will be.
+			b.Showcmd("", `grep '^ref' <%s | grep -v '^ref\s*""\.' >>%s`, symabis2, a.Objdir+"symabis")
+			continue
+		}
 		abis2, err := ioutil.ReadFile(symabis2)
 		if err != nil {
 			return "", err

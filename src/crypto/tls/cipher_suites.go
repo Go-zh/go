@@ -14,7 +14,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
-	"golang_org/x/crypto/chacha20poly1305"
+	"golang.org/x/crypto/chacha20poly1305"
 	"hash"
 )
 

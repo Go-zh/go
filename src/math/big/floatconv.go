@@ -55,7 +55,7 @@ func (z *Float) scan(r io.ByteScanner, base int) (f *Float, b int, err error) {
 	// exponent
 	var exp int64
 	var ebase int
-	exp, ebase, err = scanExponent(r, true)
+	exp, ebase, err = scanExponent(r, true, base == 0)
 	if err != nil {
 		return
 	}
@@ -97,6 +97,8 @@ func (z *Float) scan(r io.ByteScanner, base int) (f *Float, b int, err error) {
 			fallthrough // 10**e == 5**e * 2**e
 		case 2:
 			exp2 += d
+		case 8:
+			exp2 += d * 3 // octal digits are 3 bits each
 		case 16:
 			exp2 += d * 4 // hexadecimal digits are 4 bits each
 		default:
@@ -214,35 +216,44 @@ func (z *Float) pow5(n uint64) *Float {
 // point number with a mantissa in the given conversion base (the exponent
 // is always a decimal number), or a string representing an infinite value.
 //
+// For base 0, an underscore character ``_'' may appear between a base
+// prefix and an adjacent digit, and between successive digits; such
+// underscores do not change the value of the number, or the returned
+// digit count. Incorrect placement of underscores is reported as an
+// error if there are no other errors. If base != 0, underscores are
+// not recognized and thus terminate scanning like any other character
+// that is not a valid radix point or digit.
+//
 // It sets z to the (possibly rounded) value of the corresponding floating-
 // point value, and returns z, the actual base b, and an error err, if any.
 // The entire string (not just a prefix) must be consumed for success.
 // If z's precision is 0, it is changed to 64 before rounding takes effect.
 // The number must be of the form:
 //
-//	number   = [ sign ] [ prefix ] mantissa [ exponent ] | infinity .
-//	sign     = "+" | "-" .
-//	prefix   = "0" ( "x" | "X" | "b" | "B" ) .
-//	mantissa = digits | digits "." [ digits ] | "." digits .
-//	exponent = ( "E" | "e" | "p" ) [ sign ] digits .
-//	digits   = digit { digit } .
-//	digit    = "0" ... "9" | "a" ... "z" | "A" ... "Z" .
-//	infinity = [ sign ] ( "inf" | "Inf" ) .
+//     number    = [ sign ] ( float | "inf" | "Inf" ) .
+//     sign      = "+" | "-" .
+//     float     = ( mantissa | prefix pmantissa ) [ exponent ] .
+//     prefix    = "0" [ "b" | "B" | "o" | "O" | "x" | "X" ] .
+//     mantissa  = digits "." [ digits ] | digits | "." digits .
+//     pmantissa = [ "_" ] digits "." [ digits ] | [ "_" ] digits | "." digits .
+//     exponent  = ( "e" | "E" | "p" | "P" ) [ sign ] digits .
+//     digits    = digit { [ "_" ] digit } .
+//     digit     = "0" ... "9" | "a" ... "z" | "A" ... "Z" .
 //
-// The base argument must be 0, 2, 10, or 16. Providing an invalid base
+// The base argument must be 0, 2, 8, 10, or 16. Providing an invalid base
 // argument will lead to a run-time panic.
 //
 // For base 0, the number prefix determines the actual base: A prefix of
-// "0x" or "0X" selects base 16, and a "0b" or "0B" prefix selects
-// base 2; otherwise, the actual base is 10 and no prefix is accepted.
-// The octal prefix "0" is not supported (a leading "0" is simply
-// considered a "0").
+// ``0b'' or ``0B'' selects base 2, ``0o'' or ``0O'' selects base 8, and
+// ``0x'' or ``0X'' selects base 16. Otherwise, the actual base is 10 and
+// no prefix is accepted. The octal prefix "0" is not supported (a leading
+// "0" is simply considered a "0").
 //
-// A "p" exponent indicates a binary (rather then decimal) exponent;
-// for instance "0x1.fffffffffffffp1023" (using base 0) represents the
-// maximum float64 value. For hexadecimal mantissae, the exponent must
-// be binary, if present (an "e" or "E" exponent indicator cannot be
-// distinguished from a mantissa digit).
+// A "p" or "P" exponent indicates a base 2 (rather then base 10) exponent;
+// for instance, "0x1.fffffffffffffp1023" (using base 0) represents the
+// maximum float64 value. For hexadecimal mantissae, the exponent character
+// must be one of 'p' or 'P', if present (an "e" or "E" exponent indicator
+// cannot be distinguished from a mantissa digit).
 //
 // The returned *Float f is nil and the value of z is valid but not
 // defined if an error is reported.

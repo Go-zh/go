@@ -98,6 +98,17 @@ func WriteObjFile(ctxt *Link, b *bufio.Writer) {
 		w.writeRefs(s)
 		w.addLengths(s)
 	}
+
+	if ctxt.Headtype == objabi.Haix {
+		// Data must be sorted to keep a constant order in TOC symbols.
+		// As they are created during Progedit, two symbols can be switched between
+		// two different compilations. Therefore, BuildID will be different.
+		// TODO: find a better place and optimize to only sort TOC symbols
+		SortSlice(ctxt.Data, func(i, j int) bool {
+			return ctxt.Data[i].Name < ctxt.Data[j].Name
+		})
+	}
+
 	for _, s := range ctxt.Data {
 		w.writeRefs(s)
 		w.addLengths(s)
@@ -229,13 +240,19 @@ func (w *objWriter) writeSymDebug(s *LSym) {
 	fmt.Fprintf(ctxt.Bso, "\n")
 	if s.Type == objabi.STEXT {
 		for p := s.Func.Text; p != nil; p = p.Link {
-			fmt.Fprintf(ctxt.Bso, "\t%#04x %v\n", uint(int(p.Pc)), p)
+			var s string
+			if ctxt.Debugasm > 1 {
+				s = p.String()
+			} else {
+				s = p.InnermostString()
+			}
+			fmt.Fprintf(ctxt.Bso, "\t%#04x %s\n", uint(int(p.Pc)), s)
 		}
 	}
 	for i := 0; i < len(s.P); i += 16 {
 		fmt.Fprintf(ctxt.Bso, "\t%#04x", uint(i))
 		j := i
-		for j = i; j < i+16 && j < len(s.P); j++ {
+		for ; j < i+16 && j < len(s.P); j++ {
 			fmt.Fprintf(ctxt.Bso, " %02x", s.P[j])
 		}
 		for ; j < i+16; j++ {
@@ -272,7 +289,7 @@ func (w *objWriter) writeSymDebug(s *LSym) {
 
 func (w *objWriter) writeSym(s *LSym) {
 	ctxt := w.ctxt
-	if ctxt.Debugasm {
+	if ctxt.Debugasm > 0 {
 		w.writeSymDebug(s)
 	}
 
@@ -371,6 +388,7 @@ func (w *objWriter) writeSym(s *LSym) {
 		w.writeRefIndex(fsym)
 		w.writeInt(int64(l))
 		w.writeRefIndex(call.Func)
+		w.writeInt(int64(call.ParentPC))
 	}
 }
 

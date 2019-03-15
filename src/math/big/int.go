@@ -401,15 +401,23 @@ func (x *Int) IsUint64() bool {
 // (not just a prefix) must be valid for success. If SetString fails,
 // the value of z is undefined but the returned value is nil.
 //
-// The base argument must be 0 or a value between 2 and MaxBase. If the base
-// is 0, the string prefix determines the actual conversion base. A prefix of
-// ``0x'' or ``0X'' selects base 16; the ``0'' prefix selects base 8, and a
-// ``0b'' or ``0B'' prefix selects base 2. Otherwise the selected base is 10.
+// The base argument must be 0 or a value between 2 and MaxBase.
+// For base 0, the number prefix determines the actual base: A prefix of
+// ``0b'' or ``0B'' selects base 2, ``0'', ``0o'' or ``0O'' selects base 8,
+// and ``0x'' or ``0X'' selects base 16. Otherwise, the selected base is 10
+// and no prefix is accepted.
 //
 // For bases <= 36, lower and upper case letters are considered the same:
 // The letters 'a' to 'z' and 'A' to 'Z' represent digit values 10 to 35.
 // For bases > 36, the upper case letters 'A' to 'Z' represent the digit
 // values 36 to 61.
+//
+// For base 0, an underscore character ``_'' may appear between a base
+// prefix and an adjacent digit, and between successive digits; such
+// underscores do not change the value of the number.
+// Incorrect placement of underscores is reported as an error if there
+// are no other errors. If base != 0, underscores are not recognized
+// and act like any other character that is not a valid digit.
 //
 func (z *Int) SetString(s string, base int) (*Int, bool) {
 	return z.setFromScanner(strings.NewReader(s), base)
@@ -446,6 +454,12 @@ func (x *Int) Bytes() []byte {
 // The bit length of 0 is 0.
 func (x *Int) BitLen() int {
 	return x.abs.bitLen()
+}
+
+// TrailingZeroBits returns the number of consecutive least significant zero
+// bits of |x|.
+func (x *Int) TrailingZeroBits() uint {
+	return x.abs.trailingZeroBits()
 }
 
 // Exp sets z = x**y mod |m| (i.e. the sign of m is ignored), and returns z.
@@ -700,15 +714,21 @@ func (z *Int) lehmerGCD(x, y, a, b *Int) *Int {
 		}
 	}
 
-	if x != nil {
-		*x = *Ua
+	if y != nil {
+		// avoid aliasing b needed in the division below
+		if y == b {
+			B.Set(b)
+		} else {
+			B = b
+		}
+		// y = (z - a*x)/b
+		y.Mul(a, Ua) // y can safely alias a
+		y.Sub(A, y)
+		y.Div(y, B)
 	}
 
-	if y != nil {
-		// y = (z - a*x)/b
-		y.Mul(a, Ua)
-		y.Sub(A, y)
-		y.Div(y, b)
+	if x != nil {
+		*x = *Ua
 	}
 
 	*z = *A

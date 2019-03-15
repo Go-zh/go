@@ -9,8 +9,8 @@ package doc
 import (
 	"go/ast"
 	"go/token"
+	"internal/lazyregexp"
 	"path"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,7 +104,7 @@ func Examples(files ...*ast.File) []*Example {
 	return list
 }
 
-var outputPrefix = regexp.MustCompile(`(?i)^[[:space:]]*(unordered )?output:`)
+var outputPrefix = lazyregexp.New(`(?i)^[[:space:]]*(unordered )?output:`)
 
 // Extracts the expected output and whether there was a valid output comment
 func exampleOutput(b *ast.BlockStmt, comments []*ast.CommentGroup) (output string, unordered, ok bool) {
@@ -426,6 +426,9 @@ func stripOutputComment(body *ast.BlockStmt, comments []*ast.CommentGroup) (*ast
 
 // lastComment returns the last comment inside the provided block.
 func lastComment(b *ast.BlockStmt, c []*ast.CommentGroup) (i int, last *ast.CommentGroup) {
+	if b == nil {
+		return
+	}
 	pos, end := b.Pos(), b.End()
 	for j, cg := range c {
 		if cg.Pos() < pos {
