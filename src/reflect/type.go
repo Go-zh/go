@@ -54,6 +54,9 @@ type Type interface {
 	//
 	// For an interface type, the returned Method's Type field gives the
 	// method signature, without a receiver, and the Func field is nil.
+	//
+	// Only exported methods are accessible and they are sorted in
+	// lexicographic order.
 	Method(int) Method
 
 	// MethodByName returns the method with that name in the type's
@@ -586,7 +589,6 @@ type Method struct {
 const (
 	kindDirectIface = 1 << 5
 	kindGCProg      = 1 << 6 // Type.gc points to GC program
-	kindNoPointers  = 1 << 7
 	kindMask        = (1 << 5) - 1
 )
 
@@ -782,7 +784,7 @@ func (t *rtype) FieldAlign() int { return int(t.fieldAlign) }
 
 func (t *rtype) Kind() Kind { return Kind(t.kind & kindMask) }
 
-func (t *rtype) pointers() bool { return t.kind&kindNoPointers == 0 }
+func (t *rtype) pointers() bool { return t.ptrdata != 0 }
 
 func (t *rtype) common() *rtype { return t }
 
@@ -2156,13 +2158,6 @@ const (
 )
 
 func bucketOf(ktyp, etyp *rtype) *rtype {
-	// See comment on hmap.overflow in ../runtime/map.go.
-	var kind uint8
-	if ktyp.kind&kindNoPointers != 0 && etyp.kind&kindNoPointers != 0 &&
-		ktyp.size <= maxKeySize && etyp.size <= maxValSize {
-		kind = kindNoPointers
-	}
-
 	if ktyp.size > maxKeySize {
 		ktyp = PtrTo(ktyp).(*rtype)
 	}
@@ -2189,12 +2184,12 @@ func bucketOf(ktyp, etyp *rtype) *rtype {
 		panic("reflect: bad size computation in MapOf")
 	}
 
-	if kind != kindNoPointers {
+	if ktyp.ptrdata != 0 || etyp.ptrdata != 0 {
 		nptr := (bucketSize*(1+ktyp.size+etyp.size) + ptrSize) / ptrSize
 		mask := make([]byte, (nptr+7)/8)
 		base := bucketSize / ptrSize
 
-		if ktyp.kind&kindNoPointers == 0 {
+		if ktyp.ptrdata != 0 {
 			if ktyp.kind&kindGCProg != 0 {
 				panic("reflect: unexpected GC program in MapOf")
 			}
@@ -2210,7 +2205,7 @@ func bucketOf(ktyp, etyp *rtype) *rtype {
 		}
 		base += bucketSize * ktyp.size / ptrSize
 
-		if etyp.kind&kindNoPointers == 0 {
+		if etyp.ptrdata != 0 {
 			if etyp.kind&kindGCProg != 0 {
 				panic("reflect: unexpected GC program in MapOf")
 			}
@@ -2241,7 +2236,7 @@ func bucketOf(ktyp, etyp *rtype) *rtype {
 	b := &rtype{
 		align:   ptrSize,
 		size:    size,
-		kind:    kind,
+		kind:    uint8(Struct),
 		ptrdata: ptrdata,
 		gcdata:  gcdata,
 	}
@@ -2349,7 +2344,6 @@ func StructOf(fields []StructField) Type {
 		repr = make([]byte, 0, 64)
 		fset = map[string]struct{}{} // fields' names
 
-		hasPtr    = false // records whether at least one struct-field is a pointer
 		hasGCProg = false // records whether a struct-field type has a GCProg
 	)
 
@@ -2369,9 +2363,6 @@ func StructOf(fields []StructField) Type {
 		ft := f.typ
 		if ft.kind&kindGCProg != 0 {
 			hasGCProg = true
-		}
-		if ft.pointers() {
-			hasPtr = true
 		}
 
 		// Update string and hash
@@ -2651,16 +2642,12 @@ func StructOf(fields []StructField) Type {
 	typ.tflag = 0
 	typ.hash = hash
 	typ.size = size
+	typ.ptrdata = typeptrdata(typ.common())
 	typ.align = typalign
 	typ.fieldAlign = typalign
 	typ.ptrToThis = 0
 	if len(methods) > 0 {
 		typ.tflag |= tflagUncommon
-	}
-	if !hasPtr {
-		typ.kind |= kindNoPointers
-	} else {
-		typ.kind &^= kindNoPointers
 	}
 
 	if hasGCProg {
@@ -2726,7 +2713,6 @@ func StructOf(fields []StructField) Type {
 			typ.gcdata = &bv.data[0]
 		}
 	}
-	typ.ptrdata = typeptrdata(typ.common())
 	typ.alg = new(typeAlg)
 	if hashable {
 		typ.alg.hash = func(p unsafe.Pointer, seed uintptr) uintptr {
@@ -2792,19 +2778,19 @@ func runtimeStructField(field StructField) structField {
 // containing pointer data. Anything after this offset is scalar data.
 // keep in sync with ../cmd/compile/internal/gc/reflect.go
 func typeptrdata(t *rtype) uintptr {
-	if !t.pointers() {
-		return 0
-	}
 	switch t.Kind() {
 	case Struct:
 		st := (*structType)(unsafe.Pointer(t))
 		// find the last field that has pointers.
-		field := 0
+		field := -1
 		for i := range st.fields {
 			ft := st.fields[i].typ
 			if ft.pointers() {
 				field = i
 			}
+		}
+		if field == -1 {
+			return 0
 		}
 		f := st.fields[field]
 		return f.offset() + f.typ.ptrdata
@@ -2869,11 +2855,9 @@ func ArrayOf(count int, elem Type) Type {
 	array.len = uintptr(count)
 	array.slice = SliceOf(elem).(*rtype)
 
-	array.kind &^= kindNoPointers
 	switch {
-	case typ.kind&kindNoPointers != 0 || array.size == 0:
+	case typ.ptrdata == 0 || array.size == 0:
 		// No pointers.
-		array.kind |= kindNoPointers
 		array.gcdata = nil
 		array.ptrdata = 0
 
@@ -3087,8 +3071,6 @@ func funcLayout(t *funcType, rcvr *rtype) (frametype *rtype, argSize, retOffset 
 	}
 	if ptrmap.n > 0 {
 		x.gcdata = &ptrmap.data[0]
-	} else {
-		x.kind |= kindNoPointers
 	}
 
 	var s string
@@ -3135,7 +3117,7 @@ func (bv *bitVector) append(bit uint8) {
 }
 
 func addTypeBits(bv *bitVector, offset uintptr, t *rtype) {
-	if t.kind&kindNoPointers != 0 {
+	if t.ptrdata == 0 {
 		return
 	}
 

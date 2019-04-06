@@ -95,7 +95,7 @@ func makechan(t *chantype, size int) *hchan {
 		c = (*hchan)(mallocgc(hchanSize, nil, true))
 		// Race detector uses this location for synchronization.
 		c.buf = c.raceaddr()
-	case elem.kind&kindNoPointers != 0:
+	case elem.ptrdata == 0:
 		// Elements do not contain pointers.
 		// Allocate hchan and buf in one call.
 		c = (*hchan)(mallocgc(hchanSize+mem, nil, true))
@@ -672,6 +672,14 @@ func reflect_chanrecv(c *hchan, nb bool, elem unsafe.Pointer) (selected bool, re
 
 //go:linkname reflect_chanlen reflect.chanlen
 func reflect_chanlen(c *hchan) int {
+	if c == nil {
+		return 0
+	}
+	return int(c.qcount)
+}
+
+//go:linkname reflectlite_chanlen internal/reflectlite.chanlen
+func reflectlite_chanlen(c *hchan) int {
 	if c == nil {
 		return 0
 	}

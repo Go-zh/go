@@ -27,8 +27,8 @@ var CmdBuild = &base.Command{
 Build compiles the packages named by the import paths,
 along with their dependencies, but it does not install the results.
 
-If the arguments to build are a list of .go files, build treats
-them as a list of source files specifying a single package.
+If the arguments to build are a list of .go files from a single directory,
+build treats them as a list of source files specifying a single package.
 
 When compiling a single main package, build writes
 the resulting executable to an output file named after
@@ -42,10 +42,10 @@ serving only as a check that the packages can be built.
 
 When compiling packages, build ignores files that end in '_test.go'.
 
-The -o flag, only allowed when compiling a single package,
-forces build to write the resulting executable or object
-to the named output file, instead of the default behavior described
-in the last two paragraphs.
+The -o flag forces build to write the resulting executable or object
+to the named output file or directory, instead of the default behavior described
+in the last two paragraphs. If the named output is a directory that exists,
+then any resulting executables will be written to that directory.
 
 The -i flag installs the packages that are dependencies of the target.
 
@@ -153,7 +153,7 @@ func init() {
 	CmdInstall.Run = runInstall
 
 	CmdBuild.Flag.BoolVar(&cfg.BuildI, "i", false, "")
-	CmdBuild.Flag.StringVar(&cfg.BuildO, "o", "", "output file")
+	CmdBuild.Flag.StringVar(&cfg.BuildO, "o", "", "output file or directory")
 
 	CmdInstall.Flag.BoolVar(&cfg.BuildI, "i", false, "")
 
@@ -284,7 +284,7 @@ func runBuild(cmd *base.Command, args []string) {
 	pkgs := load.PackagesForBuild(args)
 
 	if len(pkgs) == 1 && pkgs[0].Name == "main" && cfg.BuildO == "" {
-		cfg.BuildO = load.DefaultExecName(pkgs[0])
+		cfg.BuildO = load.DefaultExecName(pkgs[0].ImportPath)
 		cfg.BuildO += cfg.ExeSuffix
 	}
 
@@ -316,8 +316,29 @@ func runBuild(cmd *base.Command, args []string) {
 	}
 
 	if cfg.BuildO != "" {
+		// If the -o name exists and is a directory, then
+		// write all main packages to that directory.
+		// Otherwise require only a single package be built.
+		if fi, err := os.Stat(cfg.BuildO); err == nil && fi.IsDir() {
+			a := &Action{Mode: "go build"}
+			for _, p := range pkgs {
+				if p.Name != "main" {
+					continue
+				}
+				p.Target = filepath.Join(cfg.BuildO, load.DefaultExecName(p.ImportPath))
+				p.Target += cfg.ExeSuffix
+				p.Stale = true
+				p.StaleReason = "build -o flag in use"
+				a.Deps = append(a.Deps, b.AutoAction(ModeInstall, depMode, p))
+			}
+			if len(a.Deps) == 0 {
+				base.Fatalf("go build: no main packages to build")
+			}
+			b.Do(a)
+			return
+		}
 		if len(pkgs) > 1 {
-			base.Fatalf("go build: cannot use -o with multiple packages")
+			base.Fatalf("go build: cannot write multiple packages to non-directory %s", cfg.BuildO)
 		} else if len(pkgs) == 0 {
 			base.Fatalf("no packages to build")
 		}
@@ -517,7 +538,7 @@ func InstallPackages(patterns []string, pkgs []*load.Package) {
 	if len(patterns) == 0 && len(pkgs) == 1 && pkgs[0].Name == "main" {
 		// Compute file 'go build' would have created.
 		// If it exists and is an executable file, remove it.
-		_, targ := filepath.Split(pkgs[0].ImportPath)
+		targ := load.DefaultExecName(pkgs[0].ImportPath)
 		targ += cfg.ExeSuffix
 		if filepath.Join(pkgs[0].Dir, targ) != pkgs[0].Target { // maybe $GOBIN is the current directory
 			fi, err := os.Stat(targ)

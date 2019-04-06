@@ -19,9 +19,10 @@ import (
 // can overwrite this data, which could cause the finalizer
 // to close the wrong file descriptor.
 type file struct {
-	pfd     poll.FD
-	name    string
-	dirinfo *dirInfo // nil unless directory being read
+	pfd        poll.FD
+	name       string
+	dirinfo    *dirInfo // nil unless directory being read
+	appendMode bool     // whether file is opened for appending
 }
 
 // Fd returns the Windows handle referencing the open file.
@@ -41,6 +42,9 @@ func newFile(h syscall.Handle, name string, kind string) *File {
 		var m uint32
 		if syscall.GetConsoleMode(h, &m) == nil {
 			kind = "console"
+		}
+		if t, err := syscall.GetFileType(h); err == nil && t == syscall.FILE_TYPE_PIPE {
+			kind = "pipe"
 		}
 	}
 
@@ -315,7 +319,7 @@ func Pipe() (r *File, w *File, err error) {
 	if e != nil {
 		return nil, nil, NewSyscallError("pipe", e)
 	}
-	return newFile(p[0], "|0", "file"), newFile(p[1], "|1", "file"), nil
+	return newFile(p[0], "|0", "pipe"), newFile(p[1], "|1", "pipe"), nil
 }
 
 func tempDir() string {

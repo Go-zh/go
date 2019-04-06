@@ -208,9 +208,9 @@ func (o *Order) addrTemp(n *Node) *Node {
 		dowidth(n.Type)
 		vstat := staticname(n.Type)
 		vstat.Name.SetReadonly(true)
-		var out []*Node
-		staticassign(vstat, n, &out)
-		if out != nil {
+		var s InitSchedule
+		s.staticassign(vstat, n)
+		if s.out != nil {
 			Fatalf("staticassign of const generated code: %+v", n)
 		}
 		vstat = typecheck(vstat, ctxExpr)
@@ -383,6 +383,10 @@ func (o *Order) init(n *Node) {
 // call orders the call expression n.
 // n.Op is OCALLMETH/OCALLFUNC/OCALLINTER or a builtin like OCOPY.
 func (o *Order) call(n *Node) {
+	if n.Ninit.Len() > 0 {
+		// Caller should have already called o.init(n).
+		Fatalf("%v with unexpected ninit", n.Op)
+	}
 	n.Left = o.expr(n.Left, nil)
 	n.Right = o.expr(n.Right, nil) // ODDDARG temp
 	o.exprList(n.List)
@@ -578,6 +582,7 @@ func (o *Order) stmt(n *Node) {
 	case OAS2FUNC:
 		t := o.markTemp()
 		o.exprList(n.List)
+		o.init(n.Rlist.First())
 		o.call(n.Rlist.First())
 		o.as2(n)
 		o.cleanTemp(t)
@@ -637,6 +642,7 @@ func (o *Order) stmt(n *Node) {
 	// Special: order arguments to inner call but not call itself.
 	case ODEFER, OGO:
 		t := o.markTemp()
+		o.init(n.Left)
 		o.call(n.Left)
 		o.out = append(o.out, n)
 		o.cleanTemp(t)
@@ -1054,10 +1060,10 @@ func (o *Order) expr(n, lhs *Node) *Node {
 		if n.Left.Type.IsInterface() {
 			break
 		}
-		if _, needsaddr := convFuncName(n.Left.Type, n.Type); needsaddr || consttype(n.Left) > 0 {
+		if _, needsaddr := convFuncName(n.Left.Type, n.Type); needsaddr || isStaticCompositeLiteral(n.Left) {
 			// Need a temp if we need to pass the address to the conversion function.
-			// We also process constants here, making a named static global whose
-			// address we can put directly in an interface (see OCONVIFACE case in walk).
+			// We also process static composite literal node here, making a named static global
+			// whose address we can put directly in an interface (see OCONVIFACE case in walk).
 			n.Left = o.addrTemp(n.Left)
 		}
 

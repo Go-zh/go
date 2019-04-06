@@ -258,10 +258,13 @@ func RotateLeftVariable32(n uint32, m int) uint32 {
 
 func TrailingZeros(n uint) int {
 	// amd64:"BSFQ","MOVL\t\\$64","CMOVQEQ"
+	// arm:"CLZ"
 	// arm64:"RBIT","CLZ"
 	// s390x:"FLOGR"
-	// ppc64:"ANDN","POPCNTD"
-	// ppc64le:"ANDN","POPCNTD"
+	// ppc64/power8:"ANDN","POPCNTD"
+	// ppc64le/power8:"ANDN","POPCNTD"
+	// ppc64/power9: "CNTTZD"
+	// ppc64le/power9: "CNTTZD"
 	// wasm:"I64Ctz"
 	return bits.TrailingZeros(n)
 }
@@ -270,34 +273,43 @@ func TrailingZeros64(n uint64) int {
 	// amd64:"BSFQ","MOVL\t\\$64","CMOVQEQ"
 	// arm64:"RBIT","CLZ"
 	// s390x:"FLOGR"
-	// ppc64:"ANDN","POPCNTD"
-	// ppc64le:"ANDN","POPCNTD"
+	// ppc64/power8:"ANDN","POPCNTD"
+	// ppc64le/power8:"ANDN","POPCNTD"
+	// ppc64/power9: "CNTTZD"
+	// ppc64le/power9: "CNTTZD"
 	// wasm:"I64Ctz"
 	return bits.TrailingZeros64(n)
 }
 
 func TrailingZeros32(n uint32) int {
 	// amd64:"BTSQ\\t\\$32","BSFQ"
+	// arm:"CLZ"
 	// arm64:"RBITW","CLZW"
 	// s390x:"FLOGR","MOVWZ"
-	// ppc64:"ANDN","POPCNTW"
-	// ppc64le:"ANDN","POPCNTW"
+	// ppc64/power8:"ANDN","POPCNTW"
+	// ppc64le/power8:"ANDN","POPCNTW"
+	// ppc64/power9: "CNTTZW"
+	// ppc64le/power9: "CNTTZW"
 	// wasm:"I64Ctz"
 	return bits.TrailingZeros32(n)
 }
 
 func TrailingZeros16(n uint16) int {
 	// amd64:"BSFL","BTSL\\t\\$16"
+	// arm:"ORR\t\\$65536","CLZ",-"MOVHU\tR"
 	// arm64:"ORR\t\\$65536","RBITW","CLZW",-"MOVHU\tR",-"RBIT\t",-"CLZ\t"
 	// s390x:"FLOGR","OR\t\\$65536"
-	// ppc64:"POPCNTD","OR\\t\\$65536"
-	// ppc64le:"POPCNTD","OR\\t\\$65536"
+	// ppc64/power8:"POPCNTD","OR\\t\\$65536"
+	// ppc64le/power8:"POPCNTD","OR\\t\\$65536"
+	// ppc64/power9:"CNTTZD","OR\\t\\$65536"
+	// ppc64le/power9:"CNTTZD","OR\\t\\$65536"
 	// wasm:"I64Ctz"
 	return bits.TrailingZeros16(n)
 }
 
 func TrailingZeros8(n uint8) int {
 	// amd64:"BSFL","BTSL\\t\\$8"
+	// arm:"ORR\t\\$256","CLZ",-"MOVBU\tR"
 	// arm64:"ORR\t\\$256","RBITW","CLZW",-"MOVBU\tR",-"RBIT\t",-"CLZ\t"
 	// s390x:"FLOGR","OR\t\\$256"
 	// wasm:"I64Ctz"
@@ -363,21 +375,25 @@ func IterateBits8(n uint8) int {
 // --------------- //
 
 func Add(x, y, ci uint) (r, co uint) {
+	// arm64:"ADDS","ADCS","ADC",-"ADD\t",-"CMP"
 	// amd64:"NEGL","ADCQ","SBBQ","NEGQ"
 	return bits.Add(x, y, ci)
 }
 
 func AddC(x, ci uint) (r, co uint) {
+	// arm64:"ADDS","ADCS","ADC",-"ADD\t",-"CMP"
 	// amd64:"NEGL","ADCQ","SBBQ","NEGQ"
 	return bits.Add(x, 7, ci)
 }
 
 func AddZ(x, y uint) (r, co uint) {
+	// arm64:"ADDS","ADC",-"ADCS",-"ADD\t",-"CMP"
 	// amd64:"ADDQ","SBBQ","NEGQ",-"NEGL",-"ADCQ"
 	return bits.Add(x, y, 0)
 }
 
 func AddR(x, y, ci uint) uint {
+	// arm64:"ADDS","ADCS",-"ADD\t",-"CMP"
 	// amd64:"NEGL","ADCQ",-"SBBQ",-"NEGQ"
 	r, _ := bits.Add(x, y, ci)
 	return r
@@ -385,27 +401,32 @@ func AddR(x, y, ci uint) uint {
 func AddM(p, q, r *[3]uint) {
 	var c uint
 	r[0], c = bits.Add(p[0], q[0], c)
+	// arm64:"ADCS",-"ADD\t",-"CMP"
 	// amd64:"ADCQ",-"NEGL",-"SBBQ",-"NEGQ"
 	r[1], c = bits.Add(p[1], q[1], c)
 	r[2], c = bits.Add(p[2], q[2], c)
 }
 
 func Add64(x, y, ci uint64) (r, co uint64) {
+	// arm64:"ADDS","ADCS","ADC",-"ADD\t",-"CMP"
 	// amd64:"NEGL","ADCQ","SBBQ","NEGQ"
 	return bits.Add64(x, y, ci)
 }
 
 func Add64C(x, ci uint64) (r, co uint64) {
+	// arm64:"ADDS","ADCS","ADC",-"ADD\t",-"CMP"
 	// amd64:"NEGL","ADCQ","SBBQ","NEGQ"
 	return bits.Add64(x, 7, ci)
 }
 
 func Add64Z(x, y uint64) (r, co uint64) {
+	// arm64:"ADDS","ADC",-"ADCS",-"ADD\t",-"CMP"
 	// amd64:"ADDQ","SBBQ","NEGQ",-"NEGL",-"ADCQ"
 	return bits.Add64(x, y, 0)
 }
 
 func Add64R(x, y, ci uint64) uint64 {
+	// arm64:"ADDS","ADCS",-"ADD\t",-"CMP"
 	// amd64:"NEGL","ADCQ",-"SBBQ",-"NEGQ"
 	r, _ := bits.Add64(x, y, ci)
 	return r
@@ -413,6 +434,7 @@ func Add64R(x, y, ci uint64) uint64 {
 func Add64M(p, q, r *[3]uint64) {
 	var c uint64
 	r[0], c = bits.Add64(p[0], q[0], c)
+	// arm64:"ADCS",-"ADD\t",-"CMP"
 	// amd64:"ADCQ",-"NEGL",-"SBBQ",-"NEGQ"
 	r[1], c = bits.Add64(p[1], q[1], c)
 	r[2], c = bits.Add64(p[2], q[2], c)

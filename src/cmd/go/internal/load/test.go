@@ -91,13 +91,19 @@ func TestPackagesFor(p *Package, cover *TestCover) (pmain, ptest, pxtest *Packag
 // The caller is expected to have checked that len(p.TestGoFiles)+len(p.XTestGoFiles) > 0,
 // or else there's no point in any of this.
 func TestPackagesAndErrors(p *Package, cover *TestCover) (pmain, ptest, pxtest *Package) {
+	pre := newPreload()
+	defer pre.flush()
+	allImports := append([]string{}, p.TestImports...)
+	allImports = append(allImports, p.XTestImports...)
+	pre.preloadImports(allImports, p.Internal.Build)
+
 	var ptestErr, pxtestErr *PackageError
 	var imports, ximports []*Package
 	var stk ImportStack
 	stk.Push(p.ImportPath + " (test)")
 	rawTestImports := str.StringList(p.TestImports)
 	for i, path := range p.TestImports {
-		p1 := LoadImport(path, p.Dir, p, &stk, p.Internal.Build.TestImportPos[path], ResolveImport)
+		p1 := loadImport(pre, path, p.Dir, p, &stk, p.Internal.Build.TestImportPos[path], ResolveImport)
 		if str.Contains(p1.Deps, p.ImportPath) || p1.ImportPath == p.ImportPath {
 			// Same error that loadPackage returns (via reusePackage) in pkg.go.
 			// Can't change that code, because that code is only for loading the
@@ -116,7 +122,7 @@ func TestPackagesAndErrors(p *Package, cover *TestCover) (pmain, ptest, pxtest *
 	pxtestNeedsPtest := false
 	rawXTestImports := str.StringList(p.XTestImports)
 	for i, path := range p.XTestImports {
-		p1 := LoadImport(path, p.Dir, p, &stk, p.Internal.Build.XTestImportPos[path], ResolveImport)
+		p1 := loadImport(pre, path, p.Dir, p, &stk, p.Internal.Build.XTestImportPos[path], ResolveImport)
 		if p1.ImportPath == p.ImportPath {
 			pxtestNeedsPtest = true
 		} else {
@@ -232,7 +238,7 @@ func TestPackagesAndErrors(p *Package, cover *TestCover) (pmain, ptest, pxtest *
 		if dep == ptest.ImportPath {
 			pmain.Internal.Imports = append(pmain.Internal.Imports, ptest)
 		} else {
-			p1 := LoadImport(dep, "", nil, &stk, nil, 0)
+			p1 := loadImport(pre, dep, "", nil, &stk, nil, 0)
 			pmain.Internal.Imports = append(pmain.Internal.Imports, p1)
 		}
 	}
@@ -292,17 +298,8 @@ func TestPackagesAndErrors(p *Package, cover *TestCover) (pmain, ptest, pxtest *
 	pmain.Imports = pmain.Imports[:w]
 	pmain.Internal.RawImports = str.StringList(pmain.Imports)
 
-	if ptest != p {
-		// We have made modifications to the package p being tested
-		// and are rebuilding p (as ptest).
-		// Arrange to rebuild all packages q such that
-		// the test depends on q and q depends on p.
-		// This makes sure that q sees the modifications to p.
-		// Strictly speaking, the rebuild is only necessary if the
-		// modifications to p change its export metadata, but
-		// determining that is a bit tricky, so we rebuild always.
-		recompileForTest(pmain, p, ptest, pxtest)
-	}
+	// Replace pmain's transitive dependencies with test copies, as necessary.
+	recompileForTest(pmain, p, ptest, pxtest)
 
 	// Should we apply coverage analysis locally,
 	// only for this package and only for this test?
@@ -351,6 +348,14 @@ Search:
 	return stk
 }
 
+// recompileForTest copies and replaces certain packages in pmain's dependency
+// graph. This is necessary for two reasons. First, if ptest is different than
+// preal, packages that import the package under test should get ptest instead
+// of preal. This is particularly important if pxtest depends on functionality
+// exposed in test sources in ptest. Second, if there is a main package
+// (other than pmain) anywhere, we need to clear p.Internal.BuildInfo in
+// the test copy to prevent link conflicts. This may happen if both -coverpkg
+// and the command line patterns include multiple main packages.
 func recompileForTest(pmain, preal, ptest, pxtest *Package) {
 	// The "test copy" of preal is ptest.
 	// For each package that depends on preal, make a "test copy"
@@ -393,7 +398,7 @@ func recompileForTest(pmain, preal, ptest, pxtest *Package) {
 
 		// Don't compile build info from a main package. This can happen
 		// if -coverpkg patterns include main packages, since those packages
-		// are imported by pmain.
+		// are imported by pmain. See golang.org/issue/30907.
 		if p.Internal.BuildInfo != "" && p != pmain {
 			split()
 		}

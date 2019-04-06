@@ -74,8 +74,8 @@
 // Build compiles the packages named by the import paths,
 // along with their dependencies, but it does not install the results.
 //
-// If the arguments to build are a list of .go files, build treats
-// them as a list of source files specifying a single package.
+// If the arguments to build are a list of .go files from a single directory,
+// build treats them as a list of source files specifying a single package.
 //
 // When compiling a single main package, build writes
 // the resulting executable to an output file named after
@@ -89,10 +89,10 @@
 //
 // When compiling packages, build ignores files that end in '_test.go'.
 //
-// The -o flag, only allowed when compiling a single package,
-// forces build to write the resulting executable or object
-// to the named output file, instead of the default behavior described
-// in the last two paragraphs.
+// The -o flag forces build to write the resulting executable or object
+// to the named output file or directory, instead of the default behavior described
+// in the last two paragraphs. If the named output is a directory that exists,
+// then any resulting executables will be written to that directory.
 //
 // The -i flag installs the packages that are dependencies of the target.
 //
@@ -202,7 +202,8 @@
 // so go clean is mainly concerned with object files left by other
 // tools or by manual invocations of go build.
 //
-// Specifically, clean removes the following files from each of the
+// If a package argument is given or the -i or -r flag is set,
+// clean removes the following files from each of the
 // source directories corresponding to the import paths:
 //
 // 	_obj/            old object directory, left from Makefiles
@@ -504,8 +505,8 @@
 // "go tool foo".
 //
 // Generate processes packages in the order given on the command line,
-// one at a time. If the command line lists .go files, they are treated
-// as a single package. Within a package, generate processes the
+// one at a time. If the command line lists .go files from a single directory,
+// they are treated as a single package. Within a package, generate processes the
 // source files in a package in file name order, one at a time. Within
 // a source file, generate runs generators in the order they appear
 // in the file, one at a time.
@@ -557,8 +558,6 @@
 // For modules stored in source control repositories, the version suffix can
 // also be a commit hash, branch identifier, or other syntax known to the
 // source control system, as in 'go get golang.org/x/text@master'.
-// The version suffix @latest explicitly requests the default behavior
-// described above.
 //
 // If a module under consideration is already a dependency of the current
 // development module, then get will update the required version.
@@ -566,6 +565,13 @@
 // downgrades the dependency. The version suffix @none indicates that the
 // dependency should be removed entirely, downgrading or removing modules
 // depending on it as needed.
+//
+// The version suffix @latest explicitly requests the latest minor release of the
+// given path.
+//
+// The suffix @patch requests the latest patch release: if the path is already in
+// the build list, the selected version will have the same minor version.
+// If the path is not already in the build list, @patch is equivalent to @latest.
 //
 // Although get defaults to using the latest version of the module containing
 // a named package, it does not use the latest version of that module's
@@ -580,9 +586,11 @@
 // patch releases when available. Continuing the previous example,
 // 'go get -u A' will use the latest A with B v1.3.1 (not B v1.2.3).
 //
-// The -u=patch flag (not -u patch) instructs get to update dependencies
-// to use newer patch releases when available. Continuing the previous example,
-// 'go get -u=patch A' will use the latest A with B v1.2.4 (not B v1.2.3).
+// The -u=patch flag (not -u patch) also instructs get to update dependencies,
+// but changes the default to select patch releases.
+// Continuing the previous example,
+// 'go get -u=patch A@latest' will use the latest A with B v1.2.4 (not B v1.2.3),
+// while 'go get -u=patch A' will use a patch release of A instead.
 //
 // In general, adding a new dependency may require upgrading
 // existing dependencies to keep a working build, and 'go get' does
@@ -1169,7 +1177,7 @@
 // 	go run [build flags] [-exec xprog] package [arguments...]
 //
 // Run compiles and runs the named main Go package.
-// Typically the package is specified as a list of .go source files,
+// Typically the package is specified as a list of .go source files from a single directory,
 // but it may also be an import path, file system path, or pattern
 // matching a single known package, as in 'go run .' or 'go run my/cmd'.
 //
@@ -1413,6 +1421,9 @@
 // 		Build the listed main packages, plus all packages that they
 // 		import, into a Go plugin. Packages not named main are ignored.
 //
+// On AIX, when linking a C program that uses a Go archive built with
+// -buildmode=c-archive, you must pass -Wl,-bnoobjreorder to the C compiler.
+//
 //
 // Calling between Go and C
 //
@@ -1494,7 +1505,7 @@
 // 	GOFLAGS
 // 		A space-separated list of -flag=value settings to apply
 // 		to go commands by default, when the given flag is known by
-// 		the current command. Flags listed on the command-line
+// 		the current command. Flags listed on the command line
 // 		are applied after this list and therefore override it.
 // 	GOOS
 // 		The operating system for which to compile code.
@@ -1568,6 +1579,9 @@
 // 	GOMIPS64
 // 		For GOARCH=mips64{,le}, whether to use floating point instructions.
 // 		Valid values are hardfloat (default), softfloat.
+// 	GOWASM
+// 		For GOARCH=wasm, comma-separated list of experimental WebAssembly features to use.
+// 		Valid values are satconv, signext.
 //
 // Special-purpose environment variables:
 //

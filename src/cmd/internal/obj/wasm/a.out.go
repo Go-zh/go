@@ -210,8 +210,22 @@ const (
 	AI64ReinterpretF64
 	AF32ReinterpretI32
 	AF64ReinterpretI64
+	AI32Extend8S
+	AI32Extend16S
+	AI64Extend8S
+	AI64Extend16S
+	AI64Extend32S
 
-	// End of low-level WebAssembly instructions.
+	AI32TruncSatF32S // opcode 0xFC 0x00
+	AI32TruncSatF32U
+	AI32TruncSatF64S
+	AI32TruncSatF64U
+	AI64TruncSatF32S
+	AI64TruncSatF32U
+	AI64TruncSatF64S
+	AI64TruncSatF64U
+
+	ALast // Sentinel: End of low-level WebAssembly instructions.
 
 	ARESUMEPOINT
 	// ACALLNORESUME is a call which is not followed by a resume point.

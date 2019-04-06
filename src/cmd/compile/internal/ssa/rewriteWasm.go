@@ -1095,10 +1095,10 @@ func rewriteValueWasm_OpCtz8NonZero_0(v *Value) bool {
 func rewriteValueWasm_OpCvt32Fto32_0(v *Value) bool {
 	// match: (Cvt32Fto32 x)
 	// cond:
-	// result: (I64TruncF64S x)
+	// result: (I64TruncSatF64S x)
 	for {
 		x := v.Args[0]
-		v.reset(OpWasmI64TruncF64S)
+		v.reset(OpWasmI64TruncSatF64S)
 		v.AddArg(x)
 		return true
 	}
@@ -1106,10 +1106,10 @@ func rewriteValueWasm_OpCvt32Fto32_0(v *Value) bool {
 func rewriteValueWasm_OpCvt32Fto32U_0(v *Value) bool {
 	// match: (Cvt32Fto32U x)
 	// cond:
-	// result: (I64TruncF64U x)
+	// result: (I64TruncSatF64U x)
 	for {
 		x := v.Args[0]
-		v.reset(OpWasmI64TruncF64U)
+		v.reset(OpWasmI64TruncSatF64U)
 		v.AddArg(x)
 		return true
 	}
@@ -1117,10 +1117,10 @@ func rewriteValueWasm_OpCvt32Fto32U_0(v *Value) bool {
 func rewriteValueWasm_OpCvt32Fto64_0(v *Value) bool {
 	// match: (Cvt32Fto64 x)
 	// cond:
-	// result: (I64TruncF64S x)
+	// result: (I64TruncSatF64S x)
 	for {
 		x := v.Args[0]
-		v.reset(OpWasmI64TruncF64S)
+		v.reset(OpWasmI64TruncSatF64S)
 		v.AddArg(x)
 		return true
 	}
@@ -1140,10 +1140,10 @@ func rewriteValueWasm_OpCvt32Fto64F_0(v *Value) bool {
 func rewriteValueWasm_OpCvt32Fto64U_0(v *Value) bool {
 	// match: (Cvt32Fto64U x)
 	// cond:
-	// result: (I64TruncF64U x)
+	// result: (I64TruncSatF64U x)
 	for {
 		x := v.Args[0]
-		v.reset(OpWasmI64TruncF64U)
+		v.reset(OpWasmI64TruncSatF64U)
 		v.AddArg(x)
 		return true
 	}
@@ -1215,10 +1215,10 @@ func rewriteValueWasm_OpCvt32to64F_0(v *Value) bool {
 func rewriteValueWasm_OpCvt64Fto32_0(v *Value) bool {
 	// match: (Cvt64Fto32 x)
 	// cond:
-	// result: (I64TruncF64S x)
+	// result: (I64TruncSatF64S x)
 	for {
 		x := v.Args[0]
-		v.reset(OpWasmI64TruncF64S)
+		v.reset(OpWasmI64TruncSatF64S)
 		v.AddArg(x)
 		return true
 	}
@@ -1237,10 +1237,10 @@ func rewriteValueWasm_OpCvt64Fto32F_0(v *Value) bool {
 func rewriteValueWasm_OpCvt64Fto32U_0(v *Value) bool {
 	// match: (Cvt64Fto32U x)
 	// cond:
-	// result: (I64TruncF64U x)
+	// result: (I64TruncSatF64U x)
 	for {
 		x := v.Args[0]
-		v.reset(OpWasmI64TruncF64U)
+		v.reset(OpWasmI64TruncSatF64U)
 		v.AddArg(x)
 		return true
 	}
@@ -1248,10 +1248,10 @@ func rewriteValueWasm_OpCvt64Fto32U_0(v *Value) bool {
 func rewriteValueWasm_OpCvt64Fto64_0(v *Value) bool {
 	// match: (Cvt64Fto64 x)
 	// cond:
-	// result: (I64TruncF64S x)
+	// result: (I64TruncSatF64S x)
 	for {
 		x := v.Args[0]
-		v.reset(OpWasmI64TruncF64S)
+		v.reset(OpWasmI64TruncSatF64S)
 		v.AddArg(x)
 		return true
 	}
@@ -1259,10 +1259,10 @@ func rewriteValueWasm_OpCvt64Fto64_0(v *Value) bool {
 func rewriteValueWasm_OpCvt64Fto64U_0(v *Value) bool {
 	// match: (Cvt64Fto64U x)
 	// cond:
-	// result: (I64TruncF64U x)
+	// result: (I64TruncSatF64U x)
 	for {
 		x := v.Args[0]
-		v.reset(OpWasmI64TruncF64U)
+		v.reset(OpWasmI64TruncSatF64U)
 		v.AddArg(x)
 		return true
 	}
@@ -4426,6 +4426,18 @@ func rewriteValueWasm_OpSignExt16to32_0(v *Value) bool {
 		return true
 	}
 	// match: (SignExt16to32 x)
+	// cond: objabi.GOWASM.SignExt
+	// result: (I64Extend16S x)
+	for {
+		x := v.Args[0]
+		if !(objabi.GOWASM.SignExt) {
+			break
+		}
+		v.reset(OpWasmI64Extend16S)
+		v.AddArg(x)
+		return true
+	}
+	// match: (SignExt16to32 x)
 	// cond:
 	// result: (I64ShrS (I64Shl x (I64Const [48])) (I64Const [48]))
 	for {
@@ -4457,6 +4469,18 @@ func rewriteValueWasm_OpSignExt16to64_0(v *Value) bool {
 		_ = x.Args[1]
 		v.reset(OpCopy)
 		v.Type = x.Type
+		v.AddArg(x)
+		return true
+	}
+	// match: (SignExt16to64 x)
+	// cond: objabi.GOWASM.SignExt
+	// result: (I64Extend16S x)
+	for {
+		x := v.Args[0]
+		if !(objabi.GOWASM.SignExt) {
+			break
+		}
+		v.reset(OpWasmI64Extend16S)
 		v.AddArg(x)
 		return true
 	}
@@ -4496,6 +4520,18 @@ func rewriteValueWasm_OpSignExt32to64_0(v *Value) bool {
 		return true
 	}
 	// match: (SignExt32to64 x)
+	// cond: objabi.GOWASM.SignExt
+	// result: (I64Extend32S x)
+	for {
+		x := v.Args[0]
+		if !(objabi.GOWASM.SignExt) {
+			break
+		}
+		v.reset(OpWasmI64Extend32S)
+		v.AddArg(x)
+		return true
+	}
+	// match: (SignExt32to64 x)
 	// cond:
 	// result: (I64ShrS (I64Shl x (I64Const [32])) (I64Const [32]))
 	for {
@@ -4527,6 +4563,18 @@ func rewriteValueWasm_OpSignExt8to16_0(v *Value) bool {
 		_ = x.Args[1]
 		v.reset(OpCopy)
 		v.Type = x.Type
+		v.AddArg(x)
+		return true
+	}
+	// match: (SignExt8to16 x)
+	// cond: objabi.GOWASM.SignExt
+	// result: (I64Extend8S x)
+	for {
+		x := v.Args[0]
+		if !(objabi.GOWASM.SignExt) {
+			break
+		}
+		v.reset(OpWasmI64Extend8S)
 		v.AddArg(x)
 		return true
 	}
@@ -4566,6 +4614,18 @@ func rewriteValueWasm_OpSignExt8to32_0(v *Value) bool {
 		return true
 	}
 	// match: (SignExt8to32 x)
+	// cond: objabi.GOWASM.SignExt
+	// result: (I64Extend8S x)
+	for {
+		x := v.Args[0]
+		if !(objabi.GOWASM.SignExt) {
+			break
+		}
+		v.reset(OpWasmI64Extend8S)
+		v.AddArg(x)
+		return true
+	}
+	// match: (SignExt8to32 x)
 	// cond:
 	// result: (I64ShrS (I64Shl x (I64Const [56])) (I64Const [56]))
 	for {
@@ -4597,6 +4657,18 @@ func rewriteValueWasm_OpSignExt8to64_0(v *Value) bool {
 		_ = x.Args[1]
 		v.reset(OpCopy)
 		v.Type = x.Type
+		v.AddArg(x)
+		return true
+	}
+	// match: (SignExt8to64 x)
+	// cond: objabi.GOWASM.SignExt
+	// result: (I64Extend8S x)
+	for {
+		x := v.Args[0]
+		if !(objabi.GOWASM.SignExt) {
+			break
+		}
+		v.reset(OpWasmI64Extend8S)
 		v.AddArg(x)
 		return true
 	}
@@ -6382,11 +6454,10 @@ func rewriteValueWasm_OpZeroExt8to64_0(v *Value) bool {
 }
 func rewriteBlockWasm(b *Block) bool {
 	config := b.Func.Config
-	_ = config
-	fe := b.Func.fe
-	_ = fe
 	typ := &config.Types
 	_ = typ
+	v := b.Control
+	_ = v
 	switch b.Kind {
 	}
 	return false

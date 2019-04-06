@@ -132,9 +132,22 @@ nocpuinfo:
 	MOVQ	_cgo_init(SB), AX
 	TESTQ	AX, AX
 	JZ	needtls
-	// g0 already in DI
-	MOVQ	DI, CX	// Win64 uses CX for first parameter
-	MOVQ	$setg_gcc<>(SB), SI
+	// arg 1: g0, already in DI
+	MOVQ	$setg_gcc<>(SB), SI // arg 2: setg_gcc
+#ifdef GOOS_android
+	MOVQ	$runtime·tls_g(SB), DX 	// arg 3: &tls_g
+	MOVQ	0(TLS), CX	// arg 4: TLS base, stored in the first slot (TLS_SLOT_SELF).
+#else
+	MOVQ	$0, DX	// arg 3, 4: not used when using platform's TLS
+	MOVQ	$0, CX
+#endif
+#ifdef GOOS_windows
+	// Adjust for the Win64 calling convention.
+	MOVQ	CX, R9 // arg 4
+	MOVQ	DX, R8 // arg 3
+	MOVQ	SI, DX // arg 2
+	MOVQ	DI, CX // arg 1
+#endif
 	CALL	AX
 
 	// update stackguard after _cgo_init
@@ -1628,3 +1641,77 @@ TEXT runtime·debugCallPanicked(SB),NOSPLIT,$16-16
 	MOVQ	$2, AX
 	BYTE	$0xcc
 	RET
+
+// Note: these functions use a special calling convention to save generated code space.
+// Arguments are passed in registers, but the space for those arguments are allocated
+// in the caller's stack frame. These stubs write the args into that stack space and
+// then tail call to the corresponding runtime handler.
+// The tail call makes these stubs disappear in backtraces.
+TEXT runtime·panicIndex(SB),NOSPLIT,$0-16
+	MOVQ	AX, x+0(FP)
+	MOVQ	CX, y+8(FP)
+	JMP	runtime·goPanicIndex(SB)
+TEXT runtime·panicIndexU(SB),NOSPLIT,$0-16
+	MOVQ	AX, x+0(FP)
+	MOVQ	CX, y+8(FP)
+	JMP	runtime·goPanicIndexU(SB)
+TEXT runtime·panicSliceAlen(SB),NOSPLIT,$0-16
+	MOVQ	CX, x+0(FP)
+	MOVQ	DX, y+8(FP)
+	JMP	runtime·goPanicSliceAlen(SB)
+TEXT runtime·panicSliceAlenU(SB),NOSPLIT,$0-16
+	MOVQ	CX, x+0(FP)
+	MOVQ	DX, y+8(FP)
+	JMP	runtime·goPanicSliceAlenU(SB)
+TEXT runtime·panicSliceAcap(SB),NOSPLIT,$0-16
+	MOVQ	CX, x+0(FP)
+	MOVQ	DX, y+8(FP)
+	JMP	runtime·goPanicSliceAcap(SB)
+TEXT runtime·panicSliceAcapU(SB),NOSPLIT,$0-16
+	MOVQ	CX, x+0(FP)
+	MOVQ	DX, y+8(FP)
+	JMP	runtime·goPanicSliceAcapU(SB)
+TEXT runtime·panicSliceB(SB),NOSPLIT,$0-16
+	MOVQ	AX, x+0(FP)
+	MOVQ	CX, y+8(FP)
+	JMP	runtime·goPanicSliceB(SB)
+TEXT runtime·panicSliceBU(SB),NOSPLIT,$0-16
+	MOVQ	AX, x+0(FP)
+	MOVQ	CX, y+8(FP)
+	JMP	runtime·goPanicSliceBU(SB)
+TEXT runtime·panicSlice3Alen(SB),NOSPLIT,$0-16
+	MOVQ	DX, x+0(FP)
+	MOVQ	BX, y+8(FP)
+	JMP	runtime·goPanicSlice3Alen(SB)
+TEXT runtime·panicSlice3AlenU(SB),NOSPLIT,$0-16
+	MOVQ	DX, x+0(FP)
+	MOVQ	BX, y+8(FP)
+	JMP	runtime·goPanicSlice3AlenU(SB)
+TEXT runtime·panicSlice3Acap(SB),NOSPLIT,$0-16
+	MOVQ	DX, x+0(FP)
+	MOVQ	BX, y+8(FP)
+	JMP	runtime·goPanicSlice3Acap(SB)
+TEXT runtime·panicSlice3AcapU(SB),NOSPLIT,$0-16
+	MOVQ	DX, x+0(FP)
+	MOVQ	BX, y+8(FP)
+	JMP	runtime·goPanicSlice3AcapU(SB)
+TEXT runtime·panicSlice3B(SB),NOSPLIT,$0-16
+	MOVQ	CX, x+0(FP)
+	MOVQ	DX, y+8(FP)
+	JMP	runtime·goPanicSlice3B(SB)
+TEXT runtime·panicSlice3BU(SB),NOSPLIT,$0-16
+	MOVQ	CX, x+0(FP)
+	MOVQ	DX, y+8(FP)
+	JMP	runtime·goPanicSlice3BU(SB)
+TEXT runtime·panicSlice3C(SB),NOSPLIT,$0-16
+	MOVQ	AX, x+0(FP)
+	MOVQ	CX, y+8(FP)
+	JMP	runtime·goPanicSlice3C(SB)
+TEXT runtime·panicSlice3CU(SB),NOSPLIT,$0-16
+	MOVQ	AX, x+0(FP)
+	MOVQ	CX, y+8(FP)
+	JMP	runtime·goPanicSlice3CU(SB)
+
+#ifdef GOOS_android
+GLOBL runtime·tls_g+0(SB), NOPTR, $8
+#endif

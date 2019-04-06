@@ -547,6 +547,8 @@ func rewriteValuePPC64(v *Value) bool {
 		return rewriteValuePPC64_OpPPC64XOR_0(v) || rewriteValuePPC64_OpPPC64XOR_10(v)
 	case OpPPC64XORconst:
 		return rewriteValuePPC64_OpPPC64XORconst_0(v)
+	case OpPanicBounds:
+		return rewriteValuePPC64_OpPanicBounds_0(v)
 	case OpPopCount16:
 		return rewriteValuePPC64_OpPopCount16_0(v)
 	case OpPopCount32:
@@ -1390,10 +1392,13 @@ func rewriteValuePPC64_OpCtz32_0(v *Value) bool {
 	b := v.Block
 	typ := &b.Func.Config.Types
 	// match: (Ctz32 x)
-	// cond:
+	// cond: objabi.GOPPC64<=8
 	// result: (POPCNTW (MOVWZreg (ANDN <typ.Int> (ADDconst <typ.Int> [-1] x) x)))
 	for {
 		x := v.Args[0]
+		if !(objabi.GOPPC64 <= 8) {
+			break
+		}
 		v.reset(OpPPC64POPCNTW)
 		v0 := b.NewValue0(v.Pos, OpPPC64MOVWZreg, typ.Int64)
 		v1 := b.NewValue0(v.Pos, OpPPC64ANDN, typ.Int)
@@ -1403,6 +1408,17 @@ func rewriteValuePPC64_OpCtz32_0(v *Value) bool {
 		v1.AddArg(v2)
 		v1.AddArg(x)
 		v0.AddArg(v1)
+		v.AddArg(v0)
+		return true
+	}
+	// match: (Ctz32 x)
+	// cond:
+	// result: (CNTTZW (MOVWZreg x))
+	for {
+		x := v.Args[0]
+		v.reset(OpPPC64CNTTZW)
+		v0 := b.NewValue0(v.Pos, OpPPC64MOVWZreg, typ.Int64)
+		v0.AddArg(x)
 		v.AddArg(v0)
 		return true
 	}
@@ -1422,10 +1438,13 @@ func rewriteValuePPC64_OpCtz64_0(v *Value) bool {
 	b := v.Block
 	typ := &b.Func.Config.Types
 	// match: (Ctz64 x)
-	// cond:
+	// cond: objabi.GOPPC64<=8
 	// result: (POPCNTD (ANDN <typ.Int64> (ADDconst <typ.Int64> [-1] x) x))
 	for {
 		x := v.Args[0]
+		if !(objabi.GOPPC64 <= 8) {
+			break
+		}
 		v.reset(OpPPC64POPCNTD)
 		v0 := b.NewValue0(v.Pos, OpPPC64ANDN, typ.Int64)
 		v1 := b.NewValue0(v.Pos, OpPPC64ADDconst, typ.Int64)
@@ -1434,6 +1453,15 @@ func rewriteValuePPC64_OpCtz64_0(v *Value) bool {
 		v0.AddArg(v1)
 		v0.AddArg(x)
 		v.AddArg(v0)
+		return true
+	}
+	// match: (Ctz64 x)
+	// cond:
+	// result: (CNTTZD x)
+	for {
+		x := v.Args[0]
+		v.reset(OpPPC64CNTTZD)
+		v.AddArg(x)
 		return true
 	}
 }
@@ -26076,6 +26104,63 @@ func rewriteValuePPC64_OpPPC64XORconst_0(v *Value) bool {
 	}
 	return false
 }
+func rewriteValuePPC64_OpPanicBounds_0(v *Value) bool {
+	// match: (PanicBounds [kind] x y mem)
+	// cond: boundsABI(kind) == 0
+	// result: (LoweredPanicBoundsA [kind] x y mem)
+	for {
+		kind := v.AuxInt
+		mem := v.Args[2]
+		x := v.Args[0]
+		y := v.Args[1]
+		if !(boundsABI(kind) == 0) {
+			break
+		}
+		v.reset(OpPPC64LoweredPanicBoundsA)
+		v.AuxInt = kind
+		v.AddArg(x)
+		v.AddArg(y)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (PanicBounds [kind] x y mem)
+	// cond: boundsABI(kind) == 1
+	// result: (LoweredPanicBoundsB [kind] x y mem)
+	for {
+		kind := v.AuxInt
+		mem := v.Args[2]
+		x := v.Args[0]
+		y := v.Args[1]
+		if !(boundsABI(kind) == 1) {
+			break
+		}
+		v.reset(OpPPC64LoweredPanicBoundsB)
+		v.AuxInt = kind
+		v.AddArg(x)
+		v.AddArg(y)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (PanicBounds [kind] x y mem)
+	// cond: boundsABI(kind) == 2
+	// result: (LoweredPanicBoundsC [kind] x y mem)
+	for {
+		kind := v.AuxInt
+		mem := v.Args[2]
+		x := v.Args[0]
+		y := v.Args[1]
+		if !(boundsABI(kind) == 2) {
+			break
+		}
+		v.reset(OpPPC64LoweredPanicBoundsC)
+		v.AuxInt = kind
+		v.AddArg(x)
+		v.AddArg(y)
+		v.AddArg(mem)
+		return true
+	}
+	return false
+}
 func rewriteValuePPC64_OpPopCount16_0(v *Value) bool {
 	b := v.Block
 	typ := &b.Func.Config.Types
@@ -30088,21 +30173,16 @@ func rewriteValuePPC64_OpZeroExt8to64_0(v *Value) bool {
 }
 func rewriteBlockPPC64(b *Block) bool {
 	config := b.Func.Config
-	_ = config
-	fe := b.Func.fe
-	_ = fe
 	typ := &config.Types
 	_ = typ
+	v := b.Control
+	_ = v
 	switch b.Kind {
 	case BlockPPC64EQ:
 		// match: (EQ (CMPconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (EQ (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30123,11 +30203,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (EQ (CMPWconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (EQ (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30148,11 +30224,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (EQ (FlagEQ) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagEQ {
-				break
-			}
+		for v.Op == OpPPC64FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30161,11 +30233,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (EQ (FlagLT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagLT {
-				break
-			}
+		for v.Op == OpPPC64FlagLT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30175,11 +30243,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (EQ (FlagGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagGT {
-				break
-			}
+		for v.Op == OpPPC64FlagGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30189,11 +30253,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (EQ (InvertFlags cmp) yes no)
 		// cond:
 		// result: (EQ cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64InvertFlags {
-				break
-			}
+		for v.Op == OpPPC64InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = BlockPPC64EQ
 			b.SetControl(cmp)
@@ -30203,11 +30263,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (EQ (CMPconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (EQ (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30228,11 +30284,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (EQ (CMPWconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (EQ (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30253,11 +30305,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (EQ (CMPconst [0] z:(AND x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (EQ (ANDCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30281,11 +30329,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (EQ (CMPconst [0] z:(OR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (EQ (ORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30309,11 +30353,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (EQ (CMPconst [0] z:(XOR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (EQ (XORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30338,11 +30378,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GE (FlagEQ) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagEQ {
-				break
-			}
+		for v.Op == OpPPC64FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30351,11 +30387,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GE (FlagLT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagLT {
-				break
-			}
+		for v.Op == OpPPC64FlagLT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30365,11 +30397,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GE (FlagGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagGT {
-				break
-			}
+		for v.Op == OpPPC64FlagGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30378,11 +30406,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GE (InvertFlags cmp) yes no)
 		// cond:
 		// result: (LE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64InvertFlags {
-				break
-			}
+		for v.Op == OpPPC64InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = BlockPPC64LE
 			b.SetControl(cmp)
@@ -30392,11 +30416,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GE (CMPconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (GE (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30417,11 +30437,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GE (CMPWconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (GE (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30442,11 +30458,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GE (CMPconst [0] z:(AND x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (GE (ANDCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30470,11 +30482,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GE (CMPconst [0] z:(OR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (GE (ORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30498,11 +30506,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GE (CMPconst [0] z:(XOR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (GE (XORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30527,11 +30531,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GT (FlagEQ) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagEQ {
-				break
-			}
+		for v.Op == OpPPC64FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30541,11 +30541,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GT (FlagLT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagLT {
-				break
-			}
+		for v.Op == OpPPC64FlagLT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30555,11 +30551,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GT (FlagGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagGT {
-				break
-			}
+		for v.Op == OpPPC64FlagGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30568,11 +30560,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GT (InvertFlags cmp) yes no)
 		// cond:
 		// result: (LT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64InvertFlags {
-				break
-			}
+		for v.Op == OpPPC64InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = BlockPPC64LT
 			b.SetControl(cmp)
@@ -30582,11 +30570,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GT (CMPconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (GT (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30607,11 +30591,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GT (CMPWconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (GT (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30632,11 +30612,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GT (CMPconst [0] z:(AND x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (GT (ANDCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30660,11 +30636,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GT (CMPconst [0] z:(OR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (GT (ORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30688,11 +30660,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (GT (CMPconst [0] z:(XOR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (GT (XORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30717,11 +30685,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (If (Equal cc) yes no)
 		// cond:
 		// result: (EQ cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64Equal {
-				break
-			}
+		for v.Op == OpPPC64Equal {
 			cc := v.Args[0]
 			b.Kind = BlockPPC64EQ
 			b.SetControl(cc)
@@ -30731,11 +30695,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (If (NotEqual cc) yes no)
 		// cond:
 		// result: (NE cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64NotEqual {
-				break
-			}
+		for v.Op == OpPPC64NotEqual {
 			cc := v.Args[0]
 			b.Kind = BlockPPC64NE
 			b.SetControl(cc)
@@ -30745,11 +30705,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (If (LessThan cc) yes no)
 		// cond:
 		// result: (LT cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64LessThan {
-				break
-			}
+		for v.Op == OpPPC64LessThan {
 			cc := v.Args[0]
 			b.Kind = BlockPPC64LT
 			b.SetControl(cc)
@@ -30759,11 +30715,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (If (LessEqual cc) yes no)
 		// cond:
 		// result: (LE cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64LessEqual {
-				break
-			}
+		for v.Op == OpPPC64LessEqual {
 			cc := v.Args[0]
 			b.Kind = BlockPPC64LE
 			b.SetControl(cc)
@@ -30773,11 +30725,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (If (GreaterThan cc) yes no)
 		// cond:
 		// result: (GT cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64GreaterThan {
-				break
-			}
+		for v.Op == OpPPC64GreaterThan {
 			cc := v.Args[0]
 			b.Kind = BlockPPC64GT
 			b.SetControl(cc)
@@ -30787,11 +30735,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (If (GreaterEqual cc) yes no)
 		// cond:
 		// result: (GE cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64GreaterEqual {
-				break
-			}
+		for v.Op == OpPPC64GreaterEqual {
 			cc := v.Args[0]
 			b.Kind = BlockPPC64GE
 			b.SetControl(cc)
@@ -30801,11 +30745,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (If (FLessThan cc) yes no)
 		// cond:
 		// result: (FLT cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FLessThan {
-				break
-			}
+		for v.Op == OpPPC64FLessThan {
 			cc := v.Args[0]
 			b.Kind = BlockPPC64FLT
 			b.SetControl(cc)
@@ -30815,11 +30755,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (If (FLessEqual cc) yes no)
 		// cond:
 		// result: (FLE cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FLessEqual {
-				break
-			}
+		for v.Op == OpPPC64FLessEqual {
 			cc := v.Args[0]
 			b.Kind = BlockPPC64FLE
 			b.SetControl(cc)
@@ -30829,11 +30765,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (If (FGreaterThan cc) yes no)
 		// cond:
 		// result: (FGT cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FGreaterThan {
-				break
-			}
+		for v.Op == OpPPC64FGreaterThan {
 			cc := v.Args[0]
 			b.Kind = BlockPPC64FGT
 			b.SetControl(cc)
@@ -30843,11 +30775,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (If (FGreaterEqual cc) yes no)
 		// cond:
 		// result: (FGE cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FGreaterEqual {
-				break
-			}
+		for v.Op == OpPPC64FGreaterEqual {
 			cc := v.Args[0]
 			b.Kind = BlockPPC64FGE
 			b.SetControl(cc)
@@ -30858,8 +30786,6 @@ func rewriteBlockPPC64(b *Block) bool {
 		// cond:
 		// result: (NE (CMPWconst [0] cond) yes no)
 		for {
-			v := b.Control
-			_ = v
 			cond := b.Control
 			b.Kind = BlockPPC64NE
 			v0 := b.NewValue0(v.Pos, OpPPC64CMPWconst, types.TypeFlags)
@@ -30873,11 +30799,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LE (FlagEQ) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagEQ {
-				break
-			}
+		for v.Op == OpPPC64FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30886,11 +30808,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LE (FlagLT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagLT {
-				break
-			}
+		for v.Op == OpPPC64FlagLT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30899,11 +30817,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LE (FlagGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagGT {
-				break
-			}
+		for v.Op == OpPPC64FlagGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -30913,11 +30827,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LE (InvertFlags cmp) yes no)
 		// cond:
 		// result: (GE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64InvertFlags {
-				break
-			}
+		for v.Op == OpPPC64InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = BlockPPC64GE
 			b.SetControl(cmp)
@@ -30927,11 +30837,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LE (CMPconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (LE (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30952,11 +30858,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LE (CMPWconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (LE (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -30977,11 +30879,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LE (CMPconst [0] z:(AND x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (LE (ANDCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31005,11 +30903,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LE (CMPconst [0] z:(OR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (LE (ORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31033,11 +30927,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LE (CMPconst [0] z:(XOR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (LE (XORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31062,11 +30952,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LT (FlagEQ) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagEQ {
-				break
-			}
+		for v.Op == OpPPC64FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -31076,11 +30962,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LT (FlagLT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagLT {
-				break
-			}
+		for v.Op == OpPPC64FlagLT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -31089,11 +30971,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LT (FlagGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagGT {
-				break
-			}
+		for v.Op == OpPPC64FlagGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -31103,11 +30981,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LT (InvertFlags cmp) yes no)
 		// cond:
 		// result: (GT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64InvertFlags {
-				break
-			}
+		for v.Op == OpPPC64InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = BlockPPC64GT
 			b.SetControl(cmp)
@@ -31117,11 +30991,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LT (CMPconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (LT (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31142,11 +31012,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LT (CMPWconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (LT (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31167,11 +31033,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LT (CMPconst [0] z:(AND x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (LT (ANDCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31195,11 +31057,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LT (CMPconst [0] z:(OR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (LT (ORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31223,11 +31081,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (LT (CMPconst [0] z:(XOR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (LT (XORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31252,11 +31106,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (Equal cc)) yes no)
 		// cond:
 		// result: (EQ cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31273,11 +31123,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (NotEqual cc)) yes no)
 		// cond:
 		// result: (NE cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31294,11 +31140,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (LessThan cc)) yes no)
 		// cond:
 		// result: (LT cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31315,11 +31157,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (LessEqual cc)) yes no)
 		// cond:
 		// result: (LE cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31336,11 +31174,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (GreaterThan cc)) yes no)
 		// cond:
 		// result: (GT cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31357,11 +31191,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (GreaterEqual cc)) yes no)
 		// cond:
 		// result: (GE cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31378,11 +31208,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (FLessThan cc)) yes no)
 		// cond:
 		// result: (FLT cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31399,11 +31225,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (FLessEqual cc)) yes no)
 		// cond:
 		// result: (FLE cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31420,11 +31242,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (FGreaterThan cc)) yes no)
 		// cond:
 		// result: (FGT cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31441,11 +31259,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (FGreaterEqual cc)) yes no)
 		// cond:
 		// result: (FGE cc yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31462,11 +31276,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (NE (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31487,11 +31297,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (NE (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31512,11 +31318,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (FlagEQ) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagEQ {
-				break
-			}
+		for v.Op == OpPPC64FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -31526,11 +31328,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (FlagLT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagLT {
-				break
-			}
+		for v.Op == OpPPC64FlagLT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -31539,11 +31337,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (FlagGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64FlagGT {
-				break
-			}
+		for v.Op == OpPPC64FlagGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -31552,11 +31346,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (InvertFlags cmp) yes no)
 		// cond:
 		// result: (NE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64InvertFlags {
-				break
-			}
+		for v.Op == OpPPC64InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = BlockPPC64NE
 			b.SetControl(cmp)
@@ -31566,11 +31356,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (NE (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31591,11 +31377,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPWconst [0] (ANDconst [c] x)) yes no)
 		// cond:
 		// result: (NE (ANDCCconst [c] x) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPWconst {
-				break
-			}
+		for v.Op == OpPPC64CMPWconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31616,11 +31398,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPconst [0] z:(AND x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (NE (ANDCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31644,11 +31422,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPconst [0] z:(OR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (NE (ORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}
@@ -31672,11 +31446,7 @@ func rewriteBlockPPC64(b *Block) bool {
 		// match: (NE (CMPconst [0] z:(XOR x y)) yes no)
 		// cond: z.Uses == 1
 		// result: (NE (XORCC x y) yes no)
-		for {
-			v := b.Control
-			if v.Op != OpPPC64CMPconst {
-				break
-			}
+		for v.Op == OpPPC64CMPconst {
 			if v.AuxInt != 0 {
 				break
 			}

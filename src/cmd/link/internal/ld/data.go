@@ -32,6 +32,7 @@
 package ld
 
 import (
+	"bufio"
 	"bytes"
 	"cmd/internal/gcprog"
 	"cmd/internal/objabi"
@@ -148,7 +149,7 @@ func relocsym(ctxt *Link, s *sym.Symbol) {
 			// When putting the runtime but not main into a shared library
 			// these symbols are undefined and that's OK.
 			if ctxt.BuildMode == BuildModeShared {
-				if r.Sym.Name == "main.main" || r.Sym.Name == "main.init" {
+				if r.Sym.Name == "main.main" || r.Sym.Name == "main..inittask" {
 					r.Sym.Type = sym.SDYNIMPORT
 				} else if strings.HasPrefix(r.Sym.Name, "go.info.") {
 					// Skip go.info symbols. They are only needed to communicate
@@ -217,9 +218,7 @@ func relocsym(ctxt *Link, s *sym.Symbol) {
 				Errorf(s, "unknown reloc to %v: %d (%s)", r.Sym.Name, r.Type, sym.RelocName(ctxt.Arch, r.Type))
 			}
 		case objabi.R_TLS_LE:
-			isAndroidX86 := objabi.GOOS == "android" && (ctxt.Arch.InFamily(sys.AMD64, sys.I386))
-
-			if ctxt.LinkMode == LinkExternal && ctxt.IsELF && !isAndroidX86 {
+			if ctxt.LinkMode == LinkExternal && ctxt.IsELF {
 				r.Done = false
 				if r.Sym == nil {
 					r.Sym = ctxt.Tlsg
@@ -242,7 +241,7 @@ func relocsym(ctxt *Link, s *sym.Symbol) {
 				// related to the fact that our own TLS storage happens
 				// to take up 8 bytes.
 				o = 8 + r.Sym.Value
-			} else if ctxt.IsELF || ctxt.HeadType == objabi.Hplan9 || ctxt.HeadType == objabi.Hdarwin || isAndroidX86 {
+			} else if ctxt.IsELF || ctxt.HeadType == objabi.Hplan9 || ctxt.HeadType == objabi.Hdarwin {
 				o = int64(ctxt.Tlsoffset) + r.Add
 			} else if ctxt.HeadType == objabi.Hwindows {
 				o = r.Add
@@ -250,9 +249,7 @@ func relocsym(ctxt *Link, s *sym.Symbol) {
 				log.Fatalf("unexpected R_TLS_LE relocation for %v", ctxt.HeadType)
 			}
 		case objabi.R_TLS_IE:
-			isAndroidX86 := objabi.GOOS == "android" && (ctxt.Arch.InFamily(sys.AMD64, sys.I386))
-
-			if ctxt.LinkMode == LinkExternal && ctxt.IsELF && !isAndroidX86 {
+			if ctxt.LinkMode == LinkExternal && ctxt.IsELF {
 				r.Done = false
 				if r.Sym == nil {
 					r.Sym = ctxt.Tlsg
@@ -684,7 +681,7 @@ func CodeblkPad(ctxt *Link, addr int64, size int64, pad []byte) {
 		ctxt.Logf("codeblk [%#x,%#x) at offset %#x\n", addr, addr+size, ctxt.Out.Offset())
 	}
 
-	blk(ctxt, ctxt.Textp, addr, size, pad)
+	blk(ctxt.Out, ctxt.Textp, addr, size, pad)
 
 	/* again for printing */
 	if !*flagA {
@@ -742,7 +739,7 @@ func CodeblkPad(ctxt *Link, addr int64, size int64, pad []byte) {
 	}
 }
 
-func blk(ctxt *Link, syms []*sym.Symbol, addr, size int64, pad []byte) {
+func blk(out *OutBuf, syms []*sym.Symbol, addr, size int64, pad []byte) {
 	for i, s := range syms {
 		if !s.Attr.SubSymbol() && s.Value >= addr {
 			syms = syms[i:]
@@ -767,13 +764,13 @@ func blk(ctxt *Link, syms []*sym.Symbol, addr, size int64, pad []byte) {
 			errorexit()
 		}
 		if addr < s.Value {
-			ctxt.Out.WriteStringPad("", int(s.Value-addr), pad)
+			out.WriteStringPad("", int(s.Value-addr), pad)
 			addr = s.Value
 		}
-		ctxt.Out.Write(s.P)
+		out.Write(s.P)
 		addr += int64(len(s.P))
 		if addr < s.Value+s.Size {
-			ctxt.Out.WriteStringPad("", int(s.Value+s.Size-addr), pad)
+			out.WriteStringPad("", int(s.Value+s.Size-addr), pad)
 			addr = s.Value + s.Size
 		}
 		if addr != s.Value+s.Size {
@@ -786,17 +783,29 @@ func blk(ctxt *Link, syms []*sym.Symbol, addr, size int64, pad []byte) {
 	}
 
 	if addr < eaddr {
-		ctxt.Out.WriteStringPad("", int(eaddr-addr), pad)
+		out.WriteStringPad("", int(eaddr-addr), pad)
 	}
-	ctxt.Out.Flush()
+	out.Flush()
 }
 
 func Datblk(ctxt *Link, addr int64, size int64) {
+	writeDatblkToOutBuf(ctxt, ctxt.Out, addr, size)
+}
+
+func DatblkBytes(ctxt *Link, addr int64, size int64) []byte {
+	buf := bytes.NewBuffer(make([]byte, 0, size))
+	out := &OutBuf{w: bufio.NewWriter(buf)}
+	writeDatblkToOutBuf(ctxt, out, addr, size)
+	out.Flush()
+	return buf.Bytes()
+}
+
+func writeDatblkToOutBuf(ctxt *Link, out *OutBuf, addr int64, size int64) {
 	if *flagA {
 		ctxt.Logf("datblk [%#x,%#x) at offset %#x\n", addr, addr+size, ctxt.Out.Offset())
 	}
 
-	blk(ctxt, datap, addr, size, zeros[:])
+	blk(out, datap, addr, size, zeros[:])
 
 	/* again for printing */
 	if !*flagA {
@@ -870,7 +879,7 @@ func Dwarfblk(ctxt *Link, addr int64, size int64) {
 		ctxt.Logf("dwarfblk [%#x,%#x) at offset %#x\n", addr, addr+size, ctxt.Out.Offset())
 	}
 
-	blk(ctxt, dwarfp, addr, size, zeros[:])
+	blk(ctxt.Out, dwarfp, addr, size, zeros[:])
 }
 
 var zeros [512]byte
@@ -987,7 +996,7 @@ func dosymtype(ctxt *Link) {
 		for _, s := range ctxt.Syms.Allsym {
 			// Create a new entry in the .init_array section that points to the
 			// library initializer function.
-			if s.Name == *flagEntrySymbol {
+			if s.Name == *flagEntrySymbol && ctxt.HeadType != objabi.Haix {
 				addinitarrdata(ctxt, s)
 			}
 		}
@@ -1367,6 +1376,13 @@ func (ctxt *Link) dodata() {
 	case BuildModeCArchive, BuildModeCShared, BuildModeShared, BuildModePlugin:
 		hasinitarr = true
 	}
+
+	if ctxt.HeadType == objabi.Haix {
+		if len(data[sym.SINITARR]) > 0 {
+			Errorf(nil, "XCOFF format doesn't allow .init_array section")
+		}
+	}
+
 	if hasinitarr && len(data[sym.SINITARR]) > 0 {
 		sect := addsection(ctxt.Arch, &Segdata, ".init_array", 06)
 		sect.Align = dataMaxAlign[sym.SINITARR]

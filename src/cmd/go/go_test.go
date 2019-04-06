@@ -6,6 +6,7 @@ package main_test
 
 import (
 	"bytes"
+	"cmd/go/internal/cache"
 	"cmd/internal/sys"
 	"context"
 	"debug/elf"
@@ -166,6 +167,7 @@ func TestMain(m *testing.M) {
 		defer removeAll(testTmpDir)
 	}
 
+	testGOCACHE = cache.DefaultDir()
 	if canRun {
 		testBin = filepath.Join(testTmpDir, "testbin")
 		if err := os.Mkdir(testBin, 0777); err != nil {
@@ -1886,7 +1888,7 @@ func TestGoListTest(t *testing.T) {
 	tg.grepStdout(`^runtime/cgo$`, "missing runtime/cgo")
 
 	tg.run("list", "-deps", "-f", "{{if .DepOnly}}{{.ImportPath}}{{end}}", "sort")
-	tg.grepStdout(`^reflect$`, "missing reflect")
+	tg.grepStdout(`^internal/reflectlite$`, "missing internal/reflectlite")
 	tg.grepStdoutNot(`^sort`, "unexpected sort")
 }
 
@@ -3403,22 +3405,6 @@ func TestGoGetDotSlashDownload(t *testing.T) {
 	tg.setenv("GOPATH", tg.path("."))
 	tg.cd(tg.path("src/rsc.io"))
 	tg.run("get", "./pprof_mac_fix")
-}
-
-// Issue 13037: Was not parsing <meta> tags in 404 served over HTTPS
-func TestGoGetHTTPS404(t *testing.T) {
-	testenv.MustHaveExternalNetwork(t)
-	switch runtime.GOOS {
-	case "darwin", "linux", "freebsd":
-	default:
-		t.Skipf("test case does not work on %s", runtime.GOOS)
-	}
-
-	tg := testgo(t)
-	defer tg.cleanup()
-	tg.tempDir("src")
-	tg.setenv("GOPATH", tg.path("."))
-	tg.run("get", "bazil.org/fuse/fs/fstestutil")
 }
 
 // Test that you cannot import a main package.
@@ -4945,14 +4931,14 @@ func TestTestRegexps(t *testing.T) {
     x_test.go:15: LOG: Y running N=10000
     x_test.go:15: LOG: Y running N=1000000
     x_test.go:15: LOG: Y running N=100000000
-    x_test.go:15: LOG: Y running N=2000000000
+    x_test.go:15: LOG: Y running N=1000000000
 --- BENCH: BenchmarkX/Y
     x_test.go:15: LOG: Y running N=1
     x_test.go:15: LOG: Y running N=100
     x_test.go:15: LOG: Y running N=10000
     x_test.go:15: LOG: Y running N=1000000
     x_test.go:15: LOG: Y running N=100000000
-    x_test.go:15: LOG: Y running N=2000000000
+    x_test.go:15: LOG: Y running N=1000000000
 --- BENCH: BenchmarkX
     x_test.go:13: LOG: X running N=1
 --- BENCH: BenchmarkXX
@@ -5968,7 +5954,7 @@ func TestBadCgoDirectives(t *testing.T) {
 	if runtime.Compiler == "gc" {
 		tg.runFail("build", tg.path("src/x/_cgo_yy.go")) // ... but if forced, the comment is rejected
 		// Actually, today there is a separate issue that _ files named
-		// on the command-line are ignored. Once that is fixed,
+		// on the command line are ignored. Once that is fixed,
 		// we want to see the cgo_ldflag error.
 		tg.grepStderr("//go:cgo_ldflag only allowed in cgo-generated code|no Go files", "did not reject //go:cgo_ldflag directive")
 	}

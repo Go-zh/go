@@ -120,7 +120,7 @@ var pkgDeps = map[string][]string{
 	"image/color/palette":    {"L2", "image/color"},
 	"internal/fmtsort":       {"reflect", "sort"},
 	"reflect":                {"L2"},
-	"sort":                   {"reflect"},
+	"sort":                   {"internal/reflectlite"},
 
 	"L3": {
 		"L2",
@@ -146,8 +146,9 @@ var pkgDeps = map[string][]string{
 	// End of linear dependency definitions.
 
 	// Operating system access.
-	"syscall":                           {"L0", "internal/race", "internal/syscall/windows/sysdll", "syscall/js", "unicode/utf16"},
+	"syscall":                           {"L0", "internal/oserror", "internal/race", "internal/syscall/windows/sysdll", "syscall/js", "unicode/utf16"},
 	"syscall/js":                        {"L0"},
+	"internal/oserror":                  {"L0"},
 	"internal/syscall/unix":             {"L0", "syscall"},
 	"internal/syscall/windows":          {"L0", "syscall", "internal/syscall/windows/sysdll"},
 	"internal/syscall/windows/registry": {"L0", "syscall", "internal/syscall/windows/sysdll", "unicode/utf16"},
@@ -167,7 +168,7 @@ var pkgDeps = map[string][]string{
 
 	"internal/poll":    {"L0", "internal/race", "syscall", "time", "unicode/utf16", "unicode/utf8", "internal/syscall/windows"},
 	"internal/testlog": {"L0"},
-	"os":               {"L1", "os", "syscall", "time", "internal/poll", "internal/syscall/windows", "internal/syscall/unix", "internal/testlog"},
+	"os":               {"L1", "os", "syscall", "time", "internal/oserror", "internal/poll", "internal/syscall/windows", "internal/syscall/unix", "internal/testlog"},
 	"path/filepath":    {"L2", "os", "syscall", "internal/syscall/windows"},
 	"io/ioutil":        {"L2", "os", "path/filepath", "time"},
 	"os/exec":          {"L2", "os", "context", "path/filepath", "syscall"},
@@ -248,7 +249,7 @@ var pkgDeps = map[string][]string{
 	"compress/gzip":                  {"L4", "compress/flate"},
 	"compress/lzw":                   {"L4"},
 	"compress/zlib":                  {"L4", "compress/flate"},
-	"context":                        {"errors", "fmt", "reflect", "sync", "time"},
+	"context":                        {"errors", "internal/reflectlite", "sync", "time"},
 	"database/sql":                   {"L4", "container/list", "context", "database/sql/driver", "database/sql/internal"},
 	"database/sql/driver":            {"L4", "context", "time", "database/sql/internal"},
 	"debug/dwarf":                    {"L4"},
@@ -323,7 +324,7 @@ var pkgDeps = map[string][]string{
 	// do networking portably, it must have a small dependency set: just L0+basic os.
 	"net": {
 		"L0", "CGO",
-		"context", "math/rand", "os", "reflect", "sort", "syscall", "time",
+		"context", "math/rand", "os", "sort", "syscall", "time",
 		"internal/nettrace", "internal/poll", "internal/syscall/unix",
 		"internal/syscall/windows", "internal/singleflight", "internal/race",
 		"golang.org/x/net/dns/dnsmessage", "golang.org/x/net/lif", "golang.org/x/net/route",
@@ -519,15 +520,21 @@ func TestDependencies(t *testing.T) {
 	}
 	sort.Strings(all)
 
+	sawImport := map[string]map[string]bool{} // from package => to package => true
+
 	for _, pkg := range all {
 		imports, err := findImports(pkg)
 		if err != nil {
 			t.Error(err)
 			continue
 		}
+		if sawImport[pkg] == nil {
+			sawImport[pkg] = map[string]bool{}
+		}
 		ok := allowed(pkg)
 		var bad []string
 		for _, imp := range imports {
+			sawImport[pkg][imp] = true
 			if !ok[imp] {
 				bad = append(bad, imp)
 			}
@@ -536,6 +543,35 @@ func TestDependencies(t *testing.T) {
 			t.Errorf("unexpected dependency: %s imports %v", pkg, bad)
 		}
 	}
+
+	// depPath returns the path between the given from and to packages.
+	// It returns the empty string if there's no dependency path.
+	var depPath func(string, string) string
+	depPath = func(from, to string) string {
+		if sawImport[from][to] {
+			return from + " => " + to
+		}
+		for pkg := range sawImport[from] {
+			if p := depPath(pkg, to); p != "" {
+				return from + " => " + p
+			}
+		}
+		return ""
+	}
+
+	// Also test some high-level policy goals are being met by not finding
+	// these dependency paths:
+	badPaths := []struct{ from, to string }{
+		{"net", "unicode"},
+		{"os", "unicode"},
+	}
+
+	for _, path := range badPaths {
+		if how := depPath(path.from, path.to); how != "" {
+			t.Errorf("policy violation: %s", how)
+		}
+	}
+
 }
 
 var buildIgnore = []byte("\n// +build ignore")
@@ -550,6 +586,11 @@ func findImports(pkg string) ([]string, error) {
 	var haveImport = map[string]bool{}
 	for _, file := range files {
 		name := file.Name()
+		if name == "slice_pre113.go" {
+			// This file is ignored by build tags which aren't
+			// handled by this findImports func.
+			continue
+		}
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}

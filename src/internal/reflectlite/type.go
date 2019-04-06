@@ -35,6 +35,10 @@ type Type interface {
 	// will be the empty string.
 	PkgPath() string
 
+	// Size returns the number of bytes needed to store
+	// a value of the given type; it is analogous to unsafe.Sizeof.
+	Size() uintptr
+
 	// Kind returns the specific kind of this type.
 	Kind() Kind
 
@@ -43,6 +47,16 @@ type Type interface {
 
 	// AssignableTo reports whether a value of the type is assignable to type u.
 	AssignableTo(u Type) bool
+
+	// Comparable reports whether values of this type are comparable.
+	Comparable() bool
+
+	// String returns a string representation of the type.
+	// The string representation may use shortened package names
+	// (e.g., base64 instead of "encoding/base64") and is not
+	// guaranteed to be unique among types. To test for type identity,
+	// compare the Types directly.
+	String() string
 
 	// Elem returns a type's element type.
 	// It panics if the type's Kind is not Ptr.
@@ -367,7 +381,6 @@ func (n name) pkgPath() string {
 const (
 	kindDirectIface = 1 << 5
 	kindGCProg      = 1 << 6 // Type.gc points to GC program
-	kindNoPointers  = 1 << 7
 	kindMask        = (1 << 5) - 1
 )
 
@@ -473,7 +486,11 @@ func (t *rtype) String() string {
 	return s
 }
 
+func (t *rtype) Size() uintptr { return t.size }
+
 func (t *rtype) Kind() Kind { return Kind(t.kind & kindMask) }
+
+func (t *rtype) pointers() bool { return t.ptrdata != 0 }
 
 func (t *rtype) common() *rtype { return t }
 
@@ -661,6 +678,10 @@ func (t *rtype) AssignableTo(u Type) bool {
 	}
 	uu := u.(*rtype)
 	return directlyAssignable(uu, t) || implements(uu, t)
+}
+
+func (t *rtype) Comparable() bool {
+	return t.alg != nil && t.alg.equal != nil
 }
 
 // implements reports whether the type V implements the interface type T.

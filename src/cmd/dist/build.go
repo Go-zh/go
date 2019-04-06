@@ -1204,6 +1204,13 @@ func cmdbootstrap() {
 
 	xflagparse(0)
 
+	// Set GOPATH to an internal directory. We shouldn't actually
+	// need to store files here, since the toolchain won't
+	// depend on modules outside of vendor directories, but if
+	// GOPATH points somewhere else (e.g., to GOROOT), the
+	// go tool may complain.
+	os.Setenv("GOPATH", pathf("%s/pkg/obj/gopath", goroot))
+
 	if debug {
 		// cmd/buildid is used in debug mode.
 		toolchain = append(toolchain, "cmd/buildid")
@@ -1459,7 +1466,7 @@ func checkNotStale(goBinary string, targets ...string) {
 // single point of truth for supported platforms. This list is used
 // by 'go tool dist list'.
 var cgoEnabled = map[string]bool{
-	"aix/ppc64":       false,
+	"aix/ppc64":       true,
 	"darwin/386":      true,
 	"darwin/amd64":    true,
 	"darwin/arm":      true,

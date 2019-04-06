@@ -587,6 +587,10 @@ func rewriteValue386(v *Value) bool {
 		return rewriteValue386_OpOr8_0(v)
 	case OpOrB:
 		return rewriteValue386_OpOrB_0(v)
+	case OpPanicBounds:
+		return rewriteValue386_OpPanicBounds_0(v)
+	case OpPanicExtend:
+		return rewriteValue386_OpPanicExtend_0(v)
 	case OpRound32F:
 		return rewriteValue386_OpRound32F_0(v)
 	case OpRound64F:
@@ -22897,6 +22901,126 @@ func rewriteValue386_OpOrB_0(v *Value) bool {
 		return true
 	}
 }
+func rewriteValue386_OpPanicBounds_0(v *Value) bool {
+	// match: (PanicBounds [kind] x y mem)
+	// cond: boundsABI(kind) == 0
+	// result: (LoweredPanicBoundsA [kind] x y mem)
+	for {
+		kind := v.AuxInt
+		mem := v.Args[2]
+		x := v.Args[0]
+		y := v.Args[1]
+		if !(boundsABI(kind) == 0) {
+			break
+		}
+		v.reset(Op386LoweredPanicBoundsA)
+		v.AuxInt = kind
+		v.AddArg(x)
+		v.AddArg(y)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (PanicBounds [kind] x y mem)
+	// cond: boundsABI(kind) == 1
+	// result: (LoweredPanicBoundsB [kind] x y mem)
+	for {
+		kind := v.AuxInt
+		mem := v.Args[2]
+		x := v.Args[0]
+		y := v.Args[1]
+		if !(boundsABI(kind) == 1) {
+			break
+		}
+		v.reset(Op386LoweredPanicBoundsB)
+		v.AuxInt = kind
+		v.AddArg(x)
+		v.AddArg(y)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (PanicBounds [kind] x y mem)
+	// cond: boundsABI(kind) == 2
+	// result: (LoweredPanicBoundsC [kind] x y mem)
+	for {
+		kind := v.AuxInt
+		mem := v.Args[2]
+		x := v.Args[0]
+		y := v.Args[1]
+		if !(boundsABI(kind) == 2) {
+			break
+		}
+		v.reset(Op386LoweredPanicBoundsC)
+		v.AuxInt = kind
+		v.AddArg(x)
+		v.AddArg(y)
+		v.AddArg(mem)
+		return true
+	}
+	return false
+}
+func rewriteValue386_OpPanicExtend_0(v *Value) bool {
+	// match: (PanicExtend [kind] hi lo y mem)
+	// cond: boundsABI(kind) == 0
+	// result: (LoweredPanicExtendA [kind] hi lo y mem)
+	for {
+		kind := v.AuxInt
+		mem := v.Args[3]
+		hi := v.Args[0]
+		lo := v.Args[1]
+		y := v.Args[2]
+		if !(boundsABI(kind) == 0) {
+			break
+		}
+		v.reset(Op386LoweredPanicExtendA)
+		v.AuxInt = kind
+		v.AddArg(hi)
+		v.AddArg(lo)
+		v.AddArg(y)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (PanicExtend [kind] hi lo y mem)
+	// cond: boundsABI(kind) == 1
+	// result: (LoweredPanicExtendB [kind] hi lo y mem)
+	for {
+		kind := v.AuxInt
+		mem := v.Args[3]
+		hi := v.Args[0]
+		lo := v.Args[1]
+		y := v.Args[2]
+		if !(boundsABI(kind) == 1) {
+			break
+		}
+		v.reset(Op386LoweredPanicExtendB)
+		v.AuxInt = kind
+		v.AddArg(hi)
+		v.AddArg(lo)
+		v.AddArg(y)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (PanicExtend [kind] hi lo y mem)
+	// cond: boundsABI(kind) == 2
+	// result: (LoweredPanicExtendC [kind] hi lo y mem)
+	for {
+		kind := v.AuxInt
+		mem := v.Args[3]
+		hi := v.Args[0]
+		lo := v.Args[1]
+		y := v.Args[2]
+		if !(boundsABI(kind) == 2) {
+			break
+		}
+		v.reset(Op386LoweredPanicExtendC)
+		v.AuxInt = kind
+		v.AddArg(hi)
+		v.AddArg(lo)
+		v.AddArg(y)
+		v.AddArg(mem)
+		return true
+	}
+	return false
+}
 func rewriteValue386_OpRound32F_0(v *Value) bool {
 	// match: (Round32F x)
 	// cond:
@@ -24353,21 +24477,16 @@ func rewriteValue386_OpZeromask_0(v *Value) bool {
 }
 func rewriteBlock386(b *Block) bool {
 	config := b.Func.Config
-	_ = config
-	fe := b.Func.fe
-	_ = fe
 	typ := &config.Types
 	_ = typ
+	v := b.Control
+	_ = v
 	switch b.Kind {
 	case Block386EQ:
 		// match: (EQ (InvertFlags cmp) yes no)
 		// cond:
 		// result: (EQ cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386InvertFlags {
-				break
-			}
+		for v.Op == Op386InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = Block386EQ
 			b.SetControl(cmp)
@@ -24377,11 +24496,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (EQ (FlagEQ) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagEQ {
-				break
-			}
+		for v.Op == Op386FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24390,11 +24505,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (EQ (FlagLT_ULT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_ULT {
-				break
-			}
+		for v.Op == Op386FlagLT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24404,11 +24515,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (EQ (FlagLT_UGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_UGT {
-				break
-			}
+		for v.Op == Op386FlagLT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24418,11 +24525,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (EQ (FlagGT_ULT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_ULT {
-				break
-			}
+		for v.Op == Op386FlagGT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24432,11 +24535,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (EQ (FlagGT_UGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_UGT {
-				break
-			}
+		for v.Op == Op386FlagGT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24447,11 +24546,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GE (InvertFlags cmp) yes no)
 		// cond:
 		// result: (LE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386InvertFlags {
-				break
-			}
+		for v.Op == Op386InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = Block386LE
 			b.SetControl(cmp)
@@ -24461,11 +24556,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GE (FlagEQ) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagEQ {
-				break
-			}
+		for v.Op == Op386FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24474,11 +24565,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GE (FlagLT_ULT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_ULT {
-				break
-			}
+		for v.Op == Op386FlagLT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24488,11 +24575,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GE (FlagLT_UGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_UGT {
-				break
-			}
+		for v.Op == Op386FlagLT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24502,11 +24585,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GE (FlagGT_ULT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_ULT {
-				break
-			}
+		for v.Op == Op386FlagGT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24515,11 +24594,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GE (FlagGT_UGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_UGT {
-				break
-			}
+		for v.Op == Op386FlagGT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24529,11 +24604,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GT (InvertFlags cmp) yes no)
 		// cond:
 		// result: (LT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386InvertFlags {
-				break
-			}
+		for v.Op == Op386InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = Block386LT
 			b.SetControl(cmp)
@@ -24543,11 +24614,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GT (FlagEQ) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagEQ {
-				break
-			}
+		for v.Op == Op386FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24557,11 +24624,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GT (FlagLT_ULT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_ULT {
-				break
-			}
+		for v.Op == Op386FlagLT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24571,11 +24634,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GT (FlagLT_UGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_UGT {
-				break
-			}
+		for v.Op == Op386FlagLT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24585,11 +24644,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GT (FlagGT_ULT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_ULT {
-				break
-			}
+		for v.Op == Op386FlagGT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24598,11 +24653,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (GT (FlagGT_UGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_UGT {
-				break
-			}
+		for v.Op == Op386FlagGT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24612,11 +24663,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETL cmp) yes no)
 		// cond:
 		// result: (LT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETL {
-				break
-			}
+		for v.Op == Op386SETL {
 			cmp := v.Args[0]
 			b.Kind = Block386LT
 			b.SetControl(cmp)
@@ -24626,11 +24673,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETLE cmp) yes no)
 		// cond:
 		// result: (LE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETLE {
-				break
-			}
+		for v.Op == Op386SETLE {
 			cmp := v.Args[0]
 			b.Kind = Block386LE
 			b.SetControl(cmp)
@@ -24640,11 +24683,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETG cmp) yes no)
 		// cond:
 		// result: (GT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETG {
-				break
-			}
+		for v.Op == Op386SETG {
 			cmp := v.Args[0]
 			b.Kind = Block386GT
 			b.SetControl(cmp)
@@ -24654,11 +24693,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETGE cmp) yes no)
 		// cond:
 		// result: (GE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETGE {
-				break
-			}
+		for v.Op == Op386SETGE {
 			cmp := v.Args[0]
 			b.Kind = Block386GE
 			b.SetControl(cmp)
@@ -24668,11 +24703,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETEQ cmp) yes no)
 		// cond:
 		// result: (EQ cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETEQ {
-				break
-			}
+		for v.Op == Op386SETEQ {
 			cmp := v.Args[0]
 			b.Kind = Block386EQ
 			b.SetControl(cmp)
@@ -24682,11 +24713,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETNE cmp) yes no)
 		// cond:
 		// result: (NE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETNE {
-				break
-			}
+		for v.Op == Op386SETNE {
 			cmp := v.Args[0]
 			b.Kind = Block386NE
 			b.SetControl(cmp)
@@ -24696,11 +24723,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETB cmp) yes no)
 		// cond:
 		// result: (ULT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETB {
-				break
-			}
+		for v.Op == Op386SETB {
 			cmp := v.Args[0]
 			b.Kind = Block386ULT
 			b.SetControl(cmp)
@@ -24710,11 +24733,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETBE cmp) yes no)
 		// cond:
 		// result: (ULE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETBE {
-				break
-			}
+		for v.Op == Op386SETBE {
 			cmp := v.Args[0]
 			b.Kind = Block386ULE
 			b.SetControl(cmp)
@@ -24724,11 +24743,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETA cmp) yes no)
 		// cond:
 		// result: (UGT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETA {
-				break
-			}
+		for v.Op == Op386SETA {
 			cmp := v.Args[0]
 			b.Kind = Block386UGT
 			b.SetControl(cmp)
@@ -24738,11 +24753,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETAE cmp) yes no)
 		// cond:
 		// result: (UGE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETAE {
-				break
-			}
+		for v.Op == Op386SETAE {
 			cmp := v.Args[0]
 			b.Kind = Block386UGE
 			b.SetControl(cmp)
@@ -24752,11 +24763,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETO cmp) yes no)
 		// cond:
 		// result: (OS cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETO {
-				break
-			}
+		for v.Op == Op386SETO {
 			cmp := v.Args[0]
 			b.Kind = Block386OS
 			b.SetControl(cmp)
@@ -24766,11 +24773,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETGF cmp) yes no)
 		// cond:
 		// result: (UGT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETGF {
-				break
-			}
+		for v.Op == Op386SETGF {
 			cmp := v.Args[0]
 			b.Kind = Block386UGT
 			b.SetControl(cmp)
@@ -24780,11 +24783,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETGEF cmp) yes no)
 		// cond:
 		// result: (UGE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETGEF {
-				break
-			}
+		for v.Op == Op386SETGEF {
 			cmp := v.Args[0]
 			b.Kind = Block386UGE
 			b.SetControl(cmp)
@@ -24794,11 +24793,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETEQF cmp) yes no)
 		// cond:
 		// result: (EQF cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETEQF {
-				break
-			}
+		for v.Op == Op386SETEQF {
 			cmp := v.Args[0]
 			b.Kind = Block386EQF
 			b.SetControl(cmp)
@@ -24808,11 +24803,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (If (SETNEF cmp) yes no)
 		// cond:
 		// result: (NEF cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386SETNEF {
-				break
-			}
+		for v.Op == Op386SETNEF {
 			cmp := v.Args[0]
 			b.Kind = Block386NEF
 			b.SetControl(cmp)
@@ -24823,8 +24814,6 @@ func rewriteBlock386(b *Block) bool {
 		// cond:
 		// result: (NE (TESTB cond cond) yes no)
 		for {
-			v := b.Control
-			_ = v
 			cond := b.Control
 			b.Kind = Block386NE
 			v0 := b.NewValue0(v.Pos, Op386TESTB, types.TypeFlags)
@@ -24838,11 +24827,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LE (InvertFlags cmp) yes no)
 		// cond:
 		// result: (GE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386InvertFlags {
-				break
-			}
+		for v.Op == Op386InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = Block386GE
 			b.SetControl(cmp)
@@ -24852,11 +24837,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LE (FlagEQ) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagEQ {
-				break
-			}
+		for v.Op == Op386FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24865,11 +24846,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LE (FlagLT_ULT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_ULT {
-				break
-			}
+		for v.Op == Op386FlagLT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24878,11 +24855,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LE (FlagLT_UGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_UGT {
-				break
-			}
+		for v.Op == Op386FlagLT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24891,11 +24864,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LE (FlagGT_ULT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_ULT {
-				break
-			}
+		for v.Op == Op386FlagGT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24905,11 +24874,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LE (FlagGT_UGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_UGT {
-				break
-			}
+		for v.Op == Op386FlagGT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24920,11 +24885,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LT (InvertFlags cmp) yes no)
 		// cond:
 		// result: (GT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386InvertFlags {
-				break
-			}
+		for v.Op == Op386InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = Block386GT
 			b.SetControl(cmp)
@@ -24934,11 +24895,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LT (FlagEQ) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagEQ {
-				break
-			}
+		for v.Op == Op386FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24948,11 +24905,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LT (FlagLT_ULT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_ULT {
-				break
-			}
+		for v.Op == Op386FlagLT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24961,11 +24914,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LT (FlagLT_UGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_UGT {
-				break
-			}
+		for v.Op == Op386FlagLT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24974,11 +24923,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LT (FlagGT_ULT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_ULT {
-				break
-			}
+		for v.Op == Op386FlagGT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -24988,11 +24933,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (LT (FlagGT_UGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_UGT {
-				break
-			}
+		for v.Op == Op386FlagGT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25003,11 +24944,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETL cmp) (SETL cmp)) yes no)
 		// cond:
 		// result: (LT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETL {
@@ -25029,11 +24966,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETL cmp) (SETL cmp)) yes no)
 		// cond:
 		// result: (LT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETL {
@@ -25055,11 +24988,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETLE cmp) (SETLE cmp)) yes no)
 		// cond:
 		// result: (LE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETLE {
@@ -25081,11 +25010,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETLE cmp) (SETLE cmp)) yes no)
 		// cond:
 		// result: (LE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETLE {
@@ -25107,11 +25032,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETG cmp) (SETG cmp)) yes no)
 		// cond:
 		// result: (GT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETG {
@@ -25133,11 +25054,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETG cmp) (SETG cmp)) yes no)
 		// cond:
 		// result: (GT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETG {
@@ -25159,11 +25076,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETGE cmp) (SETGE cmp)) yes no)
 		// cond:
 		// result: (GE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETGE {
@@ -25185,11 +25098,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETGE cmp) (SETGE cmp)) yes no)
 		// cond:
 		// result: (GE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETGE {
@@ -25211,11 +25120,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETEQ cmp) (SETEQ cmp)) yes no)
 		// cond:
 		// result: (EQ cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETEQ {
@@ -25237,11 +25142,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETEQ cmp) (SETEQ cmp)) yes no)
 		// cond:
 		// result: (EQ cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETEQ {
@@ -25263,11 +25164,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETNE cmp) (SETNE cmp)) yes no)
 		// cond:
 		// result: (NE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETNE {
@@ -25289,11 +25186,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETNE cmp) (SETNE cmp)) yes no)
 		// cond:
 		// result: (NE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETNE {
@@ -25315,11 +25208,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETB cmp) (SETB cmp)) yes no)
 		// cond:
 		// result: (ULT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETB {
@@ -25341,11 +25230,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETB cmp) (SETB cmp)) yes no)
 		// cond:
 		// result: (ULT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETB {
@@ -25367,11 +25252,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETBE cmp) (SETBE cmp)) yes no)
 		// cond:
 		// result: (ULE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETBE {
@@ -25393,11 +25274,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETBE cmp) (SETBE cmp)) yes no)
 		// cond:
 		// result: (ULE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETBE {
@@ -25419,11 +25296,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETA cmp) (SETA cmp)) yes no)
 		// cond:
 		// result: (UGT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETA {
@@ -25445,11 +25318,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETA cmp) (SETA cmp)) yes no)
 		// cond:
 		// result: (UGT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETA {
@@ -25471,11 +25340,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETAE cmp) (SETAE cmp)) yes no)
 		// cond:
 		// result: (UGE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETAE {
@@ -25497,11 +25362,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETAE cmp) (SETAE cmp)) yes no)
 		// cond:
 		// result: (UGE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETAE {
@@ -25523,11 +25384,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETO cmp) (SETO cmp)) yes no)
 		// cond:
 		// result: (OS cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETO {
@@ -25549,11 +25406,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETO cmp) (SETO cmp)) yes no)
 		// cond:
 		// result: (OS cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETO {
@@ -25575,11 +25428,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETGF cmp) (SETGF cmp)) yes no)
 		// cond:
 		// result: (UGT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETGF {
@@ -25601,11 +25450,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETGF cmp) (SETGF cmp)) yes no)
 		// cond:
 		// result: (UGT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETGF {
@@ -25627,11 +25472,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETGEF cmp) (SETGEF cmp)) yes no)
 		// cond:
 		// result: (UGE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETGEF {
@@ -25653,11 +25494,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETGEF cmp) (SETGEF cmp)) yes no)
 		// cond:
 		// result: (UGE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETGEF {
@@ -25679,11 +25516,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETEQF cmp) (SETEQF cmp)) yes no)
 		// cond:
 		// result: (EQF cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETEQF {
@@ -25705,11 +25538,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETEQF cmp) (SETEQF cmp)) yes no)
 		// cond:
 		// result: (EQF cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETEQF {
@@ -25731,11 +25560,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETNEF cmp) (SETNEF cmp)) yes no)
 		// cond:
 		// result: (NEF cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETNEF {
@@ -25757,11 +25582,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (TESTB (SETNEF cmp) (SETNEF cmp)) yes no)
 		// cond:
 		// result: (NEF cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386TESTB {
-				break
-			}
+		for v.Op == Op386TESTB {
 			_ = v.Args[1]
 			v_0 := v.Args[0]
 			if v_0.Op != Op386SETNEF {
@@ -25783,11 +25604,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (InvertFlags cmp) yes no)
 		// cond:
 		// result: (NE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386InvertFlags {
-				break
-			}
+		for v.Op == Op386InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = Block386NE
 			b.SetControl(cmp)
@@ -25797,11 +25614,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (FlagEQ) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagEQ {
-				break
-			}
+		for v.Op == Op386FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25811,11 +25624,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (FlagLT_ULT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_ULT {
-				break
-			}
+		for v.Op == Op386FlagLT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25824,11 +25633,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (FlagLT_UGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_UGT {
-				break
-			}
+		for v.Op == Op386FlagLT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25837,11 +25642,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (FlagGT_ULT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_ULT {
-				break
-			}
+		for v.Op == Op386FlagGT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25850,11 +25651,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (NE (FlagGT_UGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_UGT {
-				break
-			}
+		for v.Op == Op386FlagGT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25864,11 +25661,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGE (InvertFlags cmp) yes no)
 		// cond:
 		// result: (ULE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386InvertFlags {
-				break
-			}
+		for v.Op == Op386InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = Block386ULE
 			b.SetControl(cmp)
@@ -25878,11 +25671,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGE (FlagEQ) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagEQ {
-				break
-			}
+		for v.Op == Op386FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25891,11 +25680,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGE (FlagLT_ULT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_ULT {
-				break
-			}
+		for v.Op == Op386FlagLT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25905,11 +25690,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGE (FlagLT_UGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_UGT {
-				break
-			}
+		for v.Op == Op386FlagLT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25918,11 +25699,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGE (FlagGT_ULT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_ULT {
-				break
-			}
+		for v.Op == Op386FlagGT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25932,11 +25709,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGE (FlagGT_UGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_UGT {
-				break
-			}
+		for v.Op == Op386FlagGT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25946,11 +25719,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGT (InvertFlags cmp) yes no)
 		// cond:
 		// result: (ULT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386InvertFlags {
-				break
-			}
+		for v.Op == Op386InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = Block386ULT
 			b.SetControl(cmp)
@@ -25960,11 +25729,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGT (FlagEQ) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagEQ {
-				break
-			}
+		for v.Op == Op386FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25974,11 +25739,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGT (FlagLT_ULT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_ULT {
-				break
-			}
+		for v.Op == Op386FlagLT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -25988,11 +25749,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGT (FlagLT_UGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_UGT {
-				break
-			}
+		for v.Op == Op386FlagLT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26001,11 +25758,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGT (FlagGT_ULT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_ULT {
-				break
-			}
+		for v.Op == Op386FlagGT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26015,11 +25768,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (UGT (FlagGT_UGT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_UGT {
-				break
-			}
+		for v.Op == Op386FlagGT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26029,11 +25778,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULE (InvertFlags cmp) yes no)
 		// cond:
 		// result: (UGE cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386InvertFlags {
-				break
-			}
+		for v.Op == Op386InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = Block386UGE
 			b.SetControl(cmp)
@@ -26043,11 +25788,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULE (FlagEQ) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagEQ {
-				break
-			}
+		for v.Op == Op386FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26056,11 +25797,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULE (FlagLT_ULT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_ULT {
-				break
-			}
+		for v.Op == Op386FlagLT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26069,11 +25806,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULE (FlagLT_UGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_UGT {
-				break
-			}
+		for v.Op == Op386FlagLT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26083,11 +25816,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULE (FlagGT_ULT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_ULT {
-				break
-			}
+		for v.Op == Op386FlagGT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26096,11 +25825,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULE (FlagGT_UGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_UGT {
-				break
-			}
+		for v.Op == Op386FlagGT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26111,11 +25836,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULT (InvertFlags cmp) yes no)
 		// cond:
 		// result: (UGT cmp yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386InvertFlags {
-				break
-			}
+		for v.Op == Op386InvertFlags {
 			cmp := v.Args[0]
 			b.Kind = Block386UGT
 			b.SetControl(cmp)
@@ -26125,11 +25846,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULT (FlagEQ) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagEQ {
-				break
-			}
+		for v.Op == Op386FlagEQ {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26139,11 +25856,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULT (FlagLT_ULT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_ULT {
-				break
-			}
+		for v.Op == Op386FlagLT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26152,11 +25865,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULT (FlagLT_UGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagLT_UGT {
-				break
-			}
+		for v.Op == Op386FlagLT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26166,11 +25875,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULT (FlagGT_ULT) yes no)
 		// cond:
 		// result: (First nil yes no)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_ULT {
-				break
-			}
+		for v.Op == Op386FlagGT_ULT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil
@@ -26179,11 +25884,7 @@ func rewriteBlock386(b *Block) bool {
 		// match: (ULT (FlagGT_UGT) yes no)
 		// cond:
 		// result: (First nil no yes)
-		for {
-			v := b.Control
-			if v.Op != Op386FlagGT_UGT {
-				break
-			}
+		for v.Op == Op386FlagGT_UGT {
 			b.Kind = BlockFirst
 			b.SetControl(nil)
 			b.Aux = nil

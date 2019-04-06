@@ -489,7 +489,7 @@ General-purpose environment variables:
 	GOFLAGS
 		A space-separated list of -flag=value settings to apply
 		to go commands by default, when the given flag is known by
-		the current command. Flags listed on the command-line
+		the current command. Flags listed on the command line
 		are applied after this list and therefore override it.
 	GOOS
 		The operating system for which to compile code.
@@ -563,6 +563,9 @@ Architecture-specific environment variables:
 	GOMIPS64
 		For GOARCH=mips64{,le}, whether to use floating point instructions.
 		Valid values are hardfloat (default), softfloat.
+	GOWASM
+		For GOARCH=wasm, comma-separated list of experimental WebAssembly features to use.
+		Valid values are satconv, signext.
 
 Special-purpose environment variables:
 
@@ -686,6 +689,9 @@ are:
 	-buildmode=plugin
 		Build the listed main packages, plus all packages that they
 		import, into a Go plugin. Packages not named main are ignored.
+
+On AIX, when linking a C program that uses a Go archive built with
+-buildmode=c-archive, you must pass -Wl,-bnoobjreorder to the C compiler.
 `,
 }
 

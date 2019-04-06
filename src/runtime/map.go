@@ -181,10 +181,8 @@ type hiter struct {
 
 // bucketShift returns 1<<b, optimized for code generation.
 func bucketShift(b uint8) uintptr {
-	if sys.GoarchAmd64|sys.GoarchAmd64p32|sys.Goarch386 != 0 {
-		b &= sys.PtrSize*8 - 1 // help x86 archs remove shift overflow checks
-	}
-	return uintptr(1) << b
+	// Masking the shift amount allows overflow checks to be elided.
+	return uintptr(1) << (b & (sys.PtrSize*8 - 1))
 }
 
 // bucketMask returns 1<<b - 1, optimized for code generation.
@@ -264,7 +262,7 @@ func (h *hmap) newoverflow(t *maptype, b *bmap) *bmap {
 		ovf = (*bmap)(newobject(t.bucket))
 	}
 	h.incrnoverflow()
-	if t.bucket.kind&kindNoPointers != 0 {
+	if t.bucket.ptrdata == 0 {
 		h.createOverflow()
 		*h.extra.overflow = append(*h.extra.overflow, ovf)
 	}
@@ -288,7 +286,7 @@ func makemap64(t *maptype, hint int64, h *hmap) *hmap {
 	return makemap(t, int(hint), h)
 }
 
-// makehmap_small implements Go map creation for make(map[k]v) and
+// makemap_small implements Go map creation for make(map[k]v) and
 // make(map[k]v, hint) when hint is known to be at most bucketCnt
 // at compile time and the map needs to be allocated on the heap.
 func makemap_small() *hmap {
@@ -368,7 +366,7 @@ func makeBucketArray(t *maptype, b uint8, dirtyalloc unsafe.Pointer) (buckets un
 		// but may not be empty.
 		buckets = dirtyalloc
 		size := t.bucket.size * nbuckets
-		if t.bucket.kind&kindNoPointers == 0 {
+		if t.bucket.ptrdata != 0 {
 			memclrHasPointers(buckets, size)
 		} else {
 			memclrNoHeapPointers(buckets, size)
@@ -742,13 +740,13 @@ search:
 			// Only clear key if there are pointers in it.
 			if t.indirectkey() {
 				*(*unsafe.Pointer)(k) = nil
-			} else if t.key.kind&kindNoPointers == 0 {
+			} else if t.key.ptrdata != 0 {
 				memclrHasPointers(k, t.key.size)
 			}
 			v := add(unsafe.Pointer(b), dataOffset+bucketCnt*uintptr(t.keysize)+i*uintptr(t.valuesize))
 			if t.indirectvalue() {
 				*(*unsafe.Pointer)(v) = nil
-			} else if t.elem.kind&kindNoPointers == 0 {
+			} else if t.elem.ptrdata != 0 {
 				memclrHasPointers(v, t.elem.size)
 			} else {
 				memclrNoHeapPointers(v, t.elem.size)
@@ -820,7 +818,7 @@ func mapiterinit(t *maptype, h *hmap, it *hiter) {
 	// grab snapshot of bucket state
 	it.B = h.B
 	it.buckets = h.buckets
-	if t.bucket.kind&kindNoPointers != 0 {
+	if t.bucket.ptrdata == 0 {
 		// Allocate the current slice and remember pointers to both current and old.
 		// This preserves all relevant overflow buckets alive even if
 		// the table grows and/or overflow buckets are added to the table
@@ -1232,7 +1230,7 @@ func evacuate(t *maptype, h *hmap, oldbucket uintptr) {
 			}
 		}
 		// Unlink the overflow buckets & clear key/value to help GC.
-		if h.flags&oldIterator == 0 && t.bucket.kind&kindNoPointers == 0 {
+		if h.flags&oldIterator == 0 && t.bucket.ptrdata != 0 {
 			b := add(h.oldbuckets, oldbucket*uintptr(t.bucketsize))
 			// Preserve b.tophash because the evacuation
 			// state is maintained there.
@@ -1361,6 +1359,18 @@ func reflect_mapitervalue(it *hiter) unsafe.Pointer {
 
 //go:linkname reflect_maplen reflect.maplen
 func reflect_maplen(h *hmap) int {
+	if h == nil {
+		return 0
+	}
+	if raceenabled {
+		callerpc := getcallerpc()
+		racereadpc(unsafe.Pointer(h), callerpc, funcPC(reflect_maplen))
+	}
+	return h.count
+}
+
+//go:linkname reflectlite_maplen internal/reflectlite.maplen
+func reflectlite_maplen(h *hmap) int {
 	if h == nil {
 		return 0
 	}

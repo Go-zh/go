@@ -76,8 +76,7 @@ package context
 
 import (
 	"errors"
-	"fmt"
-	"reflect"
+	"internal/reflectlite"
 	"sync"
 	"time"
 )
@@ -465,8 +464,19 @@ func (c *cancelCtx) Err() error {
 	return err
 }
 
+type stringer interface {
+	String() string
+}
+
+func contextName(c Context) string {
+	if s, ok := c.(stringer); ok {
+		return s.String()
+	}
+	return reflectlite.TypeOf(c).String()
+}
+
 func (c *cancelCtx) String() string {
-	return fmt.Sprintf("%v.WithCancel", c.Context)
+	return contextName(c.Context) + ".WithCancel"
 }
 
 // cancel closes c.done, cancels each of c's children, and, if
@@ -555,7 +565,9 @@ func (c *timerCtx) Deadline() (deadline time.Time, ok bool) {
 }
 
 func (c *timerCtx) String() string {
-	return fmt.Sprintf("%v.WithDeadline(%s [%s])", c.cancelCtx.Context, c.deadline, time.Until(c.deadline))
+	return contextName(c.cancelCtx.Context) + ".WithDeadline(" +
+		c.deadline.String() + " [" +
+		time.Until(c.deadline).String() + "])"
 }
 
 func (c *timerCtx) cancel(removeFromParent bool, err error) {
@@ -624,7 +636,7 @@ func WithValue(parent Context, key, val interface{}) Context {
 	if key == nil {
 		panic("nil key")
 	}
-	if !reflect.TypeOf(key).Comparable() {
+	if !reflectlite.TypeOf(key).Comparable() {
 		panic("key is not comparable")
 	}
 	return &valueCtx{parent, key, val}
@@ -637,8 +649,23 @@ type valueCtx struct {
 	key, val interface{}
 }
 
+// stringify tries a bit to stringify v, without using fmt, since we don't
+// want context depending on the unicode tables. This is only used by
+// *valueCtx.String().
+func stringify(v interface{}) string {
+	if s, ok := v.(stringer); ok {
+		return s.String()
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return "<not Stringer>"
+}
+
 func (c *valueCtx) String() string {
-	return fmt.Sprintf("%v.WithValue(%#v, %#v)", c.Context, c.key, c.val)
+	return contextName(c.Context) + ".WithValue(type " +
+		reflectlite.TypeOf(c.key).String() +
+		", val " + stringify(c.val) + ")"
 }
 
 func (c *valueCtx) Value(key interface{}) interface{} {

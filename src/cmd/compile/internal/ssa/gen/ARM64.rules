@@ -144,6 +144,10 @@
 (UMOD <typ.UInt64> x y) -> (MSUB <typ.UInt64> x y (UDIV <typ.UInt64> x y))
 (UMODW <typ.UInt32> x y) -> (MSUBW <typ.UInt32> x y (UDIVW <typ.UInt32> x y))
 
+// 64-bit addition with carry.
+(Select0 (Add64carry x y c)) -> (Select0 <typ.UInt64> (ADCSflags x y (Select1 <types.TypeFlags> (ADDSconstflags [-1] c))))
+(Select1 (Add64carry x y c)) -> (ADCzerocarry <typ.UInt64> (Select1 <types.TypeFlags> (ADCSflags x y (Select1 <types.TypeFlags> (ADDSconstflags [-1] c)))))
+
 // boolean ops -- booleans are represented with 0=false, 1=true
 (AndB x y) -> (AND x y)
 (OrB x y) -> (OR x y)
@@ -355,8 +359,8 @@
 (FCMPD (FMOVDconst [0]) x) -> (InvertFlags (FCMPD0 x))
 
 // CSEL needs a flag-generating argument. Synthesize a CMPW if necessary.
-(CondSelect x y bool) && flagArg(bool) != nil -> (CSEL {bool.Op} x y flagArg(bool))
-(CondSelect x y bool) && flagArg(bool) == nil -> (CSEL {OpARM64NotEqual} x y (CMPWconst [0] bool))
+(CondSelect x y boolval) && flagArg(boolval) != nil -> (CSEL {boolval.Op} x y flagArg(boolval))
+(CondSelect x y boolval) && flagArg(boolval) == nil -> (CSEL {OpARM64NotEqual} x y (CMPWconst [0] boolval))
 
 (OffPtr [off] ptr:(SP)) -> (MOVDaddr [off] ptr)
 (OffPtr [off] ptr) -> (ADDconst [off] ptr)
@@ -599,6 +603,10 @@
 
 // Write barrier.
 (WB {fn} destptr srcptr mem) -> (LoweredWB {fn} destptr srcptr mem)
+
+(PanicBounds [kind] x y mem) && boundsABI(kind) == 0 -> (LoweredPanicBoundsA [kind] x y mem)
+(PanicBounds [kind] x y mem) && boundsABI(kind) == 1 -> (LoweredPanicBoundsB [kind] x y mem)
+(PanicBounds [kind] x y mem) && boundsABI(kind) == 2 -> (LoweredPanicBoundsC [kind] x y mem)
 
 // Optimizations
 
@@ -1198,6 +1206,10 @@
 (ADD a l:(MNEGW x y)) && a.Type.Size() != 8 && l.Uses==1 && clobber(l) -> (MSUBW a x y)
 (SUB a l:(MNEGW x y)) && a.Type.Size() != 8 && l.Uses==1 && clobber(l) -> (MADDW a x y)
 
+// optimize ADCSflags and friends
+(ADCSflags x y (Select1 <types.TypeFlags> (ADDSconstflags [-1] (ADCzerocarry <typ.UInt64> c)))) -> (ADCSflags x y c)
+(ADCSflags x y (Select1 <types.TypeFlags> (ADDSconstflags [-1] (MOVDconst [0])))) -> (ADDSflags x y)
+
 // mul by constant
 (MUL x (MOVDconst [-1])) -> (NEG x)
 (MUL _ (MOVDconst [0])) -> (MOVDconst [0])
@@ -1637,14 +1649,14 @@
 (CSEL0 {cc} _ flag) && ccARM64Eval(cc, flag) < 0 -> (MOVDconst [0])
 
 // absorb flags back into boolean CSEL
-(CSEL {cc} x y (CMPWconst [0] bool)) && cc.(Op) == OpARM64NotEqual && flagArg(bool) != nil ->
-      (CSEL {bool.Op} x y flagArg(bool))
-(CSEL {cc} x y (CMPWconst [0] bool)) && cc.(Op) == OpARM64Equal && flagArg(bool) != nil ->
-      (CSEL {arm64Negate(bool.Op)} x y flagArg(bool))
-(CSEL0 {cc} x (CMPWconst [0] bool)) && cc.(Op) == OpARM64NotEqual && flagArg(bool) != nil ->
-      (CSEL0 {bool.Op} x flagArg(bool))
-(CSEL0 {cc} x (CMPWconst [0] bool)) && cc.(Op) == OpARM64Equal && flagArg(bool) != nil ->
-      (CSEL0 {arm64Negate(bool.Op)} x flagArg(bool))
+(CSEL {cc} x y (CMPWconst [0] boolval)) && cc.(Op) == OpARM64NotEqual && flagArg(boolval) != nil ->
+      (CSEL {boolval.Op} x y flagArg(boolval))
+(CSEL {cc} x y (CMPWconst [0] boolval)) && cc.(Op) == OpARM64Equal && flagArg(boolval) != nil ->
+      (CSEL {arm64Negate(boolval.Op)} x y flagArg(boolval))
+(CSEL0 {cc} x (CMPWconst [0] boolval)) && cc.(Op) == OpARM64NotEqual && flagArg(boolval) != nil ->
+      (CSEL0 {boolval.Op} x flagArg(boolval))
+(CSEL0 {cc} x (CMPWconst [0] boolval)) && cc.(Op) == OpARM64Equal && flagArg(boolval) != nil ->
+      (CSEL0 {arm64Negate(boolval.Op)} x flagArg(boolval))
 
 // absorb shifts into ops
 (NEG x:(SLLconst [c] y)) && clobberIfDead(x) -> (NEGshiftLL [c] y)

@@ -212,7 +212,18 @@ func ImportPaths(patterns []string) []*search.Match {
 // if dir is in the module cache copy of a module in our build list.
 func pathInModuleCache(dir string) string {
 	for _, m := range buildList[1:] {
-		root, err := modfetch.DownloadDir(m)
+		var root string
+		var err error
+		if repl := Replacement(m); repl.Path != "" && repl.Version == "" {
+			root = repl.Path
+			if !filepath.IsAbs(root) {
+				root = filepath.Join(ModRoot(), root)
+			}
+		} else if repl.Path != "" {
+			root, err = modfetch.DownloadDir(repl)
+		} else {
+			root, err = modfetch.DownloadDir(m)
+		}
 		if err != nil {
 			continue
 		}
@@ -328,7 +339,7 @@ func loadAll(testAll bool) []string {
 	if !testAll {
 		loaded.testRoots = true
 	}
-	all := TargetPackages()
+	all := TargetPackages("...")
 	loaded.load(func() []string { return all })
 	WriteGoMod()
 
@@ -346,10 +357,11 @@ func loadAll(testAll bool) []string {
 // Only "ignore" and malformed build tag requirements are considered false.
 var anyTags = map[string]bool{"*": true}
 
-// TargetPackages returns the list of packages in the target (top-level) module,
-// under all build tag settings.
-func TargetPackages() []string {
-	return matchPackages("...", anyTags, false, []module.Version{Target})
+// TargetPackages returns the list of packages in the target (top-level) module
+// matching pattern, which may be relative to the working directory, under all
+// build tag settings.
+func TargetPackages(pattern string) []string {
+	return matchPackages(pattern, anyTags, false, []module.Version{Target})
 }
 
 // BuildList returns the module build list,
@@ -536,6 +548,9 @@ func (ld *loader) load(roots func() []string) {
 		}
 		for _, pkg := range ld.pkgs {
 			if err, ok := pkg.err.(*ImportMissingError); ok && err.Module.Path != "" {
+				if err.newMissingVersion != "" {
+					base.Fatalf("go: %s: package provided by %s at latest version %s but not at required version %s", pkg.stackText(), err.Module.Path, err.Module.Version, err.newMissingVersion)
+				}
 				if added[pkg.path] {
 					base.Fatalf("go: %s: looping trying to add package", pkg.stackText())
 				}
@@ -961,27 +976,27 @@ func readVendorList() {
 }
 
 func (r *mvsReqs) modFileToList(f *modfile.File) []module.Version {
-	var list []module.Version
+	list := make([]module.Version, 0, len(f.Require))
 	for _, r := range f.Require {
 		list = append(list, r.Mod)
 	}
 	return list
 }
 
+// required returns a unique copy of the requirements of mod.
 func (r *mvsReqs) required(mod module.Version) ([]module.Version, error) {
 	if mod == Target {
 		if modFile != nil && modFile.Go != nil {
 			r.versions.LoadOrStore(mod, modFile.Go.Version)
 		}
-		var list []module.Version
-		return append(list, r.buildList[1:]...), nil
+		return append([]module.Version(nil), r.buildList[1:]...), nil
 	}
 
 	if cfg.BuildMod == "vendor" {
 		// For every module other than the target,
 		// return the full list of modules from modules.txt.
 		readVendorList()
-		return vendorList, nil
+		return append([]module.Version(nil), vendorList...), nil
 	}
 
 	if targetInGorootSrc {
@@ -1008,13 +1023,11 @@ func (r *mvsReqs) required(mod module.Version) ([]module.Version, error) {
 			gomod := filepath.Join(dir, "go.mod")
 			data, err := ioutil.ReadFile(gomod)
 			if err != nil {
-				base.Errorf("go: parsing %s: %v", base.ShortPath(gomod), err)
-				return nil, ErrRequire
+				return nil, fmt.Errorf("parsing %s: %v", base.ShortPath(gomod), err)
 			}
 			f, err := modfile.ParseLax(gomod, data, nil)
 			if err != nil {
-				base.Errorf("go: parsing %s: %v", base.ShortPath(gomod), err)
-				return nil, ErrRequire
+				return nil, fmt.Errorf("parsing %s: %v", base.ShortPath(gomod), err)
 			}
 			if f.Go != nil {
 				r.versions.LoadOrStore(mod, f.Go.Version)
@@ -1035,22 +1048,18 @@ func (r *mvsReqs) required(mod module.Version) ([]module.Version, error) {
 
 	data, err := modfetch.GoMod(mod.Path, mod.Version)
 	if err != nil {
-		base.Errorf("go: %s@%s: %v\n", mod.Path, mod.Version, err)
-		return nil, ErrRequire
+		return nil, fmt.Errorf("%s@%s: %v", mod.Path, mod.Version, err)
 	}
 	f, err := modfile.ParseLax("go.mod", data, nil)
 	if err != nil {
-		base.Errorf("go: %s@%s: parsing go.mod: %v", mod.Path, mod.Version, err)
-		return nil, ErrRequire
+		return nil, fmt.Errorf("%s@%s: parsing go.mod: %v", mod.Path, mod.Version, err)
 	}
 
 	if f.Module == nil {
-		base.Errorf("go: %s@%s: parsing go.mod: missing module line", mod.Path, mod.Version)
-		return nil, ErrRequire
+		return nil, fmt.Errorf("%s@%s: parsing go.mod: missing module line", mod.Path, mod.Version)
 	}
 	if mpath := f.Module.Mod.Path; mpath != origPath && mpath != mod.Path {
-		base.Errorf("go: %s@%s: parsing go.mod: unexpected module path %q", mod.Path, mod.Version, mpath)
-		return nil, ErrRequire
+		return nil, fmt.Errorf("%s@%s: parsing go.mod: unexpected module path %q", mod.Path, mod.Version, mpath)
 	}
 	if f.Go != nil {
 		r.versions.LoadOrStore(mod, f.Go.Version)
@@ -1058,11 +1067,6 @@ func (r *mvsReqs) required(mod module.Version) ([]module.Version, error) {
 
 	return r.modFileToList(f), nil
 }
-
-// ErrRequire is the sentinel error returned when Require encounters problems.
-// It prints the problems directly to standard error, so that multiple errors
-// can be displayed easily.
-var ErrRequire = errors.New("error loading module requirements")
 
 func (*mvsReqs) Max(v1, v2 string) string {
 	if v1 != "" && semver.Compare(v1, v2) == -1 {

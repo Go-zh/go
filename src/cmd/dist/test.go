@@ -326,8 +326,6 @@ func (t *tester) registerStdTest(pkg string) {
 			}
 			if t.compileOnly {
 				args = append(args, "-run=^$")
-			} else if goos == "js" && goarch == "wasm" {
-				args = append(args, "-run=^Test") // exclude examples; Issue 25913
 			}
 			args = append(args, stdMatches...)
 			cmd := exec.Command("go", args...)
@@ -879,7 +877,8 @@ func (t *tester) out(v string) {
 func (t *tester) extLink() bool {
 	pair := gohostos + "-" + goarch
 	switch pair {
-	case "android-arm",
+	case "aix-ppc64",
+		"android-arm",
 		"darwin-386", "darwin-amd64", "darwin-arm", "darwin-arm64",
 		"dragonfly-amd64",
 		"freebsd-386", "freebsd-amd64", "freebsd-arm",
@@ -914,6 +913,10 @@ func (t *tester) internalLink() bool {
 	if goarch == "arm64" || goarch == "mips64" || goarch == "mips64le" || goarch == "mips" || goarch == "mipsle" {
 		return false
 	}
+	if goos == "aix" {
+		// linkmode=internal isn't supported.
+		return false
+	}
 	return true
 }
 
@@ -925,7 +928,8 @@ func (t *tester) supportedBuildmode(mode string) bool {
 			return false
 		}
 		switch pair {
-		case "darwin-386", "darwin-amd64", "darwin-arm", "darwin-arm64",
+		case "aix-ppc64",
+			"darwin-386", "darwin-amd64", "darwin-arm", "darwin-arm64",
 			"linux-amd64", "linux-386", "linux-ppc64le", "linux-s390x",
 			"freebsd-amd64",
 			"windows-amd64", "windows-386":
@@ -960,7 +964,8 @@ func (t *tester) supportedBuildmode(mode string) bool {
 		return false
 	case "pie":
 		switch pair {
-		case "linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-ppc64le", "linux-s390x",
+		case "aix/ppc64",
+			"linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-ppc64le", "linux-s390x",
 			"android-amd64", "android-arm", "android-arm64", "android-386":
 			return true
 		case "darwin-amd64":
@@ -998,10 +1003,12 @@ func (t *tester) runHostTest(dir, pkg string) error {
 }
 
 func (t *tester) cgoTest(dt *distTest) error {
-	t.addCmd(dt, "misc/cgo/test", t.goTest(), "-ldflags", "-linkmode=auto")
+	cmd := t.addCmd(dt, "misc/cgo/test", t.goTest())
+	cmd.Env = append(os.Environ(), "GOFLAGS=-ldflags=-linkmode=auto")
 
 	if t.internalLink() {
-		t.addCmd(dt, "misc/cgo/test", t.goTest(), "-tags=internal", "-ldflags", "-linkmode=internal")
+		cmd := t.addCmd(dt, "misc/cgo/test", t.goTest(), "-tags=internal")
+		cmd.Env = append(os.Environ(), "GOFLAGS=-ldflags=-linkmode=internal")
 	}
 
 	pair := gohostos + "-" + goarch
@@ -1013,23 +1020,28 @@ func (t *tester) cgoTest(dt *distTest) error {
 		if !t.extLink() {
 			break
 		}
-		t.addCmd(dt, "misc/cgo/test", t.goTest(), "-ldflags", "-linkmode=external")
-		t.addCmd(dt, "misc/cgo/test", t.goTest(), "-ldflags", "-linkmode=external -s")
-	case "android-arm",
+		cmd := t.addCmd(dt, "misc/cgo/test", t.goTest())
+		cmd.Env = append(os.Environ(), "GOFLAGS=-ldflags=-linkmode=external")
+
+		cmd = t.addCmd(dt, "misc/cgo/test", t.goTest(), "-ldflags", "-linkmode=external -s")
+
+	case "aix-ppc64",
+		"android-arm",
 		"dragonfly-amd64",
 		"freebsd-386", "freebsd-amd64", "freebsd-arm",
 		"linux-386", "linux-amd64", "linux-arm", "linux-ppc64le", "linux-s390x",
 		"netbsd-386", "netbsd-amd64":
 
-		cmd := t.addCmd(dt, "misc/cgo/test", t.goTest(), "-ldflags", "-linkmode=external")
+		cmd := t.addCmd(dt, "misc/cgo/test", t.goTest())
+		cmd.Env = append(os.Environ(), "GOFLAGS=-ldflags=-linkmode=external")
 		// A -g argument in CGO_CFLAGS should not affect how the test runs.
-		cmd.Env = append(os.Environ(), "CGO_CFLAGS=-g0")
+		cmd.Env = append(cmd.Env, "CGO_CFLAGS=-g0")
 
 		t.addCmd(dt, "misc/cgo/testtls", t.goTest(), "-ldflags", "-linkmode=auto")
 		t.addCmd(dt, "misc/cgo/testtls", t.goTest(), "-ldflags", "-linkmode=external")
 
 		switch pair {
-		case "netbsd-386", "netbsd-amd64":
+		case "aix-ppc64", "netbsd-386", "netbsd-amd64":
 			// no static linking
 		case "freebsd-arm":
 			// -fPIC compiled tls code will use __tls_get_addr instead
@@ -1269,9 +1281,6 @@ func isAlpineLinux() bool {
 func (t *tester) runFlag(rx string) string {
 	if t.compileOnly {
 		return "-run=^$"
-	}
-	if rx == "" && goos == "js" && goarch == "wasm" {
-		return "-run=^Test" // exclude examples; Issue 25913
 	}
 	return "-run=" + rx
 }
