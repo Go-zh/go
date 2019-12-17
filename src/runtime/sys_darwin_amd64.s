@@ -46,6 +46,12 @@ TEXT runtime·read_trampoline(SB),NOSPLIT,$0
 	MOVL	16(DI), DX		// arg 3 count
 	MOVL	0(DI), DI		// arg 1 fd
 	CALL	libc_read(SB)
+	TESTL	AX, AX
+	JGE	noerr
+	CALL	libc_error(SB)
+	MOVL	(AX), AX
+	NEGL	AX			// caller expects negative errno value
+noerr:
 	POPQ	BP
 	RET
 
@@ -56,6 +62,23 @@ TEXT runtime·write_trampoline(SB),NOSPLIT,$0
 	MOVL	16(DI), DX		// arg 3 count
 	MOVQ	0(DI), DI		// arg 1 fd
 	CALL	libc_write(SB)
+	TESTL	AX, AX
+	JGE	noerr
+	CALL	libc_error(SB)
+	MOVL	(AX), AX
+	NEGL	AX			// caller expects negative errno value
+noerr:
+	POPQ	BP
+	RET
+
+TEXT runtime·pipe_trampoline(SB),NOSPLIT,$0
+	PUSHQ	BP
+	MOVQ	SP, BP
+	CALL	libc_pipe(SB)		// pointer already in DI
+	TESTL	AX, AX
+	JEQ	3(PC)
+	CALL	libc_error(SB)		// return negative errno value
+	NEGL	AX
 	POPQ	BP
 	RET
 
@@ -369,7 +392,7 @@ TEXT runtime·kevent_trampoline(SB),NOSPLIT,$0
 	MOVQ	40(DI), R9		// arg 6 ts
 	MOVL	0(DI), DI		// arg 1 kq
 	CALL	libc_kevent(SB)
-	CMPQ	AX, $-1
+	CMPL	AX, $-1
 	JNE	ok
 	CALL	libc_error(SB)
 	MOVLQSX	(AX), AX		// errno
@@ -443,12 +466,12 @@ TEXT runtime·pthread_attr_init_trampoline(SB),NOSPLIT,$0
 	POPQ	BP
 	RET
 
-TEXT runtime·pthread_attr_setstacksize_trampoline(SB),NOSPLIT,$0
+TEXT runtime·pthread_attr_getstacksize_trampoline(SB),NOSPLIT,$0
 	PUSHQ	BP
 	MOVQ	SP, BP
 	MOVQ	8(DI), SI	// arg 2 size
 	MOVQ	0(DI), DI	// arg 1 attr
-	CALL	libc_pthread_attr_setstacksize(SB)
+	CALL	libc_pthread_attr_getstacksize(SB)
 	POPQ	BP
 	RET
 
@@ -543,6 +566,24 @@ TEXT runtime·pthread_cond_signal_trampoline(SB),NOSPLIT,$0
 	POPQ	BP
 	RET
 
+TEXT runtime·pthread_self_trampoline(SB),NOSPLIT,$0
+	PUSHQ	BP
+	MOVQ	SP, BP
+	MOVQ	DI, BX		// BX is caller-save
+	CALL	libc_pthread_self(SB)
+	MOVQ	AX, 0(BX)	// return value
+	POPQ	BP
+	RET
+
+TEXT runtime·pthread_kill_trampoline(SB),NOSPLIT,$0
+	PUSHQ	BP
+	MOVQ	SP, BP
+	MOVQ	8(DI), SI	// arg 2 sig
+	MOVQ	0(DI), DI	// arg 1 thread
+	CALL	libc_pthread_kill(SB)
+	POPQ	BP
+	RET
+
 // syscall calls a function in libc on behalf of the syscall package.
 // syscall takes a pointer to a struct like:
 // struct {
@@ -556,6 +597,9 @@ TEXT runtime·pthread_cond_signal_trampoline(SB),NOSPLIT,$0
 // }
 // syscall must be called on the g0 stack with the
 // C calling convention (use libcCall).
+//
+// syscall expects a 32-bit result and tests for 32-bit -1
+// to decide there was an error.
 TEXT runtime·syscall(SB),NOSPLIT,$0
 	PUSHQ	BP
 	MOVQ	SP, BP
@@ -603,6 +647,9 @@ ok:
 // }
 // syscallX must be called on the g0 stack with the
 // C calling convention (use libcCall).
+//
+// syscallX is like syscall but expects a 64-bit result
+// and tests for 64-bit -1 to decide there was an error.
 TEXT runtime·syscallX(SB),NOSPLIT,$0
 	PUSHQ	BP
 	MOVQ	SP, BP
@@ -689,6 +736,9 @@ ok:
 // }
 // syscall6 must be called on the g0 stack with the
 // C calling convention (use libcCall).
+//
+// syscall6 expects a 32-bit result and tests for 32-bit -1
+// to decide there was an error.
 TEXT runtime·syscall6(SB),NOSPLIT,$0
 	PUSHQ	BP
 	MOVQ	SP, BP
@@ -739,6 +789,9 @@ ok:
 // }
 // syscall6X must be called on the g0 stack with the
 // C calling convention (use libcCall).
+//
+// syscall6X is like syscall6 but expects a 64-bit result
+// and tests for 64-bit -1 to decide there was an error.
 TEXT runtime·syscall6X(SB),NOSPLIT,$0
 	PUSHQ	BP
 	MOVQ	SP, BP

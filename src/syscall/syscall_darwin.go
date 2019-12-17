@@ -87,7 +87,6 @@ func direntNamlen(buf []byte) (uint64, bool) {
 	return readInt(buf, unsafe.Offsetof(Dirent{}.Namlen), unsafe.Sizeof(Dirent{}.Namlen))
 }
 
-//sys   ptrace(request int, pid int, addr uintptr, data uintptr) (err error)
 func PtraceAttach(pid int) (err error) { return ptrace(PT_ATTACH, pid, 0, 0) }
 func PtraceDetach(pid int) (err error) { return ptrace(PT_DETACH, pid, 0, 0) }
 
@@ -188,7 +187,7 @@ func Getfsstat(buf []Statfs_t, flags int) (n int, err error) {
 		_p0 = unsafe.Pointer(&buf[0])
 		bufsize = unsafe.Sizeof(Statfs_t{}) * uintptr(len(buf))
 	}
-	r0, _, e1 := syscall(funcPC(libc_getfsstat64_trampoline), uintptr(_p0), bufsize, uintptr(flags))
+	r0, _, e1 := syscall(funcPC(libc_getfsstat_trampoline), uintptr(_p0), bufsize, uintptr(flags))
 	n = int(r0)
 	if e1 != 0 {
 		err = e1
@@ -196,10 +195,10 @@ func Getfsstat(buf []Statfs_t, flags int) (n int, err error) {
 	return
 }
 
-func libc_getfsstat64_trampoline()
+func libc_getfsstat_trampoline()
 
-//go:linkname libc_getfsstat64 libc_getfsstat64
-//go:cgo_import_dynamic libc_getfsstat64 getfsstat64 "/usr/lib/libSystem.B.dylib"
+//go:linkname libc_getfsstat libc_getfsstat
+//go:cgo_import_dynamic libc_getfsstat getfsstat "/usr/lib/libSystem.B.dylib"
 
 func setattrlistTimes(path string, times []Timespec) error {
 	_p0, err := BytePtrFromString(path)
@@ -347,6 +346,20 @@ func init() {
 	execveDarwin = execve
 }
 
+func fdopendir(fd int) (dir uintptr, err error) {
+	r0, _, e1 := syscallPtr(funcPC(libc_fdopendir_trampoline), uintptr(fd), 0, 0)
+	dir = uintptr(r0)
+	if e1 != 0 {
+		err = errnoErr(e1)
+	}
+	return
+}
+
+func libc_fdopendir_trampoline()
+
+//go:linkname libc_fdopendir libc_fdopendir
+//go:cgo_import_dynamic libc_fdopendir fdopendir "/usr/lib/libSystem.B.dylib"
+
 func readlen(fd int, buf *byte, nbuf int) (n int, err error) {
 	r0, _, e1 := syscall(funcPC(libc_read_trampoline), uintptr(fd), uintptr(unsafe.Pointer(buf)), uintptr(nbuf))
 	n = int(r0)
@@ -367,7 +380,17 @@ func writelen(fd int, buf *byte, nbuf int) (n int, err error) {
 
 func Getdirentries(fd int, buf []byte, basep *uintptr) (n int, err error) {
 	// Simulate Getdirentries using fdopendir/readdir_r/closedir.
-	const ptrSize = unsafe.Sizeof(uintptr(0))
+	// We store the number of entries to skip in the seek
+	// offset of fd. See issue #31368.
+	// It's not the full required semantics, but should handle the case
+	// of calling Getdirentries or ReadDirent repeatedly.
+	// It won't handle assigning the results of lseek to *basep, or handle
+	// the directory being edited underfoot.
+	skip, err := Seek(fd, 0, 1 /* SEEK_CUR */)
+	if err != nil {
+		return 0, err
+	}
+
 	// We need to duplicate the incoming file descriptor
 	// because the caller expects to retain control of it, but
 	// fdopendir expects to take control of its argument.
@@ -384,13 +407,8 @@ func Getdirentries(fd int, buf []byte, basep *uintptr) (n int, err error) {
 		return 0, err
 	}
 	defer closedir(d)
-	// We keep the number of records already returned in *basep.
-	// It's not the full required semantics, but should handle the case
-	// of calling Getdirentries repeatedly.
-	// It won't handle assigning the results of lseek to *basep, or handle
-	// the directory being edited underfoot.
-	skip := *basep
-	*basep = 0
+
+	var cnt int64
 	for {
 		var entry Dirent
 		var entryp *Dirent
@@ -403,13 +421,13 @@ func Getdirentries(fd int, buf []byte, basep *uintptr) (n int, err error) {
 		}
 		if skip > 0 {
 			skip--
-			*basep++
+			cnt++
 			continue
 		}
 		reclen := int(entry.Reclen)
 		if reclen > len(buf) {
 			// Not enough room. Return for now.
-			// *basep will let us know where we should start up again.
+			// The counter will let us know where we should start up again.
 			// Note: this strategy for suspending in the middle and
 			// restarting is O(n^2) in the length of the directory. Oh well.
 			break
@@ -423,8 +441,15 @@ func Getdirentries(fd int, buf []byte, basep *uintptr) (n int, err error) {
 		copy(buf, *(*[]byte)(unsafe.Pointer(&s)))
 		buf = buf[reclen:]
 		n += reclen
-		*basep++
+		cnt++
 	}
+	// Set the seek offset of the input fd to record
+	// how many files we've already returned.
+	_, err = Seek(fd, cnt, 0 /* SEEK_SET */)
+	if err != nil {
+		return n, err
+	}
+
 	return n, nil
 }
 

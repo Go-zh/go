@@ -310,6 +310,8 @@ func gobytes(p *byte, n int) (b []byte) {
 	return
 }
 
+// This is exported via linkname to assembly in syscall (for Plan9).
+//go:linkname gostring
 func gostring(p *byte) string {
 	l := findnull(p)
 	if l == 0 {
@@ -492,4 +494,38 @@ func gostringw(strw *uint16) string {
 	}
 	b[n2] = 0 // for luck
 	return s[:n2]
+}
+
+// parseRelease parses a dot-separated version number. It follows the
+// semver syntax, but allows the minor and patch versions to be
+// elided.
+func parseRelease(rel string) (major, minor, patch int, ok bool) {
+	// Strip anything after a dash or plus.
+	for i := 0; i < len(rel); i++ {
+		if rel[i] == '-' || rel[i] == '+' {
+			rel = rel[:i]
+			break
+		}
+	}
+
+	next := func() (int, bool) {
+		for i := 0; i < len(rel); i++ {
+			if rel[i] == '.' {
+				ver, ok := atoi(rel[:i])
+				rel = rel[i+1:]
+				return ver, ok
+			}
+		}
+		ver, ok := atoi(rel)
+		rel = ""
+		return ver, ok
+	}
+	if major, ok = next(); !ok || rel == "" {
+		return
+	}
+	if minor, ok = next(); !ok || rel == "" {
+		return
+	}
+	patch, ok = next()
+	return
 }

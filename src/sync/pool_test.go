@@ -105,6 +105,9 @@ func testPool(t *testing.T, drain bool) {
 	const N = 100
 loop:
 	for try := 0; try < 3; try++ {
+		if try == 1 && testing.Short() {
+			break
+		}
 		var fin, fin1 uint32
 		for i := 0; i < N; i++ {
 			v := new(string)
@@ -170,15 +173,19 @@ func TestPoolChain(t *testing.T) {
 
 func testPoolDequeue(t *testing.T, d PoolDequeue) {
 	const P = 10
-	// In long mode, do enough pushes to wrap around the 21-bit
-	// indexes.
-	N := 1<<21 + 1000
+	var N int = 2e6
 	if testing.Short() {
 		N = 1e3
 	}
 	have := make([]int32, N)
 	var stop int32
 	var wg WaitGroup
+	record := func(val int) {
+		atomic.AddInt32(&have[val], 1)
+		if val == N-1 {
+			atomic.StoreInt32(&stop, 1)
+		}
+	}
 
 	// Start P-1 consumers.
 	for i := 1; i < P; i++ {
@@ -189,10 +196,7 @@ func testPoolDequeue(t *testing.T, d PoolDequeue) {
 				val, ok := d.PopTail()
 				if ok {
 					fail = 0
-					atomic.AddInt32(&have[val.(int)], 1)
-					if val.(int) == N-1 {
-						atomic.StoreInt32(&stop, 1)
-					}
+					record(val.(int))
 				} else {
 					// Speed up the test by
 					// allowing the pusher to run.
@@ -218,7 +222,7 @@ func testPoolDequeue(t *testing.T, d PoolDequeue) {
 				val, ok := d.PopHead()
 				if ok {
 					nPopHead++
-					atomic.AddInt32(&have[val.(int)], 1)
+					record(val.(int))
 				}
 			}
 		}
@@ -232,10 +236,12 @@ func testPoolDequeue(t *testing.T, d PoolDequeue) {
 			t.Errorf("expected have[%d] = 1, got %d", i, count)
 		}
 	}
-	if nPopHead == 0 {
-		// In theory it's possible in a valid schedule for
-		// popHead to never succeed, but in practice it almost
-		// always succeeds, so this is unlikely to flake.
+	// Check that at least some PopHeads succeeded. We skip this
+	// check in short mode because it's common enough that the
+	// queue will stay nearly empty all the time and a PopTail
+	// will happen during the window between every PushHead and
+	// PopHead.
+	if !testing.Short() && nPopHead == 0 {
 		t.Errorf("popHead never succeeded")
 	}
 }

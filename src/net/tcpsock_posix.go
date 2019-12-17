@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build aix darwin dragonfly freebsd js,wasm linux nacl netbsd openbsd solaris windows
+// +build aix darwin dragonfly freebsd js,wasm linux netbsd openbsd solaris windows
 
 package net
 
@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"syscall"
-	"time"
 )
 
 func sockaddrToTCP(sa syscall.Sockaddr) Addr {
@@ -146,7 +145,7 @@ func (ln *TCPListener) accept() (*TCPConn, error) {
 		setKeepAlive(fd, true)
 		ka := ln.lc.KeepAlive
 		if ln.lc.KeepAlive == 0 {
-			ka = 3 * time.Minute
+			ka = defaultTCPKeepAlive
 		}
 		setKeepAlivePeriod(fd, ka)
 	}

@@ -109,3 +109,12 @@ func MightPanic(a []int, i, j, k, s int) {
 	_ = i << s   // panicShift
 	_ = i / j    // panicDivide
 }
+
+// Put a defer in a loop, so second defer is not open-coded
+func Defer() {
+	for i := 0; i < 2; i++ {
+		defer func() {}()
+	}
+	// amd64:`CALL\truntime\.deferprocStack`
+	defer func() {}()
+}

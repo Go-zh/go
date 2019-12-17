@@ -1178,7 +1178,7 @@ if it has already been declared, provided:
 <li>this declaration is in the same scope as the existing declaration of <code>v</code>
 (if <code>v</code> is already declared in an outer scope, the declaration will create a new variable §),</li>
 <li>the corresponding value in the initialization is assignable to <code>v</code>, and</li>
-<li>there is at least one other variable in the declaration that is being declared anew.</li>
+<li>there is at least one other variable that is created by the declaration.</li>
 </ul>
 </div>
 
@@ -1186,7 +1186,7 @@ if it has already been declared, provided:
 <li>本次声明与已声明的 <code>v</code> 处于同一作用域中（若 <code>v</code>
 已在外层作用域中声明过，则此次声明会创建一个新的变量§），</li>
 <li>在初始化中与其类型相应的值才能赋予 <code>v</code>，且</li>
-<li>在此次声明中至少另有一个变量是新声明的。</li>
+<li>至少还存在一个由该声明创建的变量。</li>
 </ul>
 
 <div class="english">
@@ -4419,8 +4419,8 @@ The  <code>crypto/cipher</code> interfaces look like this:
 <pre>
 type Block interface {
     BlockSize() int
-    Encrypt(src, dst []byte)
-    Decrypt(src, dst []byte)
+    Encrypt(dst, src []byte)
+    Decrypt(dst, src []byte)
 }
 
 type Stream interface {
