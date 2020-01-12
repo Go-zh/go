@@ -264,15 +264,9 @@ func bgscavenge(c chan int) {
 			// Scavenge one page, and measure the amount of time spent scavenging.
 			start := nanotime()
 			released = mheap_.pages.scavengeOne(physPageSize, false)
+			atomic.Xadduintptr(&mheap_.pages.scavReleased, released)
 			crit = nanotime() - start
 		})
-
-		if debug.gctrace > 0 {
-			if released > 0 {
-				print("scvg: ", released>>10, " KB released\n")
-			}
-			print("scvg: inuse: ", memstats.heap_inuse>>20, ", idle: ", memstats.heap_idle>>20, ", sys: ", memstats.heap_sys>>20, ", released: ", memstats.heap_released>>20, ", consumed: ", (memstats.heap_sys-memstats.heap_released)>>20, " (MB)\n")
-		}
 
 		if released == 0 {
 			lock(&scavenge.lock)
@@ -346,12 +340,39 @@ func (s *pageAlloc) scavenge(nbytes uintptr, locked bool) uintptr {
 	return released
 }
 
+// printScavTrace prints a scavenge trace line to standard error.
+//
+// released should be the amount of memory released since the last time this
+// was called, and forced indicates whether the scavenge was forced by the
+// application.
+func printScavTrace(released uintptr, forced bool) {
+	printlock()
+	print("scav ",
+		released>>10, " KiB work, ",
+		atomic.Load64(&memstats.heap_released)>>10, " KiB total, ",
+		(atomic.Load64(&memstats.heap_inuse)*100)/heapRetained(), "% util",
+	)
+	if forced {
+		print(" (forced)")
+	}
+	println()
+	printunlock()
+}
+
 // resetScavengeAddr sets the scavenge start address to the top of the heap's
 // address space. This should be called each time the scavenger's pacing
 // changes.
 //
 // s.mheapLock must be held.
 func (s *pageAlloc) resetScavengeAddr() {
+	released := atomic.Loaduintptr(&s.scavReleased)
+	if debug.scavtrace > 0 {
+		printScavTrace(released, false)
+	}
+	// Subtract from scavReleased instead of just setting it to zero because
+	// the scavenger could have increased scavReleased concurrently with the
+	// load above, and we may miss an update by just blindly zeroing the field.
+	atomic.Xadduintptr(&s.scavReleased, -released)
 	s.scavAddr = chunkBase(s.end) - 1
 }
 
@@ -413,7 +434,10 @@ func (s *pageAlloc) scavengeOne(max uintptr, locked bool) uintptr {
 
 	// Check the chunk containing the scav addr, starting at the addr
 	// and see if there are any free and unscavenged pages.
-	if s.summary[len(s.summary)-1][ci].max() >= uint(minPages) {
+	//
+	// Only check this if s.scavAddr is covered by any address range
+	// in s.inUse, so that we know our check of the summary is safe.
+	if s.inUse.contains(s.scavAddr) && s.summary[len(s.summary)-1][ci].max() >= uint(minPages) {
 		// We only bother looking for a candidate if there at least
 		// minPages free pages at all. It's important that we only
 		// continue if the summary says we can because that's how
