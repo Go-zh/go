@@ -5641,7 +5641,7 @@ by allocating (and freeing) heap storage as required.
 <p>
 我们称之为<b>Go程</b>是因为现有的术语—线程、协程、进程等等—无法准确传达它的含义。
 Go程具有简单的模型：它是与其它Go程并发运行在同一地址空间的函数。它是轻量级的，
-所有小号几乎就只有栈空间的分配。而且栈最开始是非常小的，所以它们很廉价，
+所有消耗几乎就只有栈空间的分配。而且栈最开始是非常小的，所以它们很廉价，
 仅在需要时才会随着堆空间的分配（和释放）而变化。
 </p>
 
@@ -5724,7 +5724,7 @@ sure the variables referred to by the function survive as long as they are activ
 </div>
 
 <p>
-在Go中，函数字面都是闭包：其实现在保证了函数内引用变量的生命周期与函数的活动时间相同。
+在Go中，函数字面都是闭包：其实现保证了函数内引用变量的生命周期与函数的活动时间相同。
 </p>
 
 <div class="english">
